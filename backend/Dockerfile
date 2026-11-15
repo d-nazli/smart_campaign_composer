@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- base: toolchain + module cache -----------------------------------------
-FROM golang:1.24-alpine AS base
+FROM golang:1.25-alpine AS base
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

@@ -1,0 +1,48 @@
+package segment
+
+// JSONSchema is the structured-output schema sent to the LLM. It is derived
+// from the field whitelist. The API's schema language cannot express ranges,
+// lengths or per-field value types, so Parse re-checks everything; the schema
+// only makes malformed JSON very unlikely.
+func JSONSchema() map[string]any {
+	fieldNames := make([]any, len(fields))
+	opSet := map[string]bool{}
+	var ops []any
+	for i, f := range fields {
+		fieldNames[i] = f.Name
+		for _, o := range f.Ops {
+			if !opSet[o] {
+				opSet[o] = true
+				ops = append(ops, o)
+			}
+		}
+	}
+	str := map[string]any{"type": "string"}
+	condition := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"field": map[string]any{"type": "string", "enum": fieldNames},
+			"op":    map[string]any{"type": "string", "enum": ops},
+			"value": map[string]any{"anyOf": []any{
+				str,
+				map[string]any{"type": "number"},
+				map[string]any{"type": "boolean"},
+				map[string]any{"type": "array", "items": str},
+			}},
+		},
+		"required":             []any{"field", "op", "value"},
+		"additionalProperties": false,
+	}
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"status":      map[string]any{"type": "string", "enum": []any{StatusOK, StatusNeedsClarification, StatusUnsupported}},
+			"match":       map[string]any{"type": "string", "enum": []any{MatchAll, MatchAny}},
+			"conditions":  map[string]any{"type": "array", "items": condition},
+			"explanation": str,
+			"question":    str,
+		},
+		"required":             []any{"status", "match", "conditions", "explanation", "question"},
+		"additionalProperties": false,
+	}
+}
