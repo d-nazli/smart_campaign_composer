@@ -1,0 +1,24 @@
+# Secrets: .env may contain a real ANTHROPIC_API_KEY
+.env
+.env.*
+!.env.example
+
+# Go
+*.exe
+*.test
+*.out
+backend/tmp/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/

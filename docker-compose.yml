@@ -1,0 +1,124 @@
+name: smart-campaign
+
+# Single bridge network: services reach each other by service name
+# (postgres, api, mock-provider). Only web, api and mock-provider publish ports.
+networks:
+  app: {}
+
+volumes:
+  pgdata: {}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-campaign}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-campaign}
+      POSTGRES_DB: ${POSTGRES_DB:-campaign}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [app]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: migrations + seed. api/worker wait for it to finish successfully.
+  migrate:
+    build: { context: ./backend, target: tool }
+    command: ["migrate", "seed"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/${POSTGRES_DB:-campaign}?sslmode=disable
+      SEED: ${SEED:-42}
+    networks: [app]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  mock-provider:
+    build: { context: ./backend, target: mockprovider }
+    networks: [app]
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: { context: ./backend, target: api }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/${POSTGRES_DB:-campaign}?sslmode=disable
+      # auto: real Claude if ANTHROPIC_API_KEY is set, otherwise mock LLM.
+      LLM_MODE: ${LLM_MODE:-auto}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-5-5}
+    networks: [app]
+    ports:
+      - "8081:8080"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build: { context: ./backend, target: worker }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/${POSTGRES_DB:-campaign}?sslmode=disable
+      PROVIDER_URL: http://mock-provider:8090
+    networks: [app]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      mock-provider: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9091/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build: { context: ./frontend }
+    networks: [app]
+    ports:
+      - "8080:80"
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # ---- test runners (profile "test"; used by `make test`, never by `up`) ----
+  # They deliberately do NOT receive ANTHROPIC_API_KEY from .env: tests always
+  # run against the mock LLM and need neither a key nor internet access.
+  backend-test:
+    profiles: [test]
+    build: { context: ./backend, target: dev }
+    command: ["go", "test", "./..."]
+    environment:
+      LLM_MODE: mock
+      ANTHROPIC_API_KEY: ""
+    networks: [app]
+
+  frontend-test:
+    profiles: [test]
+    build: { context: ./frontend, target: dev }
+    command: ["npm", "test"]
+    networks: [app]
+
+  # ---- opt-in smoke test against the real Claude API (`make test-live`) ----
+  backend-test-live:
+    profiles: [live]
+    build: { context: ./backend, target: dev }
+    command: ["go", "test", "-tags=live", "-run", "Live", "-v", "./..."]
+    environment:
+      LLM_MODE: claude
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-5-5}
+    networks: [app]

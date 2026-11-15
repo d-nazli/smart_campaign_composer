@@ -1,0 +1,77 @@
+# Development override. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build --watch
+# (or `make dev`). Source changes are synced into the running containers, so no
+# image rebuild is needed; only go.mod / go.sum / package*.json trigger a rebuild.
+#
+# Windows note: `watch` syncs from the host side, and air/Vite then watch the
+# container's own filesystem, so we avoid unreliable bind-mount file events.
+
+volumes:
+  go-build-cache: {}
+
+x-go-dev: &go-dev
+  volumes:
+    - go-build-cache:/root/.cache/go-build
+
+services:
+  # Dev containers run the whole thing from the `dev` image (air + sources).
+  migrate:
+    <<: *go-dev
+    build: { context: ./backend, target: dev }
+    command: ["go", "run", "./cmd/tool", "migrate", "seed"]
+
+  mock-provider:
+    <<: *go-dev
+    build: { context: ./backend, target: dev }
+    command: ["air", "-c", ".air.toml", "--build.cmd", "go build -o /tmp/mockprovider ./cmd/mockprovider", "--build.bin", "/tmp/mockprovider"]
+    develop:
+      watch:
+        - { action: sync, path: ./backend, target: /src, ignore: [tmp] }
+        - { action: rebuild, path: ./backend/go.mod }
+        - { action: rebuild, path: ./backend/go.sum }
+
+  api:
+    <<: *go-dev
+    build: { context: ./backend, target: dev }
+    command: ["air", "-c", ".air.toml", "--build.cmd", "go build -o /tmp/api ./cmd/api", "--build.bin", "/tmp/api"]
+    develop:
+      watch:
+        - { action: sync, path: ./backend, target: /src, ignore: [tmp] }
+        - { action: rebuild, path: ./backend/go.mod }
+        - { action: rebuild, path: ./backend/go.sum }
+
+  worker:
+    <<: *go-dev
+    build: { context: ./backend, target: dev }
+    command: ["air", "-c", ".air.toml", "--build.cmd", "go build -o /tmp/worker ./cmd/worker", "--build.bin", "/tmp/worker"]
+    develop:
+      watch:
+        - { action: sync, path: ./backend, target: /src, ignore: [tmp] }
+        - { action: rebuild, path: ./backend/go.mod }
+        - { action: rebuild, path: ./backend/go.sum }
+
+  # Vite dev server with HMR instead of nginx. Same host port (8080).
+  web:
+    build: { context: ./frontend, target: dev }
+    command: ["npm", "run", "dev"]
+    environment:
+      API_PROXY_TARGET: http://api:8080
+    ports: !override
+      - "8080:5173"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173/"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    develop:
+      watch:
+        - { action: sync, path: ./frontend/src, target: /app/src }
+        - { action: sync, path: ./frontend/index.html, target: /app/index.html }
+        - { action: sync, path: ./frontend/vite.config.ts, target: /app/vite.config.ts }
+        - { action: rebuild, path: ./frontend/package.json }
+        - { action: rebuild, path: ./frontend/package-lock.json }
+
+  # Handy for debugging with a SQL client during development.
+  postgres:
+    ports:
+      - "15432:5432"
