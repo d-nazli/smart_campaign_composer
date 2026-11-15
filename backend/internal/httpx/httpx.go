@@ -1,4 +1,4 @@
-﻿// Package httpx holds small HTTP helpers shared by all binaries.
+// Package httpx holds small HTTP helpers shared by all binaries.
 package httpx
 
 import (

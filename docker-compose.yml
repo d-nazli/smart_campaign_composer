@@ -19,7 +19,10 @@ services:
       - pgdata:/var/lib/postgresql/data
     networks: [app]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      # -h 127.0.0.1 forces TCP. On a fresh volume the image first runs a
+      # temporary server that listens on the unix socket only; a socket check
+      # would report healthy too early and dependents would get "connection refused".
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -31,6 +34,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/${POSTGRES_DB:-campaign}?sslmode=disable
       SEED: ${SEED:-42}
+      SEED_USERS: ${SEED_USERS:-5000}
     networks: [app]
     depends_on:
       postgres: { condition: service_healthy }
@@ -38,6 +42,20 @@ services:
 
   mock-provider:
     build: { context: ./backend, target: mockprovider }
+    # Empty value = "use the built-in default" (see backend/internal/provider/config.go).
+    # Defaults and how to lower the failure rates are documented in .env.example.
+    environment:
+      PROVIDER_LATENCY_MS: ${PROVIDER_LATENCY_MS:-}
+      PROVIDER_LATENCY_JITTER_MS: ${PROVIDER_LATENCY_JITTER_MS:-}
+      PROVIDER_ERROR_RATE: ${PROVIDER_ERROR_RATE:-}
+      PROVIDER_429_RATE: ${PROVIDER_429_RATE:-}
+      PROVIDER_RETRY_AFTER_MIN_SEC: ${PROVIDER_RETRY_AFTER_MIN_SEC:-}
+      PROVIDER_RETRY_AFTER_MAX_SEC: ${PROVIDER_RETRY_AFTER_MAX_SEC:-}
+      PROVIDER_RATE_LIMIT_PER_SEC: ${PROVIDER_RATE_LIMIT_PER_SEC:-}
+      PROVIDER_TIMEOUT_RATE: ${PROVIDER_TIMEOUT_RATE:-}
+      PROVIDER_TIMEOUT_MS: ${PROVIDER_TIMEOUT_MS:-}
+      PROVIDER_FAIL_AFTER_ACCEPT_RATE: ${PROVIDER_FAIL_AFTER_ACCEPT_RATE:-}
+      PROVIDER_SEED: ${PROVIDER_SEED:-}
     networks: [app]
     ports:
       - "8090:8090"
@@ -104,7 +122,11 @@ services:
     environment:
       LLM_MODE: mock
       ANTHROPIC_API_KEY: ""
+      # Integration tests create and drop their own throwaway databases here.
+      TEST_DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/postgres?sslmode=disable
     networks: [app]
+    depends_on:
+      postgres: { condition: service_healthy }
 
   frontend-test:
     profiles: [test]

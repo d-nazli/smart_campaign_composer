@@ -1,7 +1,8 @@
 # PLAN.md — Smart Campaign Composer
 
 > Durum: **ONAYLANDI.** Kullanıcı kararları: Postgres kuyruğu (`queue.Queue` arayüzü arkasında), `docker compose watch`, varsayılan mock LLM (`LLM_MODE=auto`), **kanal seçimi yok (SMS+email her zaman birlikte)**, **Aşama 7 (bonus) yapılmayacak**, kapsam dışı özellik gerekirse önce kullanıcıya sorulacak.
-> İlerleme: **Aşama 0 tamamlandı** (kullanıcı onayı bekleniyor), Aşama 1–6 bekliyor.
+> İlerleme: **Aşama 0 ve 1 tamamlandı** (Aşama 1 kullanıcı onayı bekleniyor), Aşama 2–6 bekliyor.
+> Aşama 1 sapmaları: `language` kolonu yok (D29), mock provider'da `/admin/*` yok (D28), türev kolonlar seed'de Go'da hesaplanıp SQL ile doğrulanıyor (D26), Postgres healthcheck TCP (D32).
 > Alınan kararların gerekçeleri için bkz. [DECISIONS.md](DECISIONS.md).
 
 ---
