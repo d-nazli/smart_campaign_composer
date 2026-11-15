@@ -73,6 +73,11 @@ services:
       LLM_MODE: ${LLM_MODE:-auto}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-5-5}
+      # Pause between streamed fragments of the MOCK LLM (so the demo looks like streaming).
+      MOCK_LLM_DELAY_MS: ${MOCK_LLM_DELAY_MS:-}
+      # Fixed character allowance per personalization variable (empty = built-in default).
+      VARIABLE_BUDGET_FIRST_NAME: ${VARIABLE_BUDGET_FIRST_NAME:-}
+      VARIABLE_BUDGET_CITY: ${VARIABLE_BUDGET_CITY:-}
     networks: [app]
     ports:
       - "8081:8080"

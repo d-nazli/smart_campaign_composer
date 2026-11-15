@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { fetchInfo, llmLabel, type AppInfo } from './api/info'
+import ComposeView from './views/ComposeView.vue'
 
 const info = ref<AppInfo | null>(null)
 const error = ref<string | null>(null)
@@ -23,6 +24,6 @@ onMounted(async () => {
     <span v-else-if="error" class="badge error">API ulaşılamıyor</span>
   </header>
   <main class="content">
-    <p class="muted">Aşama 0: iskelet hazır. Kampanya akışı sonraki aşamalarda eklenecek.</p>
+    <ComposeView :info="info" />
   </main>
 </template>

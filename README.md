@@ -4,7 +4,7 @@ Insider One AI Developer case study. Pazarlamacının doğal dille yazdığı br
 hedef kitleye ve SMS/email mesajlarına çeviren, onaya sunan, kuyruk üzerinden mock provider'a
 gönderen ve durumu canlı gösteren sistem.
 
-> **Durum:** geliştirme sürüyor (Aşama 1/6). Plan: [PLAN.md](PLAN.md), kararlar: [DECISIONS.md](DECISIONS.md).
+> **Durum:** geliştirme sürüyor (Aşama 2+3 tamam: brief → kitle → akan mesajlar; onay/gönderim/dashboard sırada). Plan: [PLAN.md](PLAN.md), kararlar: [DECISIONS.md](DECISIONS.md).
 > Bu README son aşamada tamamlanacak (mimari özet, yapılmayanlar).
 
 ## Kurulum
@@ -27,6 +27,25 @@ make test        # tüm testler, Docker içinde, API key/internet gerektirmez (h
 make dev         # geliştirme: compose watch + air + Vite HMR
 make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan yüklenir)
 ```
+
+## LLM modu (mock / Claude)
+
+- `ANTHROPIC_API_KEY` boş → **mock LLM** (varsayılan; anahtar gerekmez). Anahtarı `.env`'ye yazıp
+  `docker compose up -d api` ile yeniden başlatırsanız kod değişikliği olmadan **gerçek Claude** kullanılır
+  (`CLAUDE_MODEL`, varsayılan `claude-sonnet-5-5`). Aktif mod açılış logunda ve arayüzün sağ üstündeki rozette görünür.
+- `make test` **her zaman mock** ile çalışır; `.env`'de anahtar olsa bile okunmaz, internet gerekmez.
+- `make test-live` gerçek Claude'a duman testi yapar (yalnız anahtar varsa, birkaç sent tutar; `make test`'e dahil değil).
+
+## Mesaj limitleri
+
+- SMS en fazla **160**, e-posta konusu en fazla **80** karakter ve konu **tek satır**. Aşan metin asla kesilmez:
+  model otomatik düzeltmeye zorlanır (3 deneme), olmazsa limite uyan hazır şablon gelir; elle düzenlemede de aynı kontrol
+  çalışır.
+- Değişkenler (`{{first_name}}`, `{{city}}`) limitlere **sabit pay** olarak sayılır (20 ve 15 karakter; `.env`'den
+  ayarlanır). Kişinin değeri boşsa veya payı aşıyorsa mesajda kısa bir yedek sözcük yazılır, böylece limit hiçbir
+  alıcı için aşılamaz.
+- Not: gerçek SMS ağlarında Türkçe karakterli (ş, ğ, ı …) bir mesaj 70 karakterle sınırlıdır; case 160 dediği için burada
+  karakter sayılır.
 
 ## Seed verisi hakkında notlar
 

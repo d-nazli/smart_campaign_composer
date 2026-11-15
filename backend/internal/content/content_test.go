@@ -98,7 +98,7 @@ func TestLengthCountsCharactersNotBytes(t *testing.T) {
 
 func TestSubjectMustBeSingleLine(t *testing.T) {
 	p := mustPolicy(t, nil)
-	for _, subj := range []string{"a\nb", "a\r\nb", "a\rb", "a b", "a b", "a\u0085b"} {
+	for _, subj := range []string{"a\nb", "a\r\nb", "a\rb", "a\u2028b", "a\u2029b", "a\u0085b"} {
 		c := ok()
 		c.EmailSubject = subj
 		if _, rep := p.Validate(c); !codes(rep)["email_subject:newline_in_subject"] {

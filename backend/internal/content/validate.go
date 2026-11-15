@@ -94,7 +94,7 @@ func (p Policy) checkText(rep *Report, field, text string, limit int, label stri
 		return text
 	}
 
-	if !multiline && strings.ContainsAny(text, "\n\r\u0085  ") {
+	if !multiline && strings.ContainsAny(text, "\n\r\u0085\u2028\u2029") {
 		add(CodeNewlineInSubject, label+" tek satır olmalı; satır sonu içeremez.", 0, 0)
 	}
 	for _, r := range text {

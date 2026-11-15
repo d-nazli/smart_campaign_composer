@@ -1,12 +1,16 @@
+import type { Limits, VariableInfo } from '../types'
+
 export type LLMMode = 'mock' | 'claude'
 
 export interface AppInfo {
   llm_mode: LLMMode
   model?: string
+  limits?: Limits
+  variables?: VariableInfo[]
 }
 
 /** Human-readable label for the active LLM mode, shown in the UI header. */
-export function llmLabel(info: AppInfo): string {
+export function llmLabel(info: Pick<AppInfo, 'llm_mode' | 'model'>): string {
   if (info.llm_mode === 'claude') {
     return info.model ? `Claude (${info.model})` : 'Claude'
   }

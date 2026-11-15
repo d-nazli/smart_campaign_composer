@@ -43,7 +43,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Mesaj üretimi POST gerektirir → `fetch` + stream okuyucu (EventSource yalnız GET).
 - Dashboard: olay yerine **snapshot** (her ~1 sn DB agregasyonu). Neden: worker ayrı süreç → API'ye olay taşımak (LISTEN/NOTIFY veya pub/sub) fazladan hareketli parça; snapshot kopma/yeniden bağlanmada kendiliğinden doğru, `Last-Event-ID` gerekmez. Bedeli: ≤1 sn gecikme (canlı izleme için yeterli).
 
-## D7 — LLM çıktısı: zorunlu tool-use + katı JSON Schema · `Önerildi`
+## D7 — LLM çıktısı: zorunlu tool-use + katı JSON Schema · `REVİZE EDİLDİ → bkz. D33 (structured outputs)`
 - Alternatifler: "JSON ver" diye prompt'lamak + regex/parse; markdown code-fence ayıklamak.
 - Gerekçe: `tool_choice` ile modeli şemalı çağrıya zorlamak parse hatalarını azaltır; yine de **şemaya güvenmeyiz**, backend ayrıca doğrular (savunma derinliği). LLM'in cevabı *veri*, kod değil.
 
@@ -173,6 +173,59 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 ## D32 — Postgres healthcheck TCP üzerinden (`pg_isready -h 127.0.0.1`) · `Önerildi`
 - Bulgu (Aşama 1'de `make clean` sonrası taze volume'da yaşandı): imaj ilk açılışta yalnız unix socket dinleyen **geçici** sunucu başlatır. Socket tabanlı `pg_isready` bu aşamada "healthy" der, `migrate` bağlanmaya çalışınca `connection refused` alır. TCP kontrolü yalnız gerçek sunucu kalkınca geçer.
 - Neden önemli: hata yalnız **ilk kurulumda** çıkar (mevcut volume'da görünmez), yani değerlendiricinin `docker compose up`'ında çıkacak tam hata budur.
+
+## D33 — JSON için structured outputs; zorunlu `tool_choice` yok · `Kesin` (D7'nin revizyonu)
+- Alternatif (D7'deki plan): `tool_choice` ile belirli bir tool'u çağırmaya zorlamak.
+- Gerekçe: `claude-sonnet-5-5` (varsayılan model) `tool_choice: any|tool` isteğini **HTTP 400** ile reddediyor. Aynı garantiyi `output_config.format` (JSON Schema) ile alıyoruz: model şemaya uyan JSON üretir, biz yine de katı biçimde ayrıştırıp doğrularız (savunma derinliği, D8).
+- Aynı model ailesinin diğer kısıtlarına uyuyoruz ve testle kilitledik (adapter sahte sunucuya karşı test eder): `temperature/top_p/top_k` gönderilmez, `thinking` ayarı gönderilmez (varsayılan adaptive; derinlik `output_config.effort` ile: kitle çıkarma `low`, metin yazma `medium`), prefill yok (retry = yeni kullanıcı turu), `max_tokens` 8000 (thinking payı dahil).
+- Şema dili aralık/uzunluk/özyineleme ifade edemez → 160/80 sınırları, sayı aralıkları ve alan değerleri **yalnız backend'de** doğrulanır. Bu zaten tasarımın ilkesi: şemaya güvenmeyiz.
+- Bedeli: Go SDK'nın yeni major'ı (`anthropic-sdk-go/v2`) Go 1.25 ister → toolchain 1.25'e çıktı (D42).
+
+## D34 — Segment DSL düz (iç içe grup yok) · `Kesin (kullanıcı kararı)`
+- Alternatif: iç içe `all/any/not` ağacı.
+- Gerekçe: structured outputs özyinelemeli şemayı desteklemez; düz liste + tek `match` (`all|any`) şemaya sığar, doğrulaması ve derlemesi basit, saldırı yüzeyi küçük. `not` ihtiyacı `neq`/`not_in` ile karşılanır. Brief'ler pratikte "ve" ile bağlanan koşullardır.
+- Bedeli: "(A veya B) ve C" gibi karma ifadeler yok; LLM bunu ifade edemezse `unsupported`/`needs_clarification` döner. Kabul edildi.
+
+## D35 — Değişkenler `first_name` ve `city`; tek yerde tanımlı (`content.Variables`) · `Kesin (kullanıcı kararı)`
+- `last_name` çıkarıldı (kullanılmıyor; uzunluk bütçesini ve doğrulama yüzeyini gereksiz büyütüyordu). Kolon `users` tablosunda duruyor ama şablonda kullanılamaz (test: `{{last_name}}` → `unknown_variable`).
+- Tek kayıt: yeni değişken eklemek = `content.Variables`'a bir satır (+ `Recipient` alanı). Doğrulayıcı, render, LLM prompt'u, UI limit/ipucu listesi ve `VARIABLE_BUDGET_<AD>` env'i bu listeden türer; aynı bilgiyi birden çok yere yazma riski yok.
+
+## D36 — Değişkenler sabit karakter payıyla sayılır (first_name 20, city 15) · `Kesin (kullanıcı kararı)`
+- Alternatif (ilk plan): kitledeki **en uzun** değerle en kötü durum hesabı.
+- Gerekçe: tek bir çok uzun isimli kullanıcı (seed'de 30 kişi, 30–45 karakter) yüzünden herkesin mesajı kısalırdı. Sabit pay hem öngörülebilir hem de modele söylenebilir (prompt'ta "`{{first_name}}` 20 karakter sayılır").
+- **Garanti nasıl korunuyor:** gönderimde (`content.Render`) değer boşsa veya payı aşıyorsa kısa bir yedek sözcük yazılır ("değerli müşterimiz" 18, "bölgeniz" 8 karakter; payı aşmaması başlangıçta doğrulanır). Böylece doğrulanan uzunluk **her alıcı için gerçek üst sınırdır**. Test: kenar şablonlar, seed'in tüm 5.000 kullanıcısı için render edilir; hiçbir SMS 160'ı, hiçbir konu 80'i aşmaz ve konuda satır sonu çıkmaz.
+- Config'de duruyor: `VARIABLE_BUDGET_FIRST_NAME`, `VARIABLE_BUDGET_CITY` (varsayılanlar `content.Variables`'ta); payın yedek sözcükten küçük olması başlangıçta hata verir.
+- Bedeli: payı aşan isimli ~30 kişi "Merhaba değerli müşterimiz" alır (isim yerine). İsmin kesilmesi (yarım isim) daha kötü olurdu.
+
+## D37 — SMS 160 ve konu 80 asla aşılmaz; konu tek satır; aynı kural her yerde · `Kesin (kullanıcı kararı)`
+- Üç giriş noktası, tek doğrulayıcı (`content.Policy.Validate`): (1) LLM çıktısı → aşarsa hata metni modele geri verilir (repair loop, 3 deneme); (2) 3 denemede olmazsa **limite uyan** hazır şablon (ve şablon başlangıçta ayrıca doğrulanır; pay ayarları şablonu bozacak kadar büyükse değişkensiz şablon döner); (3) elle düzenleme (UI'da canlı + `PUT` sunucuda): geçersizse **reddedilir, asla sessizce kesilmez**. Aşama 4'te onayda tekrar.
+- E-posta konusunda satır sonu yasak (`\n`, `\r`, NEL, U+2028/2029); sonda kalan boşluk/satır sonu kırpılır, ortadakiler hata. SMS ve gövdede satır sonu serbest. Kontrol karakterleri her yerde yasak.
+- Karakter = Unicode karakter (rune), bayt değil (`ş` 1 sayılır); UI aynı kuralı code point ile uygular.
+- Hata yolları ayrımı: model reddederse (`refusal`) veya servise ulaşılamazsa → fallback şablon + sebebi UI'a söylenir; **API anahtarı hatalı** ise fallback'e saklanmaz, açık hata verilir (yanlış yapılandırmayı gizlemek tehlikeli).
+
+## D38 — SSE istemcisi elle yazıldı (kütüphane yok) · `Kesin (kullanıcı kararı)`
+- `EventSource` yalnız GET'tir; mesaj üretimi POST. `@microsoft/fetch-event-source` yerine ~40 satırlık `SSEParser` + `fetch` okuyucu: yeni bağımlılık yok, her chunk sınırında doğru çalıştığı testle kanıtlı (tüm bölme noktaları, bayt bayt, CRLF), UTF-8 çok baytlı karakterler `TextDecoder({stream:true})` ile korunur.
+- Sunucu tarafında başlıklar ilk olaydan önce **tembel** yazılır: akış başlamadan oluşan hata (ör. kampanya yok, durum uygun değil) normal JSON + doğru HTTP kodu olur; akış başladıktan sonraki hata `error` olayıdır.
+
+## D39 — Refusal için sunucu tarafı fallback beta'sı kullanılmıyor · `Kesin (kullanıcı kararı)`
+- `stop_reason: "refusal"` açıkça ele alınır (`RefusalError`): segmentte `llm_refused` (422), mesajda fallback şablon. Model değiştirerek yeniden deneyen `server-side-fallback` beta'sı eklenmedi (ek beta bağımlılığı, kapsam dışı). İstenirse ileride eklenir.
+
+## D40 — `deliveries` tablosu ve `UNIQUE (campaign_id, user_id, channel)` · `Kesin (kullanıcı kararı)`
+- Kuyruk tablosu (önceki planlardaki `messages`) migration `00002`'de, sınırlamasıyla birlikte yaratıldı: aynı kampanyada aynı kişiye aynı kanaldan **ikinci satır veritabanı seviyesinde imkânsız**. Kuyruğa alma `INSERT … ON CONFLICT DO NOTHING`; onay iki kez (hatta eşzamanlı) çalışsa da çift gönderim oluşmaz (D11'in 1. katmanı). Testle kanıtlandığı yer Aşama 4'tür (tablo bu aşamada henüz kullanılmıyor, şema gözden geçirilsin diye öne alındı).
+- `deliveries.id` aynı zamanda provider'a giden `Idempotency-Key`'dir: tek satır = tek anahtar.
+- İsim: `messages` içerik (mesaj metni) ile karışıyordu; `deliveries` "bir kişiye bir kanaldan gönderim" demek.
+
+## D41 — Gerçek SMS'te Türkçe karakter limiti 70'tir; biz CASE'e uyup 160 karakter sayıyoruz · `Not`
+- Türkçe karakterli (ş, ğ, ı, İ …) bir SMS gerçek ağlarda UCS-2 kodlanır ve tek mesaj 70 karakterle sınırlıdır; CASE.md 160 dediği için karakter sayıyoruz (bayt/segment hesabı yok). README'de de not edilecek.
+
+## D42 — Go 1.25 · `Önerildi`
+- Anthropic Go SDK v2 `go >= 1.25` ister. `golang:1.25-alpine` ile derlenir; compose/Dockerfile güncellendi, host'ta Go gerekmez (Docker).
+
+## D43 — Mock LLM: anahtar kelimeyle çalışan "akıllı" mod + senaryo modu; LLM'e kullanıcı verisi gitmez · `Önerildi`
+- Varsayılan mock, brief'i Türkçe anahtar kelimelerle (şehir, "son N gün", sepet, "satın almayan", "%30") okuyup gerçek modelle aynı JSON'u üretir ve metni parça parça akıtır (`MOCK_LLM_DELAY_MS`); belirsiz brief'e `needs_clarification`, yaş/cinsiyet gibi desteklenmeyene `unsupported` döner. Çıktıları gerçek doğrulayıcılardan geçmek zorundadır (testle kanıtlı).
+- Test için senaryo modu: bozuk JSON, kısaltılmış (`max_tokens`), reddetme, API hatası, akış kopması. Mock çağrıları kaydeder; testler "modele hangi geri bildirim gitti" sorusunu doğrular.
+- Gizlilik: LLM'e yalnız brief, şema, şehir listesi ve değişken payları gider; **hiçbir kullanıcı kaydı gitmez**. Brief `<brief>` etiketleri arasında "güvenilmeyen veri" olarak sunulur (`</brief>` kaçışı temizlenir); çıktısı yine doğrulanır.
+- Her deneme (geçerli/geçersiz, gerçek/mock) `llm_generations` tablosuna yazılır: ham çıktı (≤8 KB), neden reddedildi, token, süre.
 
 ---
 

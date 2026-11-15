@@ -1,8 +1,9 @@
 # PLAN.md — Smart Campaign Composer
 
 > Durum: **ONAYLANDI.** Kullanıcı kararları: Postgres kuyruğu (`queue.Queue` arayüzü arkasında), `docker compose watch`, varsayılan mock LLM (`LLM_MODE=auto`), **kanal seçimi yok (SMS+email her zaman birlikte)**, **Aşama 7 (bonus) yapılmayacak**, kapsam dışı özellik gerekirse önce kullanıcıya sorulacak.
-> İlerleme: **Aşama 0 ve 1 tamamlandı** (Aşama 1 kullanıcı onayı bekleniyor), Aşama 2–6 bekliyor.
+> İlerleme: **Aşama 0, 1 ve birleşik Aşama 2+3 (segment + mesaj üretimi) tamamlandı** (birleşik aşama kullanıcı onayı bekleniyor). Aşama 4 (onay + kuyruk + gönderim), 5 (dashboard/metrics), 6 (cilalama) bekliyor.
 > Aşama 1 sapmaları: `language` kolonu yok (D29), mock provider'da `/admin/*` yok (D28), türev kolonlar seed'de Go'da hesaplanıp SQL ile doğrulanıyor (D26), Postgres healthcheck TCP (D32).
+> Aşama 2+3 sapmaları (nedenleri DECISIONS.md D33–D43): Sonnet 5.5 zorunlu `tool_choice`'u reddettiği için **structured outputs**; DSL **düz** (iç içe `all/any/not` yok); değişkenler yalnız `first_name` ve `city` ve **sabit karakter payıyla** sayılır; kuyruk tablosunun adı `deliveries`; Go 1.25.
 > Alınan kararların gerekçeleri için bkz. [DECISIONS.md](DECISIONS.md).
 
 ---
@@ -91,7 +92,7 @@ Tek Go modülü, tek Dockerfile; `api`, `worker`, `mock-provider`, `tool` ayrı 
 | api → Tarayıcı (dashboard) | **SSE** (snapshot'lar) | Tek yönlü canlı durum; WebSocket gereksiz |
 | api → Claude | HTTPS (Anthropic SDK, streaming) | Tool-use ile yapılandırılmış çıktı |
 | api → Postgres | pgx | |
-| api ⇒ worker | **Postgres kuyruğu** (`messages` tablosu) | Doğrudan çağrı yok; onayda mesajlar tek transaction'da yazılır |
+| api ⇒ worker | **Postgres kuyruğu** (`deliveries` tablosu) | Doğrudan çağrı yok; onayda gönderimler tek transaction'da yazılır |
 | worker → mock-provider | HTTP/JSON + `Idempotency-Key` | Gerçek provider'ı taklit eder |
 | worker → api (durum) | Yok; durum DB'de | API, DB'den agregasyon okuyup SSE'ye basar |
 
@@ -102,10 +103,10 @@ Tek Go modülü, tek Dockerfile; `api`, `worker`, `mock-provider`, `tool` ayrı 
       │ 1. brief (POST /api/campaigns)
       ▼
  ┌──────────────────────────── api (Go) ────────────────────────────┐
- │ 2. LLM.GenerateSegment(brief)  ──►  Claude (tool_use, zorunlu)    │
+ │ 2. LLM.Segment(brief)  ──►  Claude (structured outputs, JSON)     │
  │       ◄── JSON kural                                              │
- │ 3. segment.Validate()  (şema + alan/operatör whitelist + tipler)  │
- │      ├─ geçersiz → hata geri bildirimiyle retry (max 2) → 422     │
+ │ 3. segment.Parse()  (katı decode + alan/operatör whitelist + tip) │
+ │      ├─ geçersiz → hata geri bildirimiyle retry (max 3) → 422     │
  │      └─ geçerli → segment.Compile() → PARAMETRELİ SQL            │
  │ 4. COUNT: toplam / sms-izinli / email-izinli  ─────► Postgres     │
  │      ▼ UI: "1.240 kişi (SMS 910, Email 1.100)"                    │
@@ -115,10 +116,10 @@ Tek Go modülü, tek Dockerfile; `api`, `worker`, `mock-provider`, `tool` ayrı 
  │ 6. UI'da önizleme + düzenleme (sunucu yine doğrular)              │
  │ 7. POST .../approve  (idempotent: draft→approved CAS)             │
  │      TEK TX: segment'i snapshot'la → izinli alıcılar için         │
- │      messages INSERT … ON CONFLICT DO NOTHING (campaign,user,ch)  │
+ │      deliveries INSERT … ON CONFLICT DO NOTHING (campaign,user,ch)│
  └───────────────────────────────┬───────────────────────────────────┘
                                  ▼
-                      Postgres  messages (= kuyruk)
+                      Postgres  deliveries (= kuyruk)
                       status: pending→sending→sent|failed|skipped
                                  │  FOR UPDATE SKIP LOCKED
                                  ▼
@@ -142,42 +143,44 @@ Her geçiş `UPDATE … WHERE status = <beklenen>` ile (CAS) yapılır; çift t�
 
 ### 2.5 Veri modeli (özet)
 
-- `users(id, first_name, last_name, email, phone, city, language, sms_consent, email_consent, last_cart_add_at, last_order_at, order_count, total_spent, created_at)`
-- `cart_events(id, user_id, product, added_at)`, `orders(id, user_id, total, created_at)` — "alışveriş geçmişi"; `users` üzerindeki türev kolonlar bunlardan seed'de hesaplanır (segment sorgusu basit ve hızlı kalır)
-- `campaigns(id, brief, segment_rule jsonb, status, channels[], created_at, approved_at, …)`
-- `campaign_contents(campaign_id, channel, subject, body, version)` — pazarlamacının onayladığı şablon
-- `messages(id, campaign_id, user_id, channel, status, attempts, next_attempt_at, locked_until, provider_msg_id, last_error, rendered_hash, sent_at, UNIQUE(campaign_id, user_id, channel))`
-- `llm_generations(id, campaign_id, kind, model, attempt, raw_output, valid, validation_error, tokens_in, tokens_out, latency_ms)` — denetim izi (review'da "LLM ne dedi, biz ne yaptık" gösterir)
+Gerçek şema `backend/internal/store/migrations/` altındadır.
+
+- `users(id, first_name, last_name, email, phone, city, sms_consent, email_consent, last_cart_add_at, last_order_at, order_count, total_spent, created_at)` — `language` yok (D29). `last_name` kolonu duruyor ama **değişken değil** (D35).
+- `cart_events(id, user_id, product_name, added_at)`, `orders(id, user_id, total, created_at)` — "alışveriş geçmişi"; `users` üzerindeki türev kolonlar bunlardan seed'de hesaplanır (segment sorgusu basit ve hızlı kalır)
+- `campaigns(id, brief, status, segment_status, segment_rule jsonb, explanation, question, matched, sms_reachable, email_reachable, both_reachable, created_at, updated_at)` — kanal seçimi yok, SMS ve email her zaman birlikte
+- `campaign_contents(campaign_id PK, sms_body, email_subject, email_body, source llm|fallback|edited, updated_at)` — pazarlamacının onayladığı şablon
+- `deliveries(id, campaign_id, user_id, channel, status, attempts, next_attempt_at, locked_until, provider_message_id, last_error, sent_at, …, CONSTRAINT UNIQUE(campaign_id, user_id, channel))` — **kuyruğun kendisi**; tablo Aşama 2+3 migration'ında yaratıldı (şema birlikte gözden geçirilsin diye), kullanımı Aşama 4'te. Önceki planlardaki `messages` adı bu tabloyla değişti.
+- `llm_generations(id, campaign_id, kind, attempt, mode, model, valid, problems jsonb, raw_output, input_tokens, output_tokens, latency_ms, error)` — denetim izi (review'da "LLM ne dedi, biz ne yaptık" gösterir)
 
 ### 2.6 Segment DSL (LLM'in üreteceği şey, SQL değil)
 
-`status` alanı `ok`, `needs_clarification` veya `unsupported` değerini alır.
+`status` alanı `ok`, `needs_clarification` veya `unsupported` değerini alır. **DSL düzdür** (iç içe grup yok): Claude'un structured outputs şeması özyinelemeli yapıyı desteklemez; `not` ise `neq`/`not_in` operatörleriyle karşılanır (D34).
 
 ```json
 {
   "status": "ok",
-  "rule": {
-    "all": [
-      {"field": "city", "op": "eq", "value": "İstanbul"},
-      {"field": "days_since_last_cart_add", "op": "lte", "value": 30},
-      {"field": "purchased_since_last_cart_add", "op": "eq", "value": false}
-    ]
-  },
-  "explanation": "…"
+  "match": "all",
+  "conditions": [
+    {"field": "city", "op": "eq", "value": "İstanbul"},
+    {"field": "days_since_last_cart_add", "op": "lte", "value": 30},
+    {"field": "purchased_since_last_cart_add", "op": "eq", "value": false}
+  ],
+  "explanation": "…",
+  "question": ""
 }
 ```
-- Alan **whitelist**'i (`city`, `language`, `order_count`, `total_spent`, `days_since_last_order`, `days_since_last_cart_add`, `purchased_since_last_cart_add`…). Her alanın tipi ve izinli operatörleri kodda tanımlı.
-- Gruplar: `all`/`any`/`not`; derinlik ≤ 3, toplam koşul ≤ 10.
+- Alan **whitelist**'i tek yerde: `backend/internal/segment/fields.go` (`city`, `days_since_last_cart_add`, `days_since_last_order`, `order_count`, `total_spent`, `purchased_since_last_cart_add`). Her alanın tipi, aralığı ve izinli operatörleri kodda tanımlı; JSON şeması ve LLM prompt'u bu listeden türetilir.
+- `match`: `all` / `any`. 1–8 koşul; boş kural reddedilir (herkesi seçerdi). Şehirler bilinen listeye kanonikleştirilir (İstanbul/Istanbul/istanbul).
 - Compiler: alan → **sabit SQL ifadesi** (kodda), değer → **bind parametresi** (`$1…`). Hiçbir LLM string'i SQL metnine girmez.
-- İzin filtresi (`sms_consent`, telefon var mı…) **LLM kuralının parçası değil**; sistem tarafından her zaman eklenir.
+- İzin filtresi (`sms_consent`, telefon var mı…) **LLM kuralının parçası değil**; sistem tarafından her zaman eklenir (`segment.SMSReachableSQL` / `EmailReachableSQL`; Aşama 4'te enqueue aynı sabitleri kullanır).
 
 ---
 
 ## 3. Kritik konular — nasıl çözülecek
 
 ### 3.1 Claude çıktısının doğrulanması, SQL'e gitmemesi
-1. **Zorunlu tool-use:** `tool_choice` ile belirli bir tool'u çağırmaya zorlanır; `input_schema` = JSON Schema. Serbest metin/markdown parse etmeyiz.
-2. **Katmanlı doğrulama (backend):** JSON parse → strict struct decode (`DisallowUnknownFields`) → alan/op whitelist → tip/aralık kontrolü → derinlik/boyut limiti → şehir kanonikleştirme (İstanbul/Istanbul/istanbul → bilinen listeden).
+1. **Structured outputs:** `output_config.format` ile JSON Schema verilir; serbest metin/markdown parse etmeyiz. (İlk planda "zorunlu tool-use" yazıyordu; `claude-sonnet-5-5` `tool_choice: any/tool` isteğini 400 ile reddettiği için değişti, D33.) Şema aralık/uzunluk ifade edemez; bunlar yalnız backend'de doğrulanır.
+2. **Katmanlı doğrulama (backend):** JSON parse → strict struct decode (`DisallowUnknownFields`) → alan/op whitelist → tip/aralık kontrolü → koşul sayısı/boyut limiti → şehir kanonikleştirme (İstanbul/Istanbul/istanbul → bilinen listeden).
 3. **Compile edilmiş parametreli SQL:** LLM → veri (AST) → kodumuzdaki derleyici → SQL. Arada "string birleştirme" yok.
 4. **Prompt injection:** brief kullanıcı girdisidir; LLM'e ne derse desin çıktısı yine whitelist'ten geçer. Sistem prompt'u + brief ayrı roller.
 5. Testler: bilinmeyen alan, `1=1; DROP TABLE`, aşırı derinlik, yanlış tip, SQL içeren string değerler → hepsi reddedilir (table-driven).
@@ -196,7 +199,7 @@ attempt 1 → doğrula → ok ✓
 - Her deneme `llm_generations` tablosuna yazılır (ham çıktı, hata, token).
 
 ### 3.3 Mock LLM ile key'siz test
-- `llm.Client` arayüzü: `GenerateSegment(ctx, brief) (SegmentResponse, error)` ve `StreamMessages(ctx, req) (<-chan Chunk, error)`.
+- `llm.Client` arayüzü **tek bir denemeyi** yapar ve ham metin döner: `Segment(ctx, req) (Output, error)` ve `Messages(ctx, req, onDelta) (Output, error)`. Doğrulama ve retry arayüzün dışında (`llm.Repair`), böylece gerçek ve mock istemci için aynıdır.
 - Uygulamalar: `anthropic` (gerçek) ve `mock`.
 - Mock **senaryo tabanlı**: "1. çağrıda bozuk JSON, 2.'de geçerli", "160 aşan SMS", "bilinmeyen alan", "429", "stream ortasında kopma" → retry/fallback yolları deterministik test edilir.
 - `LLM_MODE=auto`: `ANTHROPIC_API_KEY` boşsa `mock`. Böylece `docker compose up` key'siz de demo çalışır (mock, örnek brief'e makul cevap verir).
@@ -205,7 +208,7 @@ attempt 1 → doğrula → ok ✓
 ### 3.4 Idempotency (aynı kişiye aynı mesaj iki kez gitmesin)
 Üç katman:
 1. **DB:** `UNIQUE(campaign_id, user_id, channel)` + `INSERT … ON CONFLICT DO NOTHING` → onay endpoint'i iki kez çağrılsa/çökse bile çift satır oluşmaz. Onay CAS ile tek kez geçer.
-2. **Gönderim:** worker provider'a `Idempotency-Key: <message_id>` yollar; mock provider aynı anahtarı görürse yeniden göndermez, önceki sonucu döner. Timeout/çökme sonrası retry bu yüzden güvenlidir.
+2. **Gönderim:** worker provider'a `Idempotency-Key: <delivery_id>` yollar; mock provider aynı anahtarı görürse yeniden göndermez, önceki sonucu döner. Timeout/çökme sonrası retry bu yüzden güvenlidir.
 3. **Durum geçişi:** `sent` olan satır asla yeniden claim edilmez; lease süresi dolan `sending` satırı yeniden alınır (at-least-once + idempotent provider = etkin olarak tek sefer).
 
 ### 3.5 Retry stratejisi, 429 ve hata yönetimi
@@ -231,13 +234,14 @@ Retry, `next_attempt_at` kolonuyla yapılır (ayrı delay kuyruğu gerekmez).
 
 ### 3.7 Kanal izinleri ve karakter limitleri
 - **İzin:** alıcı seti = `segment AND sms_consent AND phone IS NOT NULL` (SMS), `… email_consent AND email IS NOT NULL` (email). Sayım, onay ve worker'da (gönderim anında yeniden) aynı fonksiyon/koşul kullanılır.
-- **Limit:** yalnız prompt'a güvenmeyiz. `content.Validate`: karakter = **rune** sayısı (Türkçe `ş,ğ,İ` doğru sayılsın); SMS ≤160, email konusu ≤80; değişkenler yalnız whitelist'ten (`first_name`, `last_name`, `city`); render sonrası uzunluk **en kötü durum** için hesaplanır (segmentteki en uzun `first_name`).
-- Doğrulama 3 yerde: LLM çıktısı, kullanıcı düzenlemesi (canlı + sunucu), onay.
+- **Limit:** yalnız prompt'a güvenmeyiz. `content.Validate`: karakter = **rune** sayısı (Türkçe `ş,ğ,İ` doğru sayılsın); SMS ≤160, email konusu ≤80 **ve tek satır**; değişkenler yalnız `content.Variables` kaydından (`first_name`, `city`).
+- **Sabit pay (D36):** her değişken, gerçek değeri ne olursa olsun belirli bir karakter payı olarak sayılır: `first_name` 20, `city` 15 (env: `VARIABLE_BUDGET_*`). Gönderimde değer boşsa veya payı aşıyorsa kısa bir yedek sözcük yazılır ("değerli müşterimiz", "bölgeniz"), yani doğrulanan uzunluk **her alıcı için gerçek üst sınırdır** (testle kanıtlı: seed'deki 30 uzun isimli kullanıcı dahil). Pay prompt'a yazılır, model ne kadar yeri olduğunu bilir.
+- Doğrulama 3 yerde: LLM çıktısı (aşarsa repair loop → 3 denemede olmazsa limite uyan fallback), kullanıcı düzenlemesi (canlı UI + sunucu `PUT`), onay (Aşama 4'te yeniden).
 - Email gövdesi düz metin; HTML'i biz şablonla üretir ve escape ederiz (LLM'den HTML almayız → XSS yok). UI'da `v-html` kullanılmaz.
 
 ### 3.8 SSE
-- **Mesaj üretimi:** `POST /api/campaigns/:id/messages/stream` — `text/event-stream`; event'ler: `delta` (kanal+parça), `validated` (final JSON + hata listesi), `retry`, `done`, `error`. POST gerektiği için tarayıcıda `fetch` + `ReadableStream` (`@microsoft/fetch-event-source`), `EventSource` değil.
-- Claude'un `input_json_delta` akışı UI'a *taslak* olarak akar; **geçerli sayılmaz** — `validated` event'i gelmeden "Onayla" kapalı.
+- **Mesaj üretimi:** `POST /api/campaigns/:id/messages/stream` — `text/event-stream`; event'ler: `attempt`, `delta` (alan+parça), `retry` (neden reddedildi), `validated` / `fallback` (final içerik + rapor), `done`, `error`. POST gerektiği için tarayıcıda `fetch` + `ReadableStream` ve elle yazılmış küçük bir SSE ayrıştırıcı (`frontend/src/api/sse.ts`, yeni bağımlılık yok; D38), `EventSource` değil.
+- Claude'un structured-output JSON'u metin delta'ları olarak gelir; küçük bir artımlı JSON string tarayıcısı (`llm.FieldStream`) büyüyen alan değerlerini çıkarıp UI'a *taslak* olarak akıtır; **geçerli sayılmaz** — `validated` event'i gelmeden onay mümkün değil. Nihai metin her zaman tam çıktıdan ayrıştırılıp doğrulanır.
 - **Dashboard:** `GET /api/campaigns/:id/events` (EventSource). Sunucu her ~1 sn DB'den agregasyon (`status`×`channel` sayıları + son hatalar) okuyup snapshot yollar; kampanya bitince `done`. Snapshot modeli: bağlantı kopsa da tek mesajla durum senkron olur, `Last-Event-ID` yönetimi gerekmez.
 - nginx: `proxy_buffering off`, `proxy_read_timeout` uzun; sunucu 15 sn'de bir `:keepalive` yorumu yollar.
 
@@ -326,20 +330,35 @@ insider_one_case/
 - **Çalışması gereken:** `up` sonrası DB dolu, tekrar `up` veriyi çoğaltmaz; provider chaos davranışı gözlenir.
 - **Test:** `SELECT count(*) FROM users` ≈ 5000; `up`'ı tekrarla → aynı sayı; provider'a 200 istek döngüsüyle 429/5xx/dedupe görülür; provider unit testleri.
 
-### Aşama 2 — Segment (LLM + doğrulama + sayım) ⭐
-- DSL, whitelist, validator, compiler, `llm.Client` + mock, repair loop, `POST /campaigns` + count. UI: brief kutusu + segment kartı (kural özeti, toplam/SMS/email sayıları, needs_clarification).
-- **Çalışması gereken:** Örnek brief → İstanbul/30 gün/satın almamış segmenti ve sayısı; kötü LLM cevapları reddedilir.
-- **Test:** `make test-backend` (table-driven: injection, bilinmeyen alan, derinlik, tip; mock LLM "bozuk→geçerli" retry; "hep bozuk" → 422); UI'dan brief gir → sayı gelir; izinsiz kullanıcılar sayıda yok (seed'deki bilinen sayıyla karşılaştır).
+### Aşama 2+3 (birleşik) — Segment + mesaj üretimi + stream ✅ tamamlandı
+- Segment: düz DSL, whitelist, katı ayrıştırıcı, parametreli derleyici, kitle sayımı (izin + iletişim bilgisi sistem tarafından uygulanır). Mesaj: değişken kaydı (`first_name` 20, `city` 15 sabit pay), doğrulayıcı (SMS 160, konu 80 + tek satır), render (pay aşılırsa yedek sözcük), limite uyan fallback. LLM: `llm.Client`, `Repair` döngüsü (3 deneme, geri bildirimli), senaryo tabanlı mock, Claude adapter'ı (structured outputs), artımlı JSON alan akıtıcı. API: `POST /api/campaigns`, `GET /api/campaigns/{id}`, `POST …/messages/stream` (SSE), `PUT …/content`. UI: brief → kitle kartı → akan mesajlar → karakter sayaçları → düzenle/kaydet. Migration `00002`: `campaigns`, `campaign_contents`, `llm_generations`, `deliveries` (+ `UNIQUE(campaign_id, user_id, channel)`).
+- **Çalışması gereken:** Örnek brief → İstanbul / son 30 gün / satın almamış → 300 kişi (SMS 203, e-posta 227); mesajlar akar; limit aşan metin otomatik düzeltilir veya fallback gelir; elle düzenleme aynı kuralla doğrulanır.
+- **Test:** `make test` (key'siz, mock LLM); `make test-live` yalnız key ile.
 
-### Aşama 3 — Mesaj üretimi + stream ⭐
-- Content şeması/validator (160/80, değişken), Claude stream adapter, mock stream, SSE endpoint, repair loop + fallback şablon. UI: iki kanal editörü, canlı akış, karakter sayacı, düzenleme.
-- **Çalışması gereken:** Mesajlar ekrana akar; limit aşımı UI'da ve sunucuda yakalanır; onay butonu doğrulama geçmeden kapalı.
-- **Test:** content unit testleri (Türkçe karakter, çok uzun isim, bilinmeyen `{{x}}`); mock senaryoları (uzun SMS → retry → düzelir; hep uzun → fallback taslak); tarayıcıda akışı izle; SSE'yi `curl -N` ile doğrula.
+### Aşama 4 — Onay, kuyruk, worker, gönderim ⭐ (sıradaki; ayrıntılı tasarım aşağıda)
+- Approve (CAS + tek TX enqueue), `queue.Queue` arayüzü + Postgres uygulaması, worker, kanal başına strict pacer (`Clock`'lu), retry politikası, idempotency, izin yeniden kontrolü, tamamlanma tespiti.
+- **Çalışması gereken:** Onaylanan kampanya gönderilir; provider 429/5xx verse de gönderimler sonunda `sent`/`failed`; çift onay çift gönderim üretmez; 100/s aşılmaz; kalıcı 4xx (bozuk telefon/email) retry edilmeden `failed`.
+- **Test:** entegrasyon testleri (gerçek PG + kod içinde kurulu provider, sahte saat): aynı approve 2× ve eşzamanlı → satır sayısı değişmez; worker çöküşü (MarkSent atlanır) → yeniden alınır, provider'da tek kayıt; 429 → `Retry-After`'a uyulur; hiçbir 1 sn penceresinde >100 yok; seed'deki 30 uzun isimli kullanıcıya giden SMS ≤160; `make test`.
 
-### Aşama 4 — Onay, kuyruk, worker, gönderim ⭐
-- Approve (CAS + tek TX enqueue), Postgres kuyruğu, worker, limiter, retry politikası, idempotency, izin yeniden kontrolü.
-- **Çalışması gereken:** Onaylanan kampanya gönderilir; provider 429/5xx verse de mesajlar sonunda `sent`/`failed`; çift onay çift mesaj üretmez; 100/s aşılmaz.
-- **Test:** entegrasyon testleri (gerçek PG + httptest provider): aynı approve 2× → satır sayısı değişmez; worker kill → mesaj yeniden alınır, provider'da tek kayıt; 429 → Retry-After'a uyulur; limiter sahte saatle; `make test`.
+#### Aşama 4 ayrıntılı tasarım: gönderim tarafı
+
+**Onay** — `POST /api/campaigns/{id}/approve`, tek transaction:
+1. CAS: `UPDATE campaigns SET status='approved', approved_at=now() WHERE id=$1 AND status='content_ready'`. 0 satır etkilenirse ve kampanya zaten `approved|sending|completed` ise **aynı sonuç** döner (idempotent tekrar), başka durumda 409.
+2. Saklı içerik `content.Validate` ile yeniden doğrulanır (geçersizse onay reddedilir) ve saklı kural `segment`'e yeniden verilip derlenir (o anki `now` ile; onay anındaki gerçek kitle).
+3. Alıcılar `deliveries`'e yazılır, kanal başına bir `INSERT … SELECT`: `INSERT INTO deliveries (campaign_id, user_id, channel) SELECT $1, id, 'sms' FROM users WHERE <kural> AND (sms_consent AND phone IS NOT NULL) ON CONFLICT (campaign_id, user_id, channel) DO NOTHING` (e-posta için aynısı). İzin koşulu Aşama 2'deki `segment.SMSReachableSQL` / `EmailReachableSQL` sabitleridir: sayımda gösterilenle gönderilen aynı kümedir.
+4. Yanıt: kanal başına kuyruğa alınan sayı. `UNIQUE(campaign_id, user_id, channel)` + `ON CONFLICT DO NOTHING` sayesinde onay iki kez (hatta eşzamanlı) çalışsa da çift satır oluşmaz.
+
+**Kuyruk** — `internal/queue.Queue` arayüzü: `Claim(ctx, channel, limit, lease, now)`, `MarkSent`, `Retry(at, err, countAttempt)`, `Fail`, `Skip`. Postgres uygulaması: `UPDATE deliveries SET status='sending', locked_until=$now+lease WHERE id IN (SELECT id FROM deliveries WHERE channel=$1 AND next_attempt_at<=$now AND (status='pending' OR (status='sending' AND locked_until<$now)) ORDER BY next_attempt_at LIMIT $n FOR UPDATE SKIP LOCKED) RETURNING …` (kullanıcı verisiyle birlikte). Zaman SQL'e **parametre** verilir (`now()` değil), bu yüzden testler sahte saatle lease/backoff'u gerçek bekleme olmadan sınar. Çöken worker'ın `sending` satırı lease dolunca yeniden alınır.
+
+**Worker** — kanal başına bir "claimer" küçük partiler (≤20, lease 30 sn) çeker ve N (varsayılan 20) gönderici goroutine'e dağıtır; hepsi kanalın **tek pacer'ını** paylaşır. Pacer, `Clock` ile eşit aralıklı (10 ms) slot rezerve eder → herhangi bir 1 sn penceresinde ≤100 (burst yok); 429 alınca `PauseUntil(Retry-After)` ile kanal duraklatılır. Her iş: (1) pacer.Wait, (2) izin/iletişim bilgisini **yeniden kontrol et** (artık yoksa `skipped`), (3) `content.Render` ile alıcıya göre metni üret (pay aşılırsa yedek sözcük → SMS ≤160 garantisi), (4) provider'a `POST` (`Idempotency-Key = delivery.id`, istemci zaman aşımı 5 sn < provider'ın 10 sn "timeout" kaosu), (5) sonucu işle.
+
+**Sonuç işleme** (§3.5 tablosu): 2xx → `sent` (+ `provider_message_id`); 429 → `Retry-After` kadar sonra, **deneme hakkı harcanmaz** ama teslimat yaşı üst sınırı (10 dk) var; 5xx/zaman aşımı/bağlantı hatası → `attempts+1`, backoff `min(60 sn, 2 sn·2ⁿ)` **full jitter**, en fazla 5 deneme; diğer 4xx (ör. `invalid_recipient`) → kalıcı `failed`, retry yok; deneme/yaş aşımı → `failed` + `last_error`. Retry politikası saf bir fonksiyon (rastgelelik enjekte edilir), zaman `Clock`'tan.
+
+**Tamamlanma** — worker, bekleyen/gönderilen satırı kalmayan kampanyaları `completed` yapar (`approved→sending` ilk claim'de). Kampanya sonucu: sent / failed / skipped sayıları `deliveries`'ten okunur (Aşama 5 dashboard'u).
+
+**Kaçınılan tuzaklar:** "gönderdim ama `sent` yazamadım" çökmesi → aynı `Idempotency-Key` ile yeniden gönderim → provider replay döner, ikinci teslimat yok (D27 modu bunu sürekli sınar); provider'ın 5xx döndüğü ama mesajı aldığı durum → aynı çözüm; iki worker → `SKIP LOCKED` ile aynı satırı iki kişi alamaz; `now()` yerine parametre → test edilebilirlik.
+
+**Kapsam dışı (README'de not):** worker tek replica (limiter süreç içi, D13); e-posta gövdesi düz metin olarak gönderilir (HTML şablonu yok); teslim bildirimi ("delivered") yok, `sent` = provider kabul etti.
 
 ### Aşama 5 — Dashboard, metrics, health ⭐
 - Snapshot SSE, dashboard UI (kanal bazlı progress, sent/failed/retrying, son hatalar, throughput), `/metrics` (Prometheus), `/readyz` (DB), worker metrics.
@@ -465,12 +484,12 @@ volumes: { pgdata: {} }
 | 3 | Şehir yazımı (İstanbul/Istanbul) | Bilinen şehir listesine kanonikleştir; bilinmiyorsa `needs_clarification` | |
 | 4 | SMS 160 = ? | 160 **rune**, render sonrası en kötü durumda. Gerçekte GSM-7/UCS-2 segmentleri farklı; README'de not | Türkçe karakterli gerçek SMS 70 karakterdir |
 | 5 | Limit değişkenli metne nasıl uygulanır | Şablonu ve render edilmiş en kötü durumu doğrula | |
-| 6 | Hangi değişkenler | `first_name`, `last_name`, `city`; boşsa varsayılan ("değerli müşterimiz") | |
+| 6 | Hangi değişkenler | **Güncel:** yalnız `first_name` ve `city` (`last_name` çıkarıldı, D35); tek bir kayıtta (`content.Variables`), eklemek kolay. Sabit karakter payı: 20 ve 15 (D36); boş/uzun değerde yedek sözcük | Kullanıcı kararı |
 | 7 | Her iki kanal zorunlu mu | **Kullanıcı kararı:** kanal seçimi yok, SMS ve email her zaman birlikte üretilir | Onaylandı |
 | 8 | 100/s kapsamı | Kanal başına, tüm kampanyalar toplamı, worker tek replica | Dağıtık limiter bilinçli kapsam dışı |
 | 9 | Kullanıcı segmenti düzenleyebilir mi | Hayır; kural salt-okunur gösterilir, brief yeniden yazılır | Kesilebilecek özellik zaten çıkarıldı |
 | 10 | Teslim durumu | `sent` (provider kabul etti) yeterli; "delivered" webhook'u yok | Bonus/kapsam dışı |
-| 11 | Gönderimden sonra snapshot | Onayda alıcılar `messages`'a yazılır (snapshot); sonradan değişen veri sayıyı etkilemez, yalnız izin gönderim anında yeniden kontrol edilir | |
+| 11 | Gönderimden sonra snapshot | Onayda alıcılar `deliveries`'e yazılır (snapshot); sonradan değişen veri sayıyı etkilemez, yalnız izin gönderim anında yeniden kontrol edilir | |
 | 12 | İçerik dili | Brief'in dili (Türkçe); dil-bazlı içerik bonus | |
 | 13 | Model | `CLAUDE_MODEL` env, varsayılan `claude-sonnet-5-5` | Maliyet için segment çağrısı daha küçük modele alınabilir |
 | 14 | Auth / çok kiracı | Yok; README'de belirt | |
@@ -484,6 +503,6 @@ volumes: { pgdata: {} }
 ## 10. Onaylanan kararlar
 1. Kuyruk: Postgres (`SKIP LOCKED`), `queue.Queue` arayüzü arkasında.
 2. Dev: `docker compose watch` (`docker-compose.dev.yml`); tüm komutlar Docker içinde, host'ta Go/Node gerekmez.
-3. PLAN §9 varsayımları geçerli; #7 değişti (kanal seçimi yok). Değişkenler: `first_name`, `last_name`, `city`.
+3. PLAN §9 varsayımları geçerli; #7 değişti (kanal seçimi yok). Değişkenler: yalnız `first_name` ve `city`, sabit paylarla (20 / 15); SMS 160 ve konu 80 asla aşılmaz, konu tek satır. Düz DSL, structured outputs, refusal fallback beta'sı yok, SSE elle yazılmış ayrıştırıcıyla.
 4. LLM: varsayılan mock, `LLM_MODE=auto`; key doluysa Claude; `CLAUDE_MODEL` varsayılan `claude-sonnet-5-5`; `make test` daima mock; `make test-live` ayrı; mod log ve UI'da görünür.
 5. Kapsam: bonuslar yapılmayacak; kapsam dışı özellik için önce sorulacak.
