@@ -52,6 +52,12 @@ type MessageRequest struct {
 	Offer       offer.Offer // the incentive the messages must state
 	Policy      content.Policy
 	Previous    []Attempt
+	// Language is the language to write in (a content.Languages code; empty
+	// means the default). Reference is the text of ReferenceLanguage that this
+	// version must mirror; nil for the reference language itself.
+	Language          string
+	Reference         *content.Content
+	ReferenceLanguage string
 }
 
 // Client is implemented by the Claude client and by the mock.

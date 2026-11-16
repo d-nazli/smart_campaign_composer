@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"smartcampaign/internal/content"
+	"smartcampaign/internal/offer"
 	"smartcampaign/internal/segment"
 )
 
@@ -37,8 +39,12 @@ type ApproveResult struct {
 	// differ from what the screen showed earlier: the data moves on and "the last
 	// 30 days" slides. Queued is the truth.
 	Audience *segment.Audience `json:"audience,omitempty"`
-	// Warnings are the soft issues of the stored text (D46). They never block.
+	// Warnings are the soft issues of the stored text (D46), each marked with
+	// its language. They never block.
 	Warnings []content.Issue `json:"warnings"`
+	// Languages is how many people receive each language (reachable on at
+	// least one channel), counted at approval time.
+	Languages map[string]int `json:"languages,omitempty"`
 }
 
 // Approve freezes the campaign and enqueues one delivery per reachable
@@ -75,14 +81,11 @@ func (s *Service) Approve(ctx context.Context, id int64) (*ApproveResult, error)
 		return nil, fmt.Errorf("stored rule is corrupt: %w", err)
 	}
 
-	// The text is validated again: what is sent must satisfy every limit.
-	var c content.Content
-	if err := tx.QueryRow(ctx, `SELECT sms_body, email_subject, email_body FROM campaign_contents WHERE campaign_id=$1`, id).
-		Scan(&c.SMSBody, &c.EmailSubject, &c.EmailBody); err != nil {
-		return nil, fmt.Errorf("load content: %w", err)
-	}
-	if _, rep := s.policy.Validate(c); !rep.OK {
-		return nil, &InvalidContentError{Report: rep}
+	// The text is validated again, in every language: what is sent must satisfy
+	// every limit, and the languages must say the same thing.
+	set, err := s.approvableContents(ctx, tx, id)
+	if err != nil {
+		return nil, err
 	}
 
 	// The audience is counted now, with the same rule, consent and contact
@@ -115,12 +118,69 @@ func (s *Service) Approve(ctx context.Context, id int64) (*ApproveResult, error)
 	if q.Email, err = enqueue("email", segment.EmailReachableSQL); err != nil {
 		return nil, err
 	}
+	langs, err := segment.CountByLanguage(ctx, tx, compiled)
+	if err != nil {
+		return nil, err
+	}
+	langJSON, err := json.Marshal(langs)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE campaigns SET language_counts=$2 WHERE id=$1`, id, langJSON); err != nil {
+		return nil, fmt.Errorf("store language counts: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit approval: %w", err)
 	}
 
-	return &ApproveResult{ID: id, Status: StatusApproved, Queued: q, Audience: &aud,
-		Warnings: s.policy.Quality(c, rule.Offer.Normalize())}, nil
+	return &ApproveResult{ID: id, Status: StatusApproved, Queued: q, Audience: &aud, Languages: langs,
+		Warnings: s.warningsFor(set, rule.Offer.Normalize())}, nil
+}
+
+// approvableContents loads the text of every language and checks it as sending
+// requires: all languages present, each within the limits, all saying the same.
+func (s *Service) approvableContents(ctx context.Context, q queryer, id int64) (map[string]content.Content, error) {
+	stored, err := loadContents(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]content.Content{}
+	for code, sc := range stored {
+		set[code] = sc.Content
+	}
+	if err := requireAllLanguages(set); err != nil {
+		return nil, err
+	}
+	var issues []content.Issue
+	for _, l := range content.Languages {
+		if _, rep := s.policy.Validate(set[l.Code]); !rep.OK {
+			for _, i := range rep.Issues {
+				i.Language = l.Code
+				issues = append(issues, i)
+			}
+		}
+	}
+	issues = append(issues, content.Consistency(set)...)
+	if len(issues) > 0 {
+		return nil, &InvalidContentError{Report: content.Report{OK: false, Issues: issues, Warnings: []content.Issue{}}}
+	}
+	return set, nil
+}
+
+// warningsFor collects the soft issues of every language, marked with it.
+func (s *Service) warningsFor(set map[string]content.Content, o offer.Offer) []content.Issue {
+	out := []content.Issue{} // never nil: the API sends [] rather than null
+	for _, l := range content.Languages {
+		c, ok := set[l.Code]
+		if !ok {
+			continue
+		}
+		for _, i := range s.policy.Quality(c, o) {
+			i.Language = l.Code
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // alreadyApprovedOrRefuse handles a call that did not win the status change:
@@ -142,11 +202,13 @@ func (s *Service) alreadyApprovedOrRefuse(ctx context.Context, id int64) (*Appro
 		FROM deliveries WHERE campaign_id=$1`, id).Scan(&q.SMS, &q.Email); err != nil {
 		return nil, fmt.Errorf("count deliveries: %w", err)
 	}
-	var c content.Content
 	warnings := []content.Issue{}
-	if err := s.pool.QueryRow(ctx, `SELECT sms_body, email_subject, email_body FROM campaign_contents WHERE campaign_id=$1`, id).
-		Scan(&c.SMSBody, &c.EmailSubject, &c.EmailBody); err == nil {
-		warnings = s.policy.Quality(c, rowOffer(row))
+	if stored, err := loadContents(ctx, s.pool, id); err == nil {
+		set := map[string]content.Content{}
+		for code, sc := range stored {
+			set[code] = sc.Content
+		}
+		warnings = s.warningsFor(set, rowOffer(row))
 	}
 	return &ApproveResult{ID: id, Status: row.status, AlreadyApproved: true, Queued: q, Warnings: warnings}, nil
 }

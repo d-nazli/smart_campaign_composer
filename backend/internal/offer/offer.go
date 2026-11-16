@@ -175,7 +175,12 @@ var (
 		regexp.MustCompile(`(` + numberPattern + `)\s*(?:tl|try|₺|lira)`),
 		regexp.MustCompile(`₺\s*(` + numberPattern + `)`),
 	}
-	freeShippingPhrases = []string{"ucretsiz kargo", "kargo ucretsiz", "bedava kargo", "kargo bedava", "ucretsiz gonderim", "ucretsiz teslimat"}
+	// Free shipping, as it is written in each supported language (folded).
+	freeShippingPhrases = []string{
+		"ucretsiz kargo", "kargo ucretsiz", "bedava kargo", "kargo bedava", "ucretsiz gonderim", "ucretsiz teslimat", // tr
+		"free shipping", "free delivery", "shipping is free", "ships free", // en
+		"kostenloser versand", "kostenlosen versand", "kostenlose lieferung", "kostenfreier versand", "versandkostenfrei", "gratis versand", // de
+	}
 )
 
 func numbers(res []*regexp.Regexp, text string) []float64 {

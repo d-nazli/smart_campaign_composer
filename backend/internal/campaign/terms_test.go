@@ -166,7 +166,7 @@ func TestMessagesThatForgetTheTermsAreRepairedThenFallBackWithTheTerms(t *testin
 func TestEditedTextThatLosesTheLastDayIsWarnedAbout(t *testing.T) {
 	svc, _ := newService(t, mock.New(0))
 	v := createBrief(t, svc, mothersDay+"\n\nTüm müşterilere gönder.")
-	got, err := svc.SaveContent(context.Background(), v.ID, contentOf("{{first_name}}, 1000 TL ve üzeri alışverişte 100 TL indirim!", "100 TL indirim", "Merhaba {{first_name}}, 1000 TL ve üzeri alışverişte 100 TL indirim var."))
+	got, err := svc.SaveContents(context.Background(), v.ID, allLanguages(contentOf("{{first_name}}, 1000 TL ve üzeri alışverişte 100 TL indirim!", "100 TL indirim", "Merhaba {{first_name}}, 1000 TL ve üzeri alışverişte 100 TL indirim var.")))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { Segment } from '../types'
+import type { LanguageInfo, Segment } from '../types'
 import { funnel, share } from '../utils/funnel'
 import { describeOffer } from '../utils/formatOffer'
 import { describeCondition } from '../utils/formatRule'
+import { FALLBACK_LANGUAGES, languageSummary } from '../utils/languages'
 import AnimatedNumber from './AnimatedNumber.vue'
 
-const props = defineProps<{ segment: Segment; busy?: boolean }>()
+const props = defineProps<{ segment: Segment; busy?: boolean; languages?: LanguageInfo[] }>()
 const emit = defineEmits<{ (e: 'send-to-all'): void }>()
 
 const chips = computed(() => props.segment.conditions.map(describeCondition))
 const joiner = computed(() => (props.segment.match === 'any' ? 'veya' : 've'))
 const offerText = computed(() => describeOffer(props.segment.offer))
 const f = computed(() => (props.segment.audience ? funnel(props.segment.audience) : null))
+const spoken = computed(() => languageSummary(props.segment.languages, props.languages ?? FALLBACK_LANGUAGES))
 
 // Bars start empty and grow to their share once the card is on screen.
 const grown = ref(false)
@@ -77,6 +79,10 @@ const w = (n: number) => (grown.value && f.value ? `${share(n, f.value.matched)}
         <template v-if="f.smsOnly > 0 || f.emailOnly > 0">
           {{ f.both }} kişiye iki kanaldan, {{ f.smsOnly }} kişiye yalnız SMS, {{ f.emailOnly }} kişiye yalnız e-posta ile ulaşılır.
         </template>
+      </p>
+      <p v-if="spoken.length" class="langs" data-testid="audience-languages">
+        <span class="label">Mesaj dili</span>
+        <span v-for="l in spoken" :key="l.code" class="chip lang-chip">{{ l.display }} <strong class="num">{{ l.count }}</strong></span>
       </p>
       <p v-if="segment.audience.matched === 0" class="notice warn">Bu kurala uyan kimse yok. Brief'i değiştirmeyi deneyin.</p>
     </template>
@@ -157,6 +163,16 @@ const w = (n: number) => (grown.value && f.value ? `${share(n, f.value.matched)}
 .label {
   font-size: 0.9rem;
   color: var(--muted);
+}
+.langs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 0;
+}
+.lang-chip {
+  background: var(--accent-soft);
 }
 .value {
   font-size: 1.6rem;

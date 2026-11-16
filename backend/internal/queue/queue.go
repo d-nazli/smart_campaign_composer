@@ -26,6 +26,9 @@ type Delivery struct {
 
 	FirstName, City, Phone, Email string
 	SMSConsent, EmailConsent      bool
+	// Language is the recipient's language NOW (read at claim time): a person who
+	// changed it after the campaign was approved gets the new one.
+	Language string
 }
 
 // RetryKind says why a delivery goes back to the queue.
@@ -51,8 +54,8 @@ type Queue interface {
 	Observe(ctx context.Context, id int64, latency time.Duration) error
 	// Finish marks campaigns with nothing left to send as completed.
 	Finish(ctx context.Context, now time.Time) (int, error)
-	// Content returns the (frozen) message templates of a campaign.
-	Content(ctx context.Context, campaignID int64) (content.Content, error)
+	// Content returns the (frozen) message templates of a campaign in one language.
+	Content(ctx context.Context, campaignID int64, language string) (content.Content, error)
 }
 
 // PG is the Postgres implementation.
@@ -80,7 +83,7 @@ func (q *PG) Claim(ctx context.Context, channel string, limit int, lease time.Du
 			RETURNING d.id, d.campaign_id, d.user_id, d.channel, d.attempts, d.created_at
 		)
 		SELECT c.id, c.campaign_id, c.user_id, c.channel, c.attempts, c.created_at,
-		       u.first_name, u.city, coalesce(u.phone, ''), coalesce(u.email, ''), u.sms_consent, u.email_consent
+		       u.first_name, u.city, coalesce(u.phone, ''), coalesce(u.email, ''), u.sms_consent, u.email_consent, u.language
 		FROM claimed c JOIN users u ON u.id = c.user_id
 		ORDER BY c.id`, channel, now, limit, now.Add(lease))
 	if err != nil {
@@ -93,7 +96,7 @@ func (q *PG) Claim(ctx context.Context, channel string, limit int, lease time.Du
 	for rows.Next() {
 		var d Delivery
 		if err := rows.Scan(&d.ID, &d.CampaignID, &d.UserID, &d.Channel, &d.Attempts, &d.CreatedAt,
-			&d.FirstName, &d.City, &d.Phone, &d.Email, &d.SMSConsent, &d.EmailConsent); err != nil {
+			&d.FirstName, &d.City, &d.Phone, &d.Email, &d.SMSConsent, &d.EmailConsent, &d.Language); err != nil {
 			return nil, fmt.Errorf("claim: %w", err)
 		}
 		out = append(out, d)
@@ -164,12 +167,12 @@ func (q *PG) Finish(ctx context.Context, now time.Time) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
-func (q *PG) Content(ctx context.Context, campaignID int64) (content.Content, error) {
+func (q *PG) Content(ctx context.Context, campaignID int64, language string) (content.Content, error) {
 	var c content.Content
-	err := q.pool.QueryRow(ctx, `SELECT sms_body, email_subject, email_body FROM campaign_contents WHERE campaign_id=$1`, campaignID).
+	err := q.pool.QueryRow(ctx, `SELECT sms_body, email_subject, email_body FROM campaign_contents WHERE campaign_id=$1 AND language=$2`, campaignID, language).
 		Scan(&c.SMSBody, &c.EmailSubject, &c.EmailBody)
 	if err != nil {
-		return content.Content{}, fmt.Errorf("load content of campaign %d: %w", campaignID, err)
+		return content.Content{}, fmt.Errorf("load %s content of campaign %d: %w", language, campaignID, err)
 	}
 	return c, nil
 }

@@ -88,7 +88,9 @@ func (a *api) getInfo(w http.ResponseWriter, _ *http.Request) {
 			"subject_max":    content.SubjectMaxRunes,
 			"email_body_max": content.EmailBodyMaxRunes,
 		},
-		"variables": a.svc.Policy().Infos(),
+		"variables":        a.svc.Policy().Infos(),
+		"languages":        content.Languages,
+		"default_language": content.DefaultLanguage,
 	}
 	if a.info.LLMMode == "claude" {
 		out["model"] = a.info.Model
@@ -129,11 +131,26 @@ func (a *api) putContent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var c content.Content
-	if !decode(w, r, &c) {
+	// Either one text (the default language's: {"sms_body": ...}) or several
+	// ({"languages": {"tr": {...}, "en": {...}}}); the whole set must agree.
+	var body struct {
+		content.Content
+		Languages map[string]content.Content `json:"languages"`
+	}
+	if !decode(w, r, &body) {
 		return
 	}
-	v, err := a.svc.SaveContent(r.Context(), id, c)
+	var v *campaign.View
+	var err error
+	if body.Languages != nil {
+		if body.Content != (content.Content{}) {
+			writeError(w, http.StatusBadRequest, "invalid_input", "ya tek metin ya da languages gönderin, ikisini birden değil", nil)
+			return
+		}
+		v, err = a.svc.SaveContents(r.Context(), id, body.Languages)
+	} else {
+		v, err = a.svc.SaveContent(r.Context(), id, body.Content)
+	}
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -163,16 +180,20 @@ func (a *api) streamMessages(w http.ResponseWriter, r *http.Request) {
 	defer s.close()
 
 	err := a.svc.GenerateMessages(r.Context(), id, campaign.Events{
-		Attempt: func(n, max int) { s.send("attempt", map[string]int{"n": n, "max": max}) },
-		Delta:   func(field, text string) { s.send("delta", map[string]string{"field": field, "text": text}) },
-		Retry: func(next int, problems []string) {
-			s.send("retry", map[string]any{"next": next, "problems": problems})
+		Attempt: func(lang string, n, max int) {
+			s.send("attempt", map[string]any{"language": lang, "n": n, "max": max})
 		},
-		Validated: func(c content.Content, rep content.Report) {
-			s.send("validated", map[string]any{"content": c, "report": rep, "source": campaign.SourceLLM})
+		Delta: func(lang, field, text string) {
+			s.send("delta", map[string]string{"language": lang, "field": field, "text": text})
 		},
-		Fallback: func(reason string, c content.Content, rep content.Report) {
-			s.send("fallback", map[string]any{"reason": reason, "content": c, "report": rep, "source": campaign.SourceFallback})
+		Retry: func(lang string, next int, problems []string) {
+			s.send("retry", map[string]any{"language": lang, "next": next, "problems": problems})
+		},
+		Validated: func(lang string, c content.Content, rep content.Report) {
+			s.send("validated", map[string]any{"language": lang, "content": c, "report": rep, "source": campaign.SourceLLM})
+		},
+		Fallback: func(lang, reason string, c content.Content, rep content.Report) {
+			s.send("fallback", map[string]any{"language": lang, "reason": reason, "content": c, "report": rep, "source": campaign.SourceFallback})
 		},
 	})
 	if err != nil {

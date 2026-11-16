@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"smartcampaign/internal/content"
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/offer"
 )
@@ -49,6 +50,8 @@ type Call struct {
 	Brief    string
 	Previous []llm.Attempt
 	Offer    offer.Offer
+	// Language is the language asked for (messages only).
+	Language string
 }
 
 // Client implements llm.Client.
@@ -61,6 +64,10 @@ type Client struct {
 	segIdx   int
 	msgIdx   int
 	calls    []Call
+
+	// langMessages scripts the messages of one non-default language.
+	langMessages map[string][]Step
+	langIdx      map[string]int
 }
 
 // New returns the smart mock. delay is the pause between streamed fragments
@@ -71,6 +78,18 @@ func New(delay time.Duration) *Client { return &Client{delay: delay} }
 // the last one when it runs out. An empty script behaves like Smart.
 func NewScripted(segment []Step, messages []Step) *Client {
 	return &Client{segment: segment, messages: messages}
+}
+
+// WithMessages scripts the answers for one language other than the default
+// (whose script is NewScripted's messages), and returns the client.
+func (c *Client) WithMessages(lang string, steps ...Step) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.langMessages == nil {
+		c.langMessages, c.langIdx = map[string][]Step{}, map[string]int{}
+	}
+	c.langMessages[lang] = steps
+	return c
 }
 
 func (c *Client) Mode() string  { return "mock" }
@@ -105,12 +124,23 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 }
 
 func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta func(string)) (llm.Output, error) {
+	lang := content.NormalizeLanguage(req.Language)
 	c.mu.Lock()
-	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer})
-	step := next(c.messages, &c.msgIdx)
+	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Language: lang})
+	// A script describes the reference (default) language, the one a test is
+	// about; the other languages are answered like a working model would unless
+	// WithMessages scripts them.
+	step := Step{Kind: Smart}
+	if lang == content.DefaultLanguage {
+		step = next(c.messages, &c.msgIdx)
+	} else if steps, ok := c.langMessages[lang]; ok {
+		idx := c.langIdx[lang]
+		step = next(steps, &idx)
+		c.langIdx[lang] = idx
+	}
 	c.mu.Unlock()
 
-	out, err := resolve(step, func() string { return smartMessages(req.Brief, req.Offer) })
+	out, err := resolve(step, func() string { return smartMessagesFor(lang, req.Brief, req.Offer) })
 	if err != nil {
 		return out, err
 	}

@@ -21,6 +21,7 @@ import (
 	"smartcampaign/internal/clock"
 	"smartcampaign/internal/content"
 	"smartcampaign/internal/llm/mock"
+	"smartcampaign/internal/offer"
 	"smartcampaign/internal/provider"
 	"smartcampaign/internal/queue"
 	"smartcampaign/internal/testdb"
@@ -116,8 +117,11 @@ func sqlCampaign(t *testing.T, pool *pgxpool.Pool, nSMS, nEmail int) int64 {
 	if err := pool.QueryRow(ctx, `INSERT INTO campaigns (brief, status) VALUES ('b', 'approved') RETURNING id`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	_, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, sms_body, email_subject, email_body, source)
-		VALUES ($1, '{{first_name}}, %15 indirim seni bekliyor!', '%15 indirim', 'Merhaba {{first_name}}, %15 indirim var.', 'llm')`, id)
+	// One text per language, as a real approval guarantees.
+	_, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, language, sms_body, email_subject, email_body, source) VALUES
+		($1, 'tr', '{{first_name}}, %15 indirim seni bekliyor!', '%15 indirim', 'Merhaba {{first_name}}, %15 indirim var.', 'llm'),
+		($1, 'en', '{{first_name}}, 15% off is waiting for you!', '15% off', 'Hi {{first_name}}, enjoy 15% off.', 'llm'),
+		($1, 'de', '{{first_name}}, 15 % Rabatt wartet auf Sie!', '15 % Rabatt', 'Hallo {{first_name}}, 15 % Rabatt für Sie.', 'llm')`, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +258,7 @@ func TestApprovedCampaignIsDeliveredToEveryReachableRecipientOnce(t *testing.T) 
 		if r.Channel == "email" && (utf8.RuneCountInString(r.Subject) > 80 || strings.ContainsAny(r.Subject, "\r\n")) {
 			t.Fatalf("bad subject: %q", r.Subject)
 		}
-		if !strings.Contains(r.Body, "%15") {
+		if !(offer.Offer{Kind: offer.KindPercent, Value: 15}).Mentions(r.Body) {
 			t.Fatalf("the offer is missing from a sent message: %q", r.Body)
 		}
 	}
@@ -540,5 +544,89 @@ func TestEveryProviderCallIsTimed(t *testing.T) {
 	}
 	if micros != int64(calls)*40_000 {
 		t.Fatalf("total %dµs for %d calls of 40ms each", micros, calls)
+	}
+}
+
+// ---- languages ---------------------------------------------------------------------
+
+// Everyone gets the text in THEIR language, with that language's wording for a
+// missing name, and each person gets it once.
+func TestEveryRecipientGetsTheirOwnLanguage(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	id, approved := approvedCampaign(t, pool)
+	clk := fakeClock()
+	tp := newProvider(t, quiet(), clk)
+	w := newWorker(t, queue.NewPG(pool), tp.URL, clk, testConfig())
+	drain(t, w, pool, clk)
+
+	// Which language does each address belong to?
+	langOf := map[string]string{}
+	rows, err := pool.Query(ctx, `SELECT coalesce(phone, ''), coalesce(email, ''), language FROM users`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var phone, email, lang string
+		if err := rows.Scan(&phone, &email, &lang); err != nil {
+			t.Fatal(err)
+		}
+		for key, addr := range map[string]string{"sms:" + phone: phone, "email:" + email: email} {
+			if addr == "" {
+				continue
+			}
+			if _, dup := langOf[key]; dup {
+				langOf[key] = "?" // the malformed addresses of the seed are shared by several people
+			} else {
+				langOf[key] = lang
+			}
+		}
+	}
+	rows.Close()
+
+	wording := map[string]string{"tr": "indirim", "en": "off", "de": "Rabatt"}
+	perLang := map[string]int{}
+	for _, r := range tp.requests() {
+		lang, ok := langOf[r.Channel+":"+r.To]
+		if !ok || lang == "?" {
+			continue // a malformed address nobody (or several people) own
+		}
+		perLang[lang]++
+		if !strings.Contains(r.Body, wording[lang]) {
+			t.Fatalf("a %s speaker got %q", lang, r.Body)
+		}
+	}
+	for _, lang := range []string{"tr", "en", "de"} {
+		if perLang[lang] == 0 {
+			t.Fatalf("nobody got a %s message: %v", lang, perLang)
+		}
+	}
+	if c := counts(t, pool, id); c["sms/sent"] == 0 || c["email/sent"] == 0 {
+		t.Fatalf("%v (queued %+v)", c, approved.Queued)
+	}
+}
+
+// A delivery whose recipient's language has no stored text is not sent in some
+// other language by accident: it waits and is retried (and the problem is loud).
+func TestAMissingLanguageTextIsNeverReplacedByAnotherLanguage(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	id := sqlCampaign(t, pool, 0, 0)
+	if _, err := pool.Exec(ctx, `DELETE FROM campaign_contents WHERE campaign_id=$1 AND language='de'`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO deliveries (campaign_id, user_id, channel)
+		SELECT $1, id, 'sms' FROM users WHERE language='de' AND sms_consent AND phone ~ '^\+90[0-9]{10}$' ORDER BY id LIMIT 1`, id); err != nil {
+		t.Fatal(err)
+	}
+	clk := fakeClock()
+	tp := newProvider(t, quiet(), clk)
+	w := newWorker(t, queue.NewPG(pool), tp.URL, clk, testConfig())
+	if n, err := w.RunOnce(ctx); err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if got := len(tp.requests()); got != 0 {
+		t.Fatalf("%d messages were sent without a German text", got)
+	}
+	if c := counts(t, pool, id); c["sms/pending"] != 1 {
+		t.Fatalf("the delivery should wait for its text: %v", c)
 	}
 }

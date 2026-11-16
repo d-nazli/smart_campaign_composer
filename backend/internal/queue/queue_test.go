@@ -313,11 +313,11 @@ func TestFinishCompletesACampaignWithNoRecipients(t *testing.T) {
 
 func TestContentReturnsTheFrozenTemplates(t *testing.T) {
 	f := setup(t, 0, 0)
-	c, err := f.q.Content(ctx, f.campaign)
+	c, err := f.q.Content(ctx, f.campaign, "tr")
 	if err != nil || c.SMSBody != "sms {{first_name}}" || c.EmailSubject != "konu" || c.EmailBody != "govde" {
 		t.Fatalf("%+v %v", c, err)
 	}
-	if _, err := f.q.Content(ctx, 424242); err == nil {
+	if _, err := f.q.Content(ctx, 424242, "tr"); err == nil {
 		t.Fatal("unknown campaign must be an error")
 	}
 }

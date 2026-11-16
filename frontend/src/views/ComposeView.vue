@@ -4,9 +4,10 @@ import type { AppInfo } from '../api/info'
 import { approveCampaign, createCampaign, getCampaign, saveContent } from '../api/campaigns'
 import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
-import { emptyContent } from '../composables/streamState'
-import type { ApproveResult, Campaign, Issue, MessageContent } from '../types'
+import { allResults, retryNotes } from '../composables/streamState'
+import type { ApproveResult, Campaign, Issue, LanguageCode, MessageContent } from '../types'
 import { approvalDifference, shouldPoll } from '../utils/delivery'
+import { DEFAULT_LANGUAGE, FALLBACK_LANGUAGES, changedLanguages, draftsFrom, emptyMessage, hasAllLanguages, storedByLanguage } from '../utils/languages'
 import { checkContent } from '../utils/limits'
 import { attemptLabel } from '../utils/preview'
 import { withAllCustomers } from '../utils/sendToAll'
@@ -14,11 +15,15 @@ import { currentStep, type StepKey } from '../utils/steps'
 import { barAction, direction, nextStep, prevStep, reachableSteps } from '../utils/wizard'
 import ApprovalCard from '../components/ApprovalCard.vue'
 import DeliveryProgress from '../components/DeliveryProgress.vue'
+import LanguageTabs, { type TabStatus } from '../components/LanguageTabs.vue'
 import MessageEditor from '../components/MessageEditor.vue'
 import SegmentCard from '../components/SegmentCard.vue'
 import StepBar from '../components/StepBar.vue'
 
 const props = defineProps<{ info: AppInfo | null }>()
+
+// Built in script: a literal double brace in the template would be read as interpolation.
+const placeholderHint = '{{' + 'değişkenler' + '}}'
 
 const EXAMPLE_BRIEF =
   "Son 30 günde sepetine ürün ekleyip alışveriş yapmayan İstanbul'daki kullanıcılara %30 indirim hatırlatması gönder. Samimi ama kısa olsun."
@@ -32,7 +37,17 @@ const creating = ref(false)
 const createError = ref<ApiError | null>(null)
 
 const { state: stream, start: startStream, reset: resetStream } = useGenerationStream()
-const draft = ref<MessageContent>(emptyContent())
+
+// One text per language. The tabs switch which one the editor shows; saving sends all of them,
+// because the languages must say the same thing.
+const languages = computed(() => props.info?.languages ?? FALLBACK_LANGUAGES)
+const codes = computed(() => languages.value.map((l) => l.code))
+const drafts = ref<Record<LanguageCode, MessageContent>>(draftsFrom(null, FALLBACK_LANGUAGES))
+const activeLang = ref<LanguageCode>(DEFAULT_LANGUAGE)
+const draft = computed<MessageContent>({
+  get: () => drafts.value[activeLang.value] ?? emptyMessage(),
+  set: (v) => (drafts.value = { ...drafts.value, [activeLang.value]: v }),
+})
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const serverIssues = ref<Issue[]>([])
@@ -44,13 +59,21 @@ const approved = ref<ApproveResult | null>(null)
 
 // After approval the text is frozen: earlier steps still open, read-only.
 const frozen = computed(() => ['approved', 'sending', 'completed'].includes(campaign.value?.status ?? ''))
-const unsaved = computed(() => {
-  const c = campaign.value?.content
-  return !!c && (c.sms_body !== draft.value.sms_body || c.email_subject !== draft.value.email_subject || c.email_body !== draft.value.email_body)
-})
+const unsaved = computed(() => changedLanguages(campaign.value, drafts.value).length > 0)
 const streaming = computed(() => stream.value.phase === 'streaming')
+const mismatches = computed<Issue[]>(() => [
+  ...(campaign.value?.mismatches ?? []),
+  ...serverIssues.value.filter((i) => i.code === 'language_mismatch' && !(campaign.value?.mismatches ?? []).some((m) => m.message === i.message)),
+])
 const canApprove = computed(
-  () => campaign.value?.status === 'content_ready' && !streaming.value && !saving.value && !unsaved.value && !approving.value,
+  () =>
+    campaign.value?.status === 'content_ready' &&
+    hasAllLanguages(campaign.value, languages.value) &&
+    (campaign.value?.mismatches?.length ?? 0) === 0 &&
+    !streaming.value &&
+    !saving.value &&
+    !unsaved.value &&
+    !approving.value,
 )
 const difference = computed(() =>
   approved.value ? approvalDifference(approved.value.queued, campaign.value?.segment?.audience) : null,
@@ -59,13 +82,19 @@ const difference = computed(() =>
 const limits = computed(() => props.info?.limits)
 const variables = computed(() => props.info?.variables ?? [])
 const segmentReady = computed(() => campaign.value?.segment?.status === 'ok' && campaign.value.status !== 'draft')
-const hasContent = computed(() => stream.value.result !== null || campaign.value?.content != null)
+const hasContent = computed(() => allResults(stream.value, codes.value) || campaign.value?.content != null)
 const briefChanged = computed(() => !!campaign.value && brief.value.trim() !== campaign.value.brief.trim())
 const busy = computed(() => creating.value || streaming.value || saving.value || approving.value)
 
-const localCheck = computed(() =>
-  limits.value ? checkContent(draft.value, limits.value, variables.value) : { smsLength: 0, subjectLength: 0, issues: [] },
-)
+// The limits are checked per language; saving needs every language clean.
+const localChecks = computed(() => {
+  const out: Record<LanguageCode, { issues: Issue[] }> = {}
+  for (const code of codes.value) {
+    out[code] = limits.value ? checkContent(drafts.value[code] ?? emptyMessage(), limits.value, variables.value) : { issues: [] }
+  }
+  return out
+})
+const anyLocalIssues = computed(() => Object.values(localChecks.value).some((c) => c.issues.length > 0))
 
 // ---- wizard -----------------------------------------------------------------------
 const view = ref<StepKey>('brief')
@@ -121,7 +150,7 @@ const barDisabled = computed(() => {
     case 'generate':
       return !segmentReady.value || streaming.value
     case 'save-next':
-      return busy.value || !hasContent.value || (unsaved.value ? localCheck.value.issues.length > 0 : campaign.value?.status !== 'content_ready')
+      return busy.value || !hasContent.value || (unsaved.value ? anyLocalIssues.value : campaign.value?.status !== 'content_ready')
     case 'ask':
       return !canApprove.value
     case 'send':
@@ -205,30 +234,67 @@ watch(
 )
 onBeforeUnmount(stopPolling)
 
-// While streaming, the editor shows the live preview.
+// While streaming, every language's tab shows its live preview.
 watch(
-  () => stream.value.draft,
-  (d) => {
-    if (streaming.value) draft.value = { ...d }
+  () => stream.value.langs,
+  (langs) => {
+    if (!streaming.value) return
+    const next = { ...drafts.value }
+    for (const [code, l] of Object.entries(langs)) next[code] = { ...l.draft }
+    drafts.value = next
   },
   { deep: true },
 )
-// When a generation finishes, the validated (or fallback) text becomes editable.
+// When a generation finishes, the validated (or fallback) texts become editable.
 watch(
-  () => stream.value.result,
-  (r) => {
-    if (r) {
-      draft.value = { ...r.content }
-      serverIssues.value = []
-      saveError.value = null
+  () => allResults(stream.value, codes.value),
+  (done) => {
+    if (!done) return
+    const next = { ...drafts.value }
+    for (const code of codes.value) {
+      const r = stream.value.langs[code]?.result
+      if (r) next[code] = { ...r.content }
     }
+    drafts.value = next
+    serverIssues.value = []
+    saveError.value = null
   },
 )
 
 // Warnings describe the SAVED text; while a new text streams in there is nothing to warn about yet.
-const warnings = computed<Issue[]>(() => (streaming.value ? [] : (campaign.value?.content?.report.warnings ?? [])))
+const warningsByLang = computed<Record<LanguageCode, Issue[]>>(() => {
+  const out: Record<LanguageCode, Issue[]> = {}
+  if (streaming.value) return out
+  for (const [code, sc] of Object.entries(storedByLanguage(campaign.value))) {
+    out[code] = (sc.report.warnings ?? []).map((w) => ({ ...w, language: code }))
+  }
+  return out
+})
+const warnings = computed<Issue[]>(() => warningsByLang.value[activeLang.value] ?? [])
+const allWarnings = computed<Issue[]>(() => codes.value.flatMap((c) => warningsByLang.value[c] ?? []))
 
-const source = computed(() => stream.value.result?.source ?? campaign.value?.content?.source ?? null)
+const source = computed(() => stream.value.langs[activeLang.value]?.result?.source ?? storedByLanguage(campaign.value)[activeLang.value]?.source ?? null)
+
+// What the tabs show about each language.
+const tabStatus = computed<Record<LanguageCode, TabStatus>>(() => {
+  const out: Record<LanguageCode, TabStatus> = {}
+  const changed = new Set(changedLanguages(campaign.value, drafts.value))
+  for (const code of codes.value) {
+    const l = stream.value.langs[code]
+    out[code] = {
+      issues: (localChecks.value[code]?.issues.length ?? 0) + serverIssues.value.filter((i) => i.language === code && i.code !== 'language_mismatch').length,
+      writing: streaming.value && !l?.result,
+      mismatch: mismatches.value.some((m) => m.language === code),
+      edited: changed.has(code),
+    }
+  }
+  return out
+})
+const notes = computed(() => retryNotes(stream.value))
+// Issues of the language on screen (the server names the language of each one it rejects).
+const serverIssuesHere = computed(() => serverIssues.value.filter((i) => i.code !== 'language_mismatch' && (!i.language || i.language === activeLang.value)))
+const activeAttempt = computed(() => stream.value.langs[activeLang.value]?.attempt ?? null)
+const langName = (code: LanguageCode) => languages.value.find((l) => l.code === code)?.display ?? code
 
 const fallbackText = computed(() => {
   switch (stream.value.fallbackReason) {
@@ -250,7 +316,7 @@ function setUrl(id: number | null) {
 
 function adopt(c: Campaign) {
   campaign.value = c
-  if (c.content) draft.value = { sms_body: c.content.sms_body, email_subject: c.content.email_subject, email_body: c.content.email_body }
+  if (c.content) drafts.value = draftsFrom(c, languages.value)
 }
 
 async function submitBrief() {
@@ -261,7 +327,8 @@ async function submitBrief() {
   approved.value = null
   approveError.value = null
   resetStream()
-  draft.value = emptyContent()
+  drafts.value = draftsFrom(null, languages.value)
+  activeLang.value = DEFAULT_LANGUAGE
   try {
     const c = await createCampaign(brief.value)
     adopt(c)
@@ -288,7 +355,7 @@ async function generate() {
   serverIssues.value = []
   go('messages') // the person watches the text arrive
   await startStream(campaign.value.id)
-  if (stream.value.result) {
+  if (allResults(stream.value, codes.value)) {
     try {
       adopt(await getCampaign(campaign.value.id)) // pick up status = content_ready
     } catch {
@@ -298,17 +365,20 @@ async function generate() {
 }
 
 async function save() {
-  if (!campaign.value || saving.value || localCheck.value.issues.length > 0) return
+  if (!campaign.value || saving.value || anyLocalIssues.value) return
   saving.value = true
   saveError.value = null
   serverIssues.value = []
   try {
-    adopt(await saveContent(campaign.value.id, draft.value))
+    adopt(await saveContent(campaign.value.id, drafts.value))
     resetStream()
   } catch (e) {
     const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
     saveError.value = err.message
     serverIssues.value = err.details?.report?.issues ?? []
+    // Show the language that has the first problem.
+    const first = serverIssues.value.find((i) => i.language && i.code !== 'language_mismatch')
+    if (first?.language) activeLang.value = first.language
   } finally {
     saving.value = false
   }
@@ -377,7 +447,7 @@ onMounted(async () => {
 
           <!-- 2 · Kitle -->
           <template v-else-if="view === 'audience'">
-            <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" :busy="creating || frozen" @send-to-all="sendToAll" />
+            <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" :languages="languages" :busy="creating || frozen" @send-to-all="sendToAll" />
             <section v-else class="card" role="status">
               <h2>Kitle</h2>
               <p class="muted">Kitle çıkarılıyor…</p>
@@ -388,33 +458,42 @@ onMounted(async () => {
           <section v-else-if="view === 'messages'" class="card">
             <div class="head">
               <h2>Mesajlar</h2>
-              <span v-if="streaming" class="working" :class="{ fixing: (stream.attempt?.n ?? 1) > 1 }" role="status" data-testid="attempt">
-                <span class="pulse" aria-hidden="true" />{{ attemptLabel(stream.attempt) }}
+              <span v-if="streaming" class="working" :class="{ fixing: (activeAttempt?.n ?? 1) > 1 }" role="status" data-testid="attempt">
+                <span class="pulse" aria-hidden="true" />{{ langName(activeLang) }}: {{ attemptLabel(activeAttempt) }}
               </span>
               <button v-if="!frozen && !streaming && hasContent && segmentReady" class="regen" @click="generate">Yeniden üret</button>
             </div>
 
             <p v-if="frozen" class="notice info" role="status">Kampanya onaylandı; metin artık değiştirilemez.</p>
 
-            <p v-if="streaming && stream.retryProblems.length" class="notice warn" role="status">
+            <p v-if="streaming && notes.length" class="notice warn" role="status">
               Önceki deneme sınırlara uymadığı için model düzeltiyor:
-              <span v-for="p in stream.retryProblems" :key="p" class="block">• {{ p }}</span>
+              <template v-for="n in notes" :key="n.language">
+                <span v-for="p in n.problems" :key="n.language + p" class="block">• {{ langName(n.language) }}: {{ p }}</span>
+              </template>
             </p>
             <p v-if="stream.fallbackReason" class="notice warn" role="alert">
               <strong>{{ fallbackText }}</strong> Hazır bir şablon yerleştirildi; lütfen metni düzenleyin. Şablon da tüm sınırlara uyar.
             </p>
             <p v-if="stream.error" class="notice error" role="alert">{{ stream.error.message }}</p>
 
-            <MessageEditor
-              v-if="limits && (hasContent || streaming)"
-              v-model="draft"
-              :readonly="streaming || frozen"
-              :typing="streaming"
-              :limits="limits"
-              :variables="variables"
-              :server-issues="serverIssues"
-              :warnings="warnings"
-            />
+            <template v-if="limits && (hasContent || streaming)">
+              <LanguageTabs v-model="activeLang" :languages="languages" :status="tabStatus" />
+              <div v-if="mismatches.length" class="notice error" role="alert" data-testid="mismatch">
+                <strong>Diller aynı şeyi söylemiyor.</strong> İndirim oranı, tutar, tarih ve {{ placeholderHint }} her dilde aynı olmalı:
+                <span v-for="m in mismatches" :key="m.message" class="block">• {{ m.message }}</span>
+              </div>
+              <MessageEditor
+                v-model="draft"
+                :readonly="streaming || frozen"
+                :typing="streaming"
+                :limits="limits"
+                :variables="variables"
+                :server-issues="serverIssuesHere"
+                :warnings="warnings"
+                :language="activeLang"
+              />
+            </template>
             <div v-else-if="!streaming" class="empty">
               <p class="muted">Henüz mesaj yok.</p>
               <button v-if="segmentReady" class="primary" @click="generate">Mesajları üret</button>
@@ -432,7 +511,8 @@ onMounted(async () => {
             <ApprovalCard
               v-if="campaign?.segment && (campaign.status === 'content_ready' || frozen)"
               :segment="campaign.segment"
-              :warnings="warnings"
+              :warnings="allWarnings"
+              :languages="languages"
               :confirming="confirming"
               :frozen="frozen"
               :error="approveError"

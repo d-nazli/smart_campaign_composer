@@ -120,20 +120,10 @@ func validISODate(s string) bool {
 
 // MinSpendPhrase is how the minimum reads in a sentence: "1000 TL ve üzeri
 // alışverişte". Empty when the offer has no minimum.
-func (o Offer) MinSpendPhrase() string {
-	if o.MinSpend <= 0 {
-		return ""
-	}
-	return FormatNumber(o.MinSpend) + " TL ve üzeri alışverişte"
-}
+func (o Offer) MinSpendPhrase() string { return o.MinSpendPhraseIn("tr") }
 
 // ExpiryPhrase is "Son kullanım: 31.12.2026". Empty when there is no expiry.
-func (o Offer) ExpiryPhrase() string {
-	if o.ExpiresAt == "" {
-		return ""
-	}
-	return "Son kullanım: " + FormatDate(o.ExpiresAt)
-}
+func (o Offer) ExpiryPhrase() string { return o.ExpiryPhraseIn("tr") }
 
 // DateConflicts lists the dates (dd.mm.yyyy) in text that are not the offer's
 // expiry. When the brief gives no expiry, any date is an invention.

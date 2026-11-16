@@ -28,6 +28,14 @@ type messagesJSON struct {
 	EmailBody    string `json:"email_body"`
 }
 
+// smartMessagesFor writes the copy in the requested language.
+func smartMessagesFor(lang, text string, o offer.Offer) string {
+	if lang == "en" || lang == "de" {
+		return smartMessagesIn(lang, text, o)
+	}
+	return smartMessages(text, o)
+}
+
 // smartMessages writes believable Turkish copy that follows the brief's tone
 // and states the offer, always inside the SMS/subject limits and without
 // repeating words.

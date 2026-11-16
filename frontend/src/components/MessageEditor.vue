@@ -18,6 +18,8 @@ const props = defineProps<{
   serverIssues?: Issue[]
   /** Quality warnings for the saved text (offer missing, repeated word); they do not block saving. */
   warnings?: Issue[]
+  /** The language being edited: decides which fallback word the hint names. */
+  language?: string
 }>()
 const emit = defineEmits<{ 'update:modelValue': [MessageContent] }>()
 
@@ -30,7 +32,7 @@ const tokens = computed(() =>
     name: v.name,
     token: '{{' + v.name + '}}',
     budget: v.budget,
-    hint: `${v.budget} karakter pay ayrılır; kişinin değeri bundan uzunsa veya boşsa “${v.fallback}” yazılır`,
+    hint: `${v.budget} karakter pay ayrılır; kişinin değeri bundan uzunsa veya boşsa “${v.fallbacks?.[props.language ?? ''] ?? v.fallback}” yazılır`,
   })),
 )
 

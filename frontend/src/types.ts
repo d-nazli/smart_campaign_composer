@@ -8,12 +8,25 @@ export interface MessageContent {
   email_body: string
 }
 
+/** A language code the campaign is written in (see GET /api/info). */
+export type LanguageCode = string
+
+export interface LanguageInfo {
+  code: LanguageCode
+  /** English name. */
+  name: string
+  /** The language's own name, shown on the tabs. */
+  display: string
+}
+
 export interface Issue {
   field: ContentField
   code: string
   message: string
   length?: number
   limit?: number
+  /** Set when the issue belongs to one language of the campaign. */
+  language?: LanguageCode
 }
 
 export interface Report {
@@ -65,11 +78,14 @@ export interface Segment {
   offer?: Offer
   /** A one-click answer to `question`: "all_customers" offers the "send to all" button. */
   suggestion?: 'all_customers'
+  /** How many reachable people speak each language, e.g. {"tr": 120, "en": 45}. */
+  languages?: Record<LanguageCode, number>
 }
 
 export type ContentSource = 'llm' | 'fallback' | 'edited'
 
 export interface StoredContent extends MessageContent {
+  language: LanguageCode
   source: ContentSource
   report: Report
   updated_at: string
@@ -113,6 +129,8 @@ export interface ApproveResult {
   queued: { sms: number; email: number }
   /** Audience counted at approval time (absent on a repeated approval). */
   audience?: Audience
+  /** How many people receive each language. */
+  languages?: Record<LanguageCode, number>
   warnings: Issue[]
 }
 
@@ -121,7 +139,11 @@ export interface Campaign {
   brief: string
   status: CampaignStatus
   segment?: Segment
+  /** The reference (default) language's text; the other languages are in `translations`. */
   content?: StoredContent
+  translations?: Record<LanguageCode, StoredContent>
+  /** Where the languages do not say the same thing (empty when they agree). */
+  mismatches?: Issue[]
   /** Present once the campaign has been approved. */
   delivery?: DeliveryProgress
   created_at: string
@@ -131,6 +153,8 @@ export interface VariableInfo {
   name: string
   budget: number
   fallback: string
+  /** The replacement word in every language. */
+  fallbacks?: Record<LanguageCode, string>
 }
 
 export interface Limits {

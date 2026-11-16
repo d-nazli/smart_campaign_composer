@@ -247,25 +247,56 @@ func TestStreamMessagesOverSSE(t *testing.T) {
 	}
 
 	events := readEvents(t, resp.Body)
-	if got := names(events); got != "attempt,delta,validated,done" {
+	// Every event says which language it is about; the reference language's own
+	// sequence is the familiar one, and the others each end validated.
+	var refEvents, all []event
+	validated := map[string]map[string]any{}
+	built := map[string]map[string]string{}
+	for _, e := range events {
+		lang, _ := e.Data["language"].(string)
+		if e.Name == "done" {
+			refEvents = append(refEvents, e)
+			continue
+		}
+		if lang == "" {
+			t.Fatalf("event %s has no language: %v", e.Name, e.Data)
+		}
+		all = append(all, e)
+		if lang == "tr" {
+			refEvents = append(refEvents, e)
+		}
+		switch e.Name {
+		case "validated":
+			validated[lang] = e.Data
+		case "delta":
+			if built[lang] == nil {
+				built[lang] = map[string]string{}
+			}
+			built[lang][e.Data["field"].(string)] += e.Data["text"].(string)
+		}
+	}
+	if got := names(refEvents); got != "attempt,delta,validated,done" {
 		t.Fatalf("events: %s", got)
 	}
-	built := map[string]string{}
-	for _, e := range events {
-		if e.Name == "delta" {
-			built[e.Data["field"].(string)] += e.Data["text"].(string)
+	if events[len(events)-1].Name != "done" {
+		t.Fatalf("the stream must end with done: %s", names(events))
+	}
+	for _, lang := range []string{"tr", "en", "de"} {
+		v, ok := validated[lang]
+		if !ok {
+			t.Fatalf("no validated event for %s", lang)
+		}
+		final := v["content"].(map[string]any)
+		for _, f := range []string{"sms_body", "email_subject", "email_body"} {
+			if built[lang][f] != final[f] || built[lang][f] == "" {
+				t.Fatalf("%s field %s: streamed %q, final %q", lang, f, built[lang][f], final[f])
+			}
+		}
+		if report := v["report"].(map[string]any); report["ok"] != true {
+			t.Fatalf("%s report: %v", lang, report)
 		}
 	}
-	final := events[len(events)-2].Data["content"].(map[string]any)
-	for _, f := range []string{"sms_body", "email_subject", "email_body"} {
-		if built[f] != final[f] || built[f] == "" {
-			t.Fatalf("field %s: streamed %q, final %q", f, built[f], final[f])
-		}
-	}
-	report := events[len(events)-2].Data["report"].(map[string]any)
-	if report["ok"] != true {
-		t.Fatalf("report: %v", report)
-	}
+	_ = all
 
 	// The result is stored.
 	_, body := do(t, "GET", fmt.Sprintf("%s/api/campaigns/%d", srv.URL, id), nil)
@@ -376,7 +407,8 @@ func TestPutContentValidatesLikeTheModelOutput(t *testing.T) {
 		t.Fatalf("code = %s", out.Error.Code)
 	}
 
-	resp, body = do(t, "PUT", url, map[string]string{"sms_body": "Merhaba {{ first_name }}!", "email_subject": "Konu", "email_body": "Gövde"})
+	one := map[string]string{"sms_body": "Merhaba {{ first_name }}!", "email_subject": "Konu", "email_body": "Gövde"}
+	resp, body = do(t, "PUT", url, map[string]any{"languages": map[string]any{"tr": one, "en": one, "de": one}})
 	if resp.StatusCode != 200 || !strings.Contains(string(body), `"source":"edited"`) || !strings.Contains(string(body), "Merhaba {{first_name}}!") {
 		t.Fatalf("%d %s", resp.StatusCode, body)
 	}
@@ -394,7 +426,11 @@ func TestApproveOverHTTP(t *testing.T) {
 	}
 
 	resp, body = do(t, "PUT", fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id),
-		map[string]string{"sms_body": "{{first_name}}, %30 indirim seni bekliyor!", "email_subject": "%30 indirim", "email_body": "Merhaba {{first_name}}, %30 indirim var."})
+		map[string]any{"languages": map[string]any{
+			"tr": map[string]string{"sms_body": "{{first_name}}, %30 indirim seni bekliyor!", "email_subject": "%30 indirim", "email_body": "Merhaba {{first_name}}, %30 indirim var."},
+			"en": map[string]string{"sms_body": "{{first_name}}, 30% off is waiting for you!", "email_subject": "30% off", "email_body": "Hi {{first_name}}, enjoy 30% off."},
+			"de": map[string]string{"sms_body": "{{first_name}}, 30 % Rabatt wartet auf Sie!", "email_subject": "30 % Rabatt", "email_body": "Hallo {{first_name}}, 30 % Rabatt für Sie."},
+		}})
 	if resp.StatusCode != 200 {
 		t.Fatalf("put: %d %s", resp.StatusCode, body)
 	}

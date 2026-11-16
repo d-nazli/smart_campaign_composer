@@ -32,6 +32,9 @@ const (
 	CodeOfferMissing      = "offer_missing"
 	CodeOfferConflict     = "offer_conflict"
 	CodeRepeatedWord      = "repeated_word"
+	// CodeLanguageMismatch: two languages of one campaign do not say the same
+	// thing (different discount, amount, date or placeholders).
+	CodeLanguageMismatch = "language_mismatch"
 )
 
 // Issue is one validation problem. Message is written in Turkish for the UI and
@@ -42,6 +45,9 @@ type Issue struct {
 	Message string `json:"message"`
 	Length  int    `json:"length,omitempty"`
 	Limit   int    `json:"limit,omitempty"`
+	// Language is set when the issue belongs to one language of a multi-language
+	// campaign (empty for the single-text checks of Validate).
+	Language string `json:"language,omitempty"`
 }
 
 // Report is the outcome of Validate. SMSLength and SubjectLength are the

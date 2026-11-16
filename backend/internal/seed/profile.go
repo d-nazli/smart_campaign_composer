@@ -23,7 +23,7 @@ var genderShares = []struct {
 }{{"female", 48}, {"male", 48}, {"other", 2}}
 
 const (
-	noBirthDatePercent = 3  // did not state a birth date
+	noBirthDatePercent = 3 // did not state a birth date
 	minAge, maxAge     = 18, 75
 )
 

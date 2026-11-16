@@ -52,7 +52,7 @@ type Worker struct {
 	pacers map[string]*Pacer
 
 	mu       sync.Mutex
-	contents map[int64]content.Content // frozen after approval, so cacheable
+	contents map[contentKey]content.Content // frozen after approval, so cacheable
 }
 
 func New(q queue.Queue, s Sender, policy content.Policy, clk clock.Clock, log *slog.Logger, cfg Config) *Worker {
@@ -63,7 +63,7 @@ func New(q queue.Queue, s Sender, policy content.Policy, clk clock.Clock, log *s
 		cfg.BatchSize = 1
 	}
 	w := &Worker{q: q, send: s, policy: policy, clk: clk, log: log, cfg: cfg,
-		pacers: map[string]*Pacer{}, contents: map[int64]content.Content{}}
+		pacers: map[string]*Pacer{}, contents: map[contentKey]content.Content{}}
 	for _, ch := range channels {
 		w.pacers[ch] = NewPacer(clk, cfg.RatePerSecond)
 	}
@@ -174,7 +174,8 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		return
 	}
 
-	tmpl, err := w.template(ctx, d.CampaignID)
+	lang := content.NormalizeLanguage(d.Language)
+	tmpl, err := w.template(ctx, d.CampaignID, lang)
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Error("cannot load content", "error", err)
@@ -184,7 +185,7 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		}
 		return
 	}
-	text := w.policy.RenderContent(tmpl, content.Recipient{FirstName: d.FirstName, City: d.City})
+	text := w.policy.RenderContent(tmpl, content.Recipient{FirstName: d.FirstName, City: d.City, Language: lang})
 	msg := Message{To: to, Body: text.SMSBody}
 	if d.Channel == "email" {
 		msg = Message{To: to, Subject: text.EmailSubject, Body: text.EmailBody}
@@ -232,19 +233,26 @@ func (w *Worker) recipient(d queue.Delivery) (string, bool) {
 	return "", false
 }
 
-func (w *Worker) template(ctx context.Context, campaignID int64) (content.Content, error) {
+// contentKey identifies one language's text of one campaign.
+type contentKey struct {
+	campaign int64
+	language string
+}
+
+func (w *Worker) template(ctx context.Context, campaignID int64, lang string) (content.Content, error) {
+	key := contentKey{campaignID, lang}
 	w.mu.Lock()
-	c, ok := w.contents[campaignID]
+	c, ok := w.contents[key]
 	w.mu.Unlock()
 	if ok {
 		return c, nil
 	}
-	c, err := w.q.Content(ctx, campaignID)
+	c, err := w.q.Content(ctx, campaignID, lang)
 	if err != nil {
 		return content.Content{}, err
 	}
 	w.mu.Lock()
-	w.contents[campaignID] = c
+	w.contents[key] = c
 	w.mu.Unlock()
 	return c, nil
 }

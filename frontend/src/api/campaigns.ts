@@ -1,4 +1,4 @@
-import type { ApproveResult, Campaign, CampaignSummary, MessageContent } from '../types'
+import type { ApproveResult, Campaign, CampaignSummary, LanguageCode, MessageContent } from '../types'
 import { requestJSON } from './http'
 
 export function createCampaign(brief: string): Promise<Campaign> {
@@ -9,8 +9,9 @@ export function getCampaign(id: number): Promise<Campaign> {
   return requestJSON<Campaign>(`/api/campaigns/${id}`)
 }
 
-export function saveContent(id: number, content: MessageContent): Promise<Campaign> {
-  return requestJSON<Campaign>(`/api/campaigns/${id}/content`, { method: 'PUT', body: JSON.stringify(content) })
+/** Saves the text of every language at once: the whole set must say the same thing. */
+export function saveContent(id: number, languages: Record<LanguageCode, MessageContent>): Promise<Campaign> {
+  return requestJSON<Campaign>(`/api/campaigns/${id}/content`, { method: 'PUT', body: JSON.stringify({ languages }) })
 }
 
 /** Approves the campaign and queues the sending. Safe to repeat: a second call reports the same queue. */

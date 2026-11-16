@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Issue, Segment } from '../types'
+import type { Issue, LanguageInfo, Segment } from '../types'
 import { describeOffer } from '../utils/formatOffer'
+import { FALLBACK_LANGUAGES, languageSummary } from '../utils/languages'
 import AnimatedNumber from './AnimatedNumber.vue'
 
 // The summary of what will be sent. The buttons live in the wizard's bottom bar;
@@ -13,6 +14,7 @@ const props = defineProps<{
   /** Already approved: the card is read-only. */
   frozen: boolean
   error: string | null
+  languages?: LanguageInfo[]
 }>()
 
 const sms = computed(() => props.segment.audience?.sms_reachable ?? 0)
@@ -22,6 +24,7 @@ const people = computed(() => {
   return a ? a.sms_reachable + a.email_reachable - a.both_reachable : 0
 })
 const offer = computed(() => describeOffer(props.segment.offer))
+const spoken = computed(() => languageSummary(props.segment.languages, props.languages ?? FALLBACK_LANGUAGES))
 </script>
 
 <template>
@@ -55,10 +58,18 @@ const offer = computed(() => describeOffer(props.segment.offer))
         <dt>Kitle</dt>
         <dd>{{ segment.explanation }}</dd>
       </div>
+      <div v-if="spoken.length">
+        <dt>Diller</dt>
+        <dd data-testid="approval-languages">
+          <span v-for="l in spoken" :key="l.code" class="lang">{{ l.display }} <strong class="num">{{ l.count }}</strong></span>
+        </dd>
+      </div>
     </dl>
 
     <ul v-if="warnings.length" class="warnings" aria-label="Uyarılar">
-      <li v-for="w in warnings" :key="w.field + w.code + w.message" class="notice warn">⚠ {{ w.message }}</li>
+      <li v-for="w in warnings" :key="(w.language ?? '') + w.field + w.code + w.message" class="notice warn">
+        ⚠ <strong v-if="w.language">{{ w.language.toUpperCase() }}:</strong> {{ w.message }}
+      </li>
     </ul>
 
     <Transition name="fade">
@@ -135,6 +146,10 @@ dt {
 }
 dd {
   margin: 0;
+}
+.lang {
+  display: inline-block;
+  margin-right: 14px;
 }
 .warnings {
   list-style: none;

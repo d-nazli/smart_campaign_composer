@@ -375,6 +375,31 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Kapsam:** cinsiyet ve doğum tarihi şimdilik yalnız saklanır; segment alanı ya da kişiselleştirme değişkeni değildir (istenirse `segment/fields.go` ve `content/variables.go` tek yerden genişler). Dil, Faz 2'de içerik seçimini yönetir.
 - **Mevcut veritabanı:** seed "users boş değilse atla" kuralıyla çalıştığı için eski bir volume'da yeni alanlar boş kalır (dil hep `tr`). Yeniden seed: `make clean` (`docker compose down -v`).
 
+## D68 — Diller: `tr`, `en`, `de`; tek kayıt yeri, varsayılan = referans · `Kesin (kullanıcı kararı)`
+- **Liste tek yerde:** `content.Languages` (kod, İngilizce ad, kendi adı). Değişken fallback'leri, yerleşik şablonlar, mock metinleri ve `users.language` CHECK'i bu listeyle birlikte genişler; yeni dil eklemek için gereken adımlar `lang.go` başında yazılı. `/api/info` listeyi arayüze verir.
+- **`tr` varsayılan ve referanstır.** Dili boş ya da bilinmeyen biri Türkçe alır. Diğer diller referansın söylediğini söylemek zorundadır (D70).
+- **Şema (`00007_content_languages.sql`):** `campaign_contents` PK'si `(campaign_id, language)`; `llm_generations.language` (denetim kaydı hangi dilin denemesi olduğunu bilir); `campaigns.language_counts` (kitlenin dil dağılımı). Mevcut satırlar `tr` olur. Dil eklenmeden önce üretilmiş bir kampanya tüm diller olmadan onaylanamaz; mesajlar yeniden üretilmelidir (onay açık bir hata verir).
+- **Metin sayımı:** SMS 160 / konu 80 sınırı üç dilde de karakter (rune) sayısıyla uygulanır (CASE.md'deki limitler aynen). Almanca metinler daha uzun olmaya meyillidir; bu yüzden prompt ve yerleşik şablonlar kısa tutulur.
+
+## D69 — Üretim: önce referans, sonra diğerleri paralel; hepsi ya da hiçbiri · `Kesin (kullanıcı kararı)`
+- Her kampanya **üç dilde birden** üretilir (hemen ya da zamanlı gönderimde hangi dillerin lazım olacağı onay anında bilinemeyebilir). Önce `tr` yazılır ve doğrulanır; sonra `en` ve `de` **paralel** yazılır. Çevirilere referans metin prompt'ta gösterilir; "kelimesi kelimesine çevirme, doğal yaz, aynı sayıları ve değişkenleri kullan" denir.
+- Her dil kendi `ask → validate → repair` döngüsünde (en çok 3 deneme) çalışır; çevirinin ek doğrulaması referansla tutarlılıktır (D70) ve sebep modele geri bildirim olur. Denetim kaydı dil başına tutulur.
+- **Hiçbir şey, tüm diller hazır olana dek saklanmaz** (tek transaction). **Bir dil üretilemezse (3 geçersiz deneme, ret, zaman aşımı) üç dil de yerleşik şablona düşer:** model metniyle şablon metni karışırsa birbirlerini çelişkili bırakabilir. Şablonlar yan yana üretilir: ya hepsi kişiselleştirilir ya hiçbiri, böylece değişkenleri de aynıdır. Bedeli: tek dil başarısızsa iyi üretilmiş diğerleri de atılır; kişi sonradan düzenleyebilir.
+- Arayüze akış: SSE olaylarının hepsi `language` taşır, olaylar sunucuda tek tek (mutex ile) gönderilir. Kimlik doğrulama hatası şablonun arkasına saklanmaz (öncekiyle aynı).
+- Mock: `NewScripted` betiği referans dili anlatır; diğer diller `WithMessages(dil, ...)` ile ayrıca betiklenir, yoksa akıllı mock cevap verir.
+
+## D70 — Diller aynı şeyi söylemeli: sert doğrulama · `Kesin (kullanıcı kararı)`
+- `content.Consistency`: referansla her dil karşılaştırılır. **SMS** ve **e-posta (konu+metin birlikte)** için ayrı ayrı: indirim oranları, TL tutarları, tarihler, "ücretsiz kargo" vaadi ve `{{değişkenler}}` kümeleri aynı olmalı. Küme karşılaştırması: kaç kez ve hangi sırayla geçtiği değil, **hangi değerlerin** geçtiği önemlidir.
+- Sayılar dilden bağımsız okuyucularla bulunur (`%30`, `30% off`, `30 % Rabatt` hepsi 30); bu yüzden tüm dillerde sayılar, `1000 TL` ve `dd.mm.yyyy` aynı yazılır (prompt ister). Ücretsiz kargo ifadeleri üç dilde tanınır.
+- **Üç yerde zorunlu:** (1) üretimde çeviri tutarsızsa model düzeltmeye gönderilir (mesajda iki dil, fark ve değerler yazar); (2) elle kayıtta (`PUT /content` `{"languages": {...}}`; tek dil gönderilse bile bütün set kontrol edilir) → 422 `invalid_content`, her sorun `language` taşır; (3) onayda bütün diller yeniden doğrulanır. Bu, **uyarı değil hata**dır; eski "teklif eksik" uyarıları (D46) olduğu gibi yumuşak kalır.
+- Bir tek dili düzenleyip teklifi değiştirmek bu yüzden reddedilir; kişi teklifi değiştirmek istiyorsa üç dili birlikte kaydeder (arayüz hepsini birlikte gönderir).
+
+## D71 — Gönderimde dil · `Kesin (uygulama)`
+- Alıcının dili **gönderim anında** `users.language`'dan okunur (kuyruk satırında dil yoktur): onaydan sonra dilini değiştiren kişi yeni dilindeki metni alır. Metin `(kampanya, dil)` anahtarıyla önbelleğe alınır.
+- Kişinin dilinin metni yoksa başka dile **düşülmez**; teslimat bekler ve yeniden denenir (testli). Onay bunu zaten engeller; bu, bozuk veriye karşı ikinci savunmadır.
+- Ad/şehir boşsa ya da bütçeyi aşıyorsa yerine **alıcının dilindeki** sözcük yazılır ("değerli müşterimiz" / "valued customer" / "geschätzter Kunde"). Fallback sözcüklerinin hepsi bütçeye sığmak zorundadır; sığmayan bütçe başlangıçta reddedilir.
+- Onay ekranı kitlenin dil dağılımını gösterir (segment adımında da); toplam ulaşılabilir kişi sayısına eşittir (testli).
+
 ---
 
 ## Açık / onay bekleyenler

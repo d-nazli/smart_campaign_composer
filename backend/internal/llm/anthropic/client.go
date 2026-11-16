@@ -60,10 +60,10 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 
 func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta func(string)) (llm.Output, error) {
 	params := c.params(
-		llm.MessagesSystemPrompt(req.Policy),
+		llm.MessagesSystemPromptFor(req.Policy, req.Language),
 		content.JSONSchema(),
 		sdk.OutputConfigEffortMedium, // copywriting: some reasoning pays off
-		conversation(llm.MessagesUserPrompt(req.Brief, req.Explanation, req.Offer), req.Previous),
+		conversation(llm.MessagesUserPromptFor(req), req.Previous),
 	)
 	stream := c.api.Messages.NewStreaming(ctx, params)
 	defer stream.Close()

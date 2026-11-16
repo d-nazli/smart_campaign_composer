@@ -1,4 +1,4 @@
-import type { Limits, VariableInfo } from '../types'
+import type { LanguageInfo, Limits, VariableInfo } from '../types'
 
 export type LLMMode = 'mock' | 'claude'
 
@@ -7,6 +7,8 @@ export interface AppInfo {
   model?: string
   limits?: Limits
   variables?: VariableInfo[]
+  languages?: LanguageInfo[]
+  default_language?: string
 }
 
 /** Human-readable label for the active LLM mode, shown in the UI header. */
