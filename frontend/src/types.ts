@@ -91,7 +91,19 @@ export interface StoredContent extends MessageContent {
   updated_at: string
 }
 
-export type CampaignStatus = 'draft' | 'segment_ready' | 'content_ready' | 'approved' | 'sending' | 'completed'
+export type CampaignStatus =
+  | 'draft'
+  | 'segment_ready'
+  | 'content_ready'
+  /** Approved for a later time: nothing is queued and the audience is decided when it starts. */
+  | 'scheduled'
+  | 'approved'
+  | 'sending'
+  | 'completed'
+  /** A scheduled campaign a person cancelled before it started. */
+  | 'cancelled'
+  /** A scheduled campaign that could not start (see schedule_error). */
+  | 'failed'
 
 /** How far one channel has come. `pending` includes rows in flight and waiting for a retry. */
 export interface ChannelProgress {
@@ -127,6 +139,8 @@ export interface ApproveResult {
   status: CampaignStatus
   already_approved: boolean
   queued: { sms: number; email: number }
+  /** When a scheduled campaign starts (status "scheduled"). */
+  scheduled_at?: string
   /** Audience counted at approval time (absent on a repeated approval). */
   audience?: Audience
   /** How many people receive each language. */
@@ -146,6 +160,9 @@ export interface Campaign {
   mismatches?: Issue[]
   /** Present once the campaign has been approved. */
   delivery?: DeliveryProgress
+  /** When a scheduled campaign starts; why it could not start. */
+  scheduled_at?: string
+  schedule_error?: string
   created_at: string
 }
 
@@ -171,5 +188,7 @@ export interface CampaignSummary {
   segment_status?: SegmentStatus
   matched?: number
   delivery?: DeliveryProgress
+  scheduled_at?: string
+  schedule_error?: string
   created_at: string
 }

@@ -43,6 +43,7 @@ func New(svc *campaign.Service, info Info, ready func(context.Context) error, me
 	mux.HandleFunc("POST /api/campaigns/{id}/messages/stream", a.streamMessages)
 	mux.HandleFunc("PUT /api/campaigns/{id}/content", a.putContent)
 	mux.HandleFunc("POST /api/campaigns/{id}/approve", a.approve)
+	mux.HandleFunc("POST /api/campaigns/{id}/cancel", a.cancel)
 	if metricsHandler != nil {
 		mux.Handle("GET /metrics", metricsHandler)
 	}
@@ -163,12 +164,33 @@ func (a *api) approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := a.svc.Approve(r.Context(), id)
+	// No body sends now; {"scheduled_at": "<RFC 3339>"} schedules the sending.
+	var body struct {
+		ScheduledAt *time.Time `json:"scheduled_at"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &body) {
+		return
+	}
+	res, err := a.svc.ApproveAt(r.Context(), id, body.ScheduledAt)
 	if err != nil {
 		a.fail(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// cancel cancels a scheduled campaign that has not started yet.
+func (a *api) cancel(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	v, err := a.svc.CancelScheduled(r.Context(), id)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
 }
 
 func (a *api) streamMessages(w http.ResponseWriter, r *http.Request) {

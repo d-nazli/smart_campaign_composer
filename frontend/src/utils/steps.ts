@@ -27,7 +27,7 @@ export function currentStep(i: StepInput): { current: StepKey; done: StepKey[] }
   // A brief whose audience is not usable waits on the audience step: that is where the question or the reason is shown.
   if (!c) current = 'brief'
   else if (c.segment?.status !== 'ok' || c.status === 'draft') current = 'audience'
-  else if (c.status === 'completed' || c.status === 'approved' || c.status === 'sending') current = 'send'
+  else if (['completed', 'approved', 'sending', 'scheduled', 'cancelled', 'failed'].includes(c.status)) current = 'send'
   else if (i.streaming || i.unsaved) current = 'messages'
   else if (c.status === 'content_ready') current = 'approve'
   else current = i.hasContent ? 'messages' : 'audience'

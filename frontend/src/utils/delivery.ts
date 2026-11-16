@@ -23,7 +23,8 @@ export function describeChannel(p: ChannelProgress): string {
 export function shouldPoll(c: Campaign): boolean {
   // The server marks a campaign completed a moment after its last row is final,
   // so "completed" (not just "done") is what ends the polling.
-  return c.status === 'approved' || c.status === 'sending'
+  // A scheduled campaign is watched too: the screen switches to the progress when it starts.
+  return c.status === 'scheduled' || c.status === 'approved' || c.status === 'sending'
 }
 
 /** A sentence when the queued numbers differ from what was shown before approval, otherwise null. */

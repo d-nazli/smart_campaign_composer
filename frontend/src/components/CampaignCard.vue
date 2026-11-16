@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { ref } from 'vue'
 import type { CampaignSummary } from '../types'
 import { briefPreview, deliveryTotals, statusLabel, statusTone } from '../utils/dashboard'
 import { failureText, mergeFailures } from '../utils/failures'
+import { formatWhen, untilText } from '../utils/schedule'
 import AnimatedNumber from './AnimatedNumber.vue'
 import ChannelBar from './ChannelBar.vue'
 
 const props = defineProps<{ campaign: CampaignSummary }>()
+const emit = defineEmits<{ cancel: [id: number] }>()
+const confirming = ref(false)
+const now = ref(new Date())
 
 const when = (iso: string) => new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })
 const totals = computed(() => deliveryTotals(props.campaign.delivery))
@@ -31,7 +36,26 @@ const badge = computed(() => {
 
     <p class="brief" :title="campaign.brief">{{ briefPreview(campaign.brief, 140) }}</p>
 
-    <template v-if="campaign.delivery">
+    <div v-if="campaign.status === 'scheduled'" class="sched" data-testid="scheduled">
+      <p class="when-line">
+        <strong>{{ campaign.scheduled_at ? formatWhen(campaign.scheduled_at) : '' }}</strong>
+        <span v-if="campaign.scheduled_at" class="muted"> · {{ untilText(campaign.scheduled_at, now) }}</span>
+      </p>
+      <p class="muted small">Kitle gönderim anında belirlenecek; kişi sayısı değişebilir.</p>
+      <div class="cancel">
+        <button v-if="!confirming" class="link danger" data-testid="cancel" @click="confirming = true">İptal et</button>
+        <template v-else>
+          <button class="primary danger" data-testid="confirm-cancel" @click="emit('cancel', campaign.id)">Evet, iptal et</button>
+          <button class="link" @click="confirming = false">Vazgeç</button>
+        </template>
+      </div>
+    </div>
+    <p v-else-if="campaign.status === 'failed'" class="notice error" role="alert">
+      Başlatılamadı: {{ campaign.schedule_error || 'bilinmeyen neden' }}
+    </p>
+    <p v-else-if="campaign.status === 'cancelled'" class="muted small idle">Zamanlanmış gönderim iptal edildi; mesaj gönderilmedi.</p>
+
+    <template v-else-if="campaign.delivery">
       <div class="bars">
         <ChannelBar channel="sms" label="SMS" :p="campaign.delivery.sms" />
         <ChannelBar channel="email" label="E-posta" :p="campaign.delivery.email" />
@@ -125,6 +149,25 @@ header {
 .status.done {
   background: var(--ok-bg);
   color: var(--ok);
+}
+.status.scheduled {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sched {
+  display: grid;
+  gap: 6px;
+}
+.sched p {
+  margin: 0;
+}
+.cancel {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.danger {
+  color: var(--error);
 }
 .status.attention {
   background: var(--warn-bg);

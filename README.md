@@ -70,6 +70,32 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 Varsayılan provider kaosu %3 rastgele 429 enjekte eder ve her 429 kanalı 1–3 sn durdurur; bu yüzden bir kampanya
 yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=0` yapıp `docker compose up -d mock-provider` deyin.
 
+## Çok dilli içerik (bonus)
+
+- Her kullanıcının bir dili vardır (`users.language`: `tr`, `en`, `de`; seed'de %60 / %25 / %15). Her kampanya **üç dilde birden**
+  üretilir: önce Türkçe (referans), sonra İngilizce ve Almanca paralel. Mesajlar ekranda dil sekmelerinde akar ve düzenlenir.
+- **Üç dil aynı şeyi söylemek zorundadır.** İndirim oranı, TL tutarı, tarih, ücretsiz kargo vaadi ve `{{değişkenler}}`
+  dillerde aynı değilse üretim modele geri bildirimle yeniden yazdırılır, elle kayıt **422 ile reddedilir**, onay yapılmaz
+  (D70). Bu yüzden bir dili düzenlerken teklifi değiştirirseniz üç dili birlikte güncellemelisiniz; ekran hepsini birlikte kaydeder.
+- Bir dil üretilemezse üç dil de yerleşik şablona düşer (karışık metin/şablon olmaz, D69).
+- Gönderimde kişinin dili **gönderim anında** okunur: zamanlamadan sonra dilini değiştiren kişi yeni dilindeki mesajı bir kez alır.
+  Adı boşsa kendi dilindeki sözcük yazılır ("değerli müşterimiz" / "valued customer" / "geschätzter Kunde").
+- Onay ekranı kitlenin dil dağılımını gösterir. Cinsiyet ve doğum tarihi şimdilik yalnız saklanır (segmentte/değişkende yok).
+
+## Zamanlanmış gönderim (bonus)
+
+- Onay ekranında **Hemen** ya da **İleri bir zamanda** seçilir (en az 1 dakika, en fazla 30 gün sonrası). Hemen gönderimde
+  hiçbir şey değişmez. Zamanlanan kampanyada onay yalnızca kararı kaydeder (`scheduled`): **kuyruk ve kitle oluşmaz.**
+- Saat gelince `worker` içindeki zamanlayıcı kayıtlı kuralı yeniden çalıştırır, **o andaki** kitleyi çıkarır, teslimatları
+  oluşturur ve kampanya normal şekilde (`approved → sending → completed`) ilerler; kimsenin müdahalesi gerekmez. Kampanya
+  `FOR UPDATE SKIP LOCKED` ile sahiplenilir: birden çok worker olsa da her kampanya bir kez başlar. Onay ekranı ve kampanya
+  kartı "kişi sayısı gönderim anında değişebilir" der; sayılar tahmindir.
+- **Gönderim zamanı teklifin son kullanma gününden sonra seçilemez** (arayüz ve sunucu; gün Türkiye saatiyle okunur).
+  Teklif, kampanya beklerken (ya da worker kapalıyken) sona ererse mesaj **gönderilmez**, kampanya `failed` olur ve nedeni görünür.
+- Başlamadan önce **İptal et** ile (`POST /api/campaigns/{id}/cancel`) iptal edilebilir; başladıysa iptal reddedilir.
+  İptal ile başlatma yarışırsa tam biri kazanır (testli). Worker kapalıyken zamanı gelen kampanya, worker açılınca hemen başlar.
+- Zamanlanmış bir kampanya düzenlenemez; yanlışsa iptal edip yenisini oluşturun (yeniden zamanlama yok).
+
 ## İzleme: dashboard, `/metrics`, `/healthz`
 
 - **Dashboard** (`/#/dashboard`): tüm kampanyalar, kanal bazlı ilerleme çubuğu, gönderildi / başarısız / tekrar / 429 sayıları;
@@ -120,6 +146,9 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
   seferinde taze veritabanı kurduğu için bundan etkilenmez.
 - Seed kodunu veya `SEED`/`SEED_USERS` değerini değiştirirseniz de `make clean` gerekir (seed yalnız
   boş veritabanına yazar).
+- Her kullanıcının ayrıca **dil** (`tr`/`en`/`de`), **cinsiyet** ve **doğum tarihi** vardır (bir kısmı boş bırakılır). Bu
+  alanlar ayrı bir rastgele akıştan gelir; mevcut verinin hiçbir değeri ve "kohort tam 300" garantisi değişmedi. Bu
+  sürüme güncelleyince eski bir veritabanında dil hep `tr` kalır: `make clean` ile seed'i yeniden yükleyin.
 - Bilerek eklenen kenar durumlar: izinli ama telefonu/emaili boş kullanıcılar, hiç izni olmayanlar,
   çok uzun isimler, bozuk telefon/email (mock provider kalıcı 400 döner).
 

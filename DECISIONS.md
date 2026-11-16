@@ -400,6 +400,34 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Ad/şehir boşsa ya da bütçeyi aşıyorsa yerine **alıcının dilindeki** sözcük yazılır ("değerli müşterimiz" / "valued customer" / "geschätzter Kunde"). Fallback sözcüklerinin hepsi bütçeye sığmak zorundadır; sığmayan bütçe başlangıçta reddedilir.
 - Onay ekranı kitlenin dil dağılımını gösterir (segment adımında da); toplam ulaşılabilir kişi sayısına eşittir (testli).
 
+## D72 — Zamanlanmış gönderim: onay yalnız kararı kaydeder, kitle gönderim anında çıkar · `Kesin (kullanıcı kararı)`
+- **Akış:** `content_ready → scheduled` (onay) `→ approved` (zaman gelince, worker) `→ sending → completed`. Yan dallar: `cancelled` (kişi, başlamadan önce) ve `failed` (kampanya hiç gönderilemez). Hemen gönderimde akış **aynen** durur (`approved` doğrudan, kuyruk aynı transaction'da); iki yol aynı `enqueueAudience` fonksiyonunu kullanır, mevcut testlerin hiçbiri değişmeden geçer.
+- **Neden kitle gönderim anında:** "son 30 gün", izin ve alışveriş durumu yarın bugünkünden farklıdır; onay anında sabitlenen bir liste, izni kaldırmış ya da o arada alışveriş yapmış kişiye mesaj gönderebilirdi. İzin ayrıca gönderim anında da yeniden kontrol edilir (öncekiyle aynı). Bedeli: onay ekranındaki sayı **tahmindir**; ekran bunu açıkça söyler ("kişi sayısı gönderim anında değişebilir"), kampanya başlayınca gerçek sayılar yazılır.
+- **Neden yeni durum (`scheduled`):** `Finish`, "bekleyen teslimatı olmayan `approved/sending`" kampanyayı tamamlar. Zamanlı kampanyanın onayda hiç teslimatı olmadığı için `approved` kullansaydık saniyeler içinde yanlışlıkla `completed` olurdu. `scheduled` o sorgunun dışındadır.
+- **Şema (`00008_scheduled_send.sql`):** `scheduled_at`, `materialized_at`, `cancelled_at`, `schedule_error`; durum CHECK'i genişledi; `status='scheduled'` için kısmi indeks.
+- **Zaman sınırları:** en az 1 dakika (kimse bakamadan geçmesin), en fazla 30 gün (yanlış yıl yazımı). Tekrar onayda ilk karar korunur ve `already_approved` döner; "hemen gönder" demek zamanlanmış kampanyayı göndermez.
+- **Zamanlanmış kampanya donar:** metin düzenlenemez, yeniden üretilemez, yeniden zamanlanamaz. Yanlışsa iptal edip yenisi kurulur (yeniden zamanlama bilerek yok).
+
+## D73 — Zamanlayıcı: tek transaction, `FOR UPDATE SKIP LOCKED`, insansız · `Kesin (kullanıcı kararı)`
+- Worker içinde ayrı bir döngü (`campaign.Scheduler`, `clock.Clock` ile test edilir) her saniye bir kampanya alır: `SELECT … WHERE status='scheduled' AND scheduled_at <= now ORDER BY scheduled_at LIMIT 1 FOR UPDATE SKIP LOCKED`. **Aynı transaction'da** kayıtlı kural yeniden doğrulanır (`segment.Parse`), o anın kitlesi sayılır, teslimatlar oluşturulur, sayılar ve dil dağılımı güncellenir, durum `approved` olur. Hepsi ya da hiçbiri: çökerse transaction geri alınır ve kampanya bir sonraki turda yeniden denenir; commit'ten sonra durum `approved` olduğu için ikinci kez seçilemez. `UNIQUE(campaign_id, user_id, channel)` + `ON CONFLICT DO NOTHING` ikinci savunmadır.
+- Birden çok worker çalışsa da her kampanya bir kez başlar (8 eşzamanlı zamanlayıcıyla testli: toplam "işlendi" sayısı kampanya sayısına eşit).
+- **Kalıcı hata** (kural bozuk, bir dil metni eksik, diller uyuşmuyor, teklif sona ermiş) → `failed` + `schedule_error`; kimse gelip bakmadan döngüye girmez. **Geçici hata** (veritabanı) → kampanya `scheduled` kalır, sonraki turda yeniden denenir.
+- **Worker kapalıyken** zamanı gelen kampanya, worker açılınca hemen başlar (`scheduled_at <= now`). Teslimatların `created_at` değeri zamanlayıcının "şimdi"sidir; böylece yeniden deneme yaşı (en çok 10 dk) onaydan değil başlangıçtan sayılır ve saatler önce onaylanan kampanyanın ilk geçici hatası "çok eski" diye düşmez.
+
+## D74 — Gönderim zamanı teklifin son gününden sonra olamaz · `Kesin (kullanıcı kararı)`
+- **Kural:** `scheduled_at`, teklifin `expires_at` gününün sonundan (Türkiye saatiyle 23:59:59.999, UTC+3, sabit dilim: DST yok, tzdata gerekmez) sonra olamaz; **son günün kendisi serbesttir**. Backend reddeder (400 `invalid_input`, mesaj tarihi söyler), arayüz de aynı kuralı uygular: zaman seçici `max` ile sınırlıdır, geçersiz zaman için "Zamanla" düğmesi kapanır ve neden yazılır (`utils/schedule.ts` backend'in aynasıdır; sunucu yine karar verendir).
+- **Tarayıcı saati:** `datetime-local` kişinin kendi saat dilimindedir; seçilen an UTC'ye çevrilip gönderilir, son gün ise hep Türkiye saatiyle okunur. Türkiye dışından kullananlar için sınır birkaç saat kayabilir; sunucu kuralı değişmez.
+- **Gönderim anında da denetlenir:** kampanya beklerken ya da worker kapalıyken teklif sona ererse mesaj **gönderilmez**, kampanya `failed` olur ("teklifin son kullanma tarihi geçti"). Süresi dolmuş bir indirimi duyurmak, onayın zamanlamasından daha kötü bir hatadır.
+
+## D75 — İptal · `Kesin (kullanıcı kararı)`
+- `POST /api/campaigns/{id}/cancel` yalnız `status='scheduled'` iken çalışır: `UPDATE … WHERE id=$1 AND status='scheduled'`. Zamanlayıcı kampanya satırını kilitleyerek başlatır; iptal UPDATE'i o kilidi bekler ve kilit kalkınca koşulu yeniden değerlendirir. **Tam biri kazanır:** ya kampanya iptal edilir ve hiçbir teslimat oluşmaz, ya başlamıştır ve iptal 409 ile reddedilir (başladıktan sonra iptal yok). İptal kazanırsa zamanlayıcı satırı `SKIP LOCKED` ile atlar ya da `cancelled` olduğunu görür.
+- Test iptali ve zamanlayıcıyı aynı anda 20 kez yarıştırır; her turda sonuç ya "iptal edildi + 0 teslimat" ya "reddedildi + başlamış" olmalıdır, başka sonuç testi düşürür. Bir çalıştırmada iki sonuç da gözlendi (18 iptal / 2 başlatma): yarış gerçekten yaşanıyor.
+- İptal tekrarında hata yok (idempotent); `cancelled`/`failed` kampanya yeniden onaylanamaz. Dashboard'da ve gönderim adımında iki adımlı "İptal et" düğmesi vardır.
+
+## D76 — Dil değişikliği ve zamanlama · `Kesin (kullanıcı kararı)`
+- Teslimatlar başlangıçta oluştuğu ve dil gönderim anında okunduğu (D71) için iki durum da doğru çalışır ve testlidir: (a) kişi **zamanlamadan sonra, başlamadan önce** dilini değiştirirse kitle zaten yeni haliyle çıkar; (b) **başladıktan sonra, gönderilmeden önce** değiştirirse mesaj yine yeni dilde gider. Her iki durumda sağlayıcıya o kişiye bir SMS ve bir e-posta gider, yeni dilde, iki kez değil.
+- Dil dağılımı (`language_counts`) kampanya başlarken yeniden sayılır; onay ve kampanya ekranları o anki gerçek sayıyı gösterir.
+
 ---
 
 ## Açık / onay bekleyenler

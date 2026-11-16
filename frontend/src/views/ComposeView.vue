@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '../api/info'
-import { approveCampaign, createCampaign, getCampaign, saveContent } from '../api/campaigns'
+import { approveCampaign, cancelCampaign, createCampaign, getCampaign, saveContent } from '../api/campaigns'
 import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
 import { allResults, retryNotes } from '../composables/streamState'
@@ -9,6 +9,7 @@ import type { ApproveResult, Campaign, Issue, LanguageCode, MessageContent } fro
 import { approvalDifference, shouldPoll } from '../utils/delivery'
 import { DEFAULT_LANGUAGE, FALLBACK_LANGUAGES, changedLanguages, draftsFrom, emptyMessage, hasAllLanguages, storedByLanguage } from '../utils/languages'
 import { checkContent } from '../utils/limits'
+import { checkSchedule, formatWhen, fromLocalInput, toLocalInput, untilText } from '../utils/schedule'
 import { attemptLabel } from '../utils/preview'
 import { withAllCustomers } from '../utils/sendToAll'
 import { currentStep, type StepKey } from '../utils/steps'
@@ -24,6 +25,14 @@ const props = defineProps<{ info: AppInfo | null }>()
 
 // Built in script: a literal double brace in the template would be read as interpolation.
 const placeholderHint = '{{' + 'değişkenler' + '}}'
+
+// A sensible first choice for "later": the next full hour, at least an hour from now.
+function defaultSendTime(): Date {
+  const d = new Date(Date.now() + 60 * 60 * 1000)
+  d.setMinutes(0, 0, 0)
+  d.setHours(d.getHours() + 1)
+  return d
+}
 
 const EXAMPLE_BRIEF =
   "Son 30 günde sepetine ürün ekleyip alışveriş yapmayan İstanbul'daki kullanıcılara %30 indirim hatırlatması gönder. Samimi ama kısa olsun."
@@ -54,20 +63,33 @@ const serverIssues = ref<Issue[]>([])
 
 const confirming = ref(false)
 const approving = ref(false)
+
+// Send now, or later: the audience is then decided by the worker when the time comes.
+const sendMode = ref<'now' | 'later'>('now')
+const sendWhen = ref(toLocalInput(defaultSendTime()))
+const clockNow = ref(new Date())
+const cancelling = ref(false)
+const confirmCancel = ref(false)
+const cancelError = ref<string | null>(null)
 const approveError = ref<string | null>(null)
 const approved = ref<ApproveResult | null>(null)
 
 // After approval the text is frozen: earlier steps still open, read-only.
-const frozen = computed(() => ['approved', 'sending', 'completed'].includes(campaign.value?.status ?? ''))
+const frozen = computed(() => ['scheduled', 'approved', 'sending', 'completed', 'cancelled', 'failed'].includes(campaign.value?.status ?? ''))
 const unsaved = computed(() => changedLanguages(campaign.value, drafts.value).length > 0)
 const streaming = computed(() => stream.value.phase === 'streaming')
 const mismatches = computed<Issue[]>(() => [
   ...(campaign.value?.mismatches ?? []),
   ...serverIssues.value.filter((i) => i.code === 'language_mismatch' && !(campaign.value?.mismatches ?? []).some((m) => m.message === i.message)),
 ])
+// Why the chosen time cannot be used; null when sending now or when the time is fine.
+const scheduleError = computed(() =>
+  sendMode.value === 'later' ? checkSchedule(fromLocalInput(sendWhen.value), campaign.value?.segment?.offer, clockNow.value) : null,
+)
 const canApprove = computed(
   () =>
     campaign.value?.status === 'content_ready' &&
+    scheduleError.value === null &&
     hasAllLanguages(campaign.value, languages.value) &&
     (campaign.value?.mismatches?.length ?? 0) === 0 &&
     !streaming.value &&
@@ -127,6 +149,7 @@ const bar = computed(() =>
     briefChanged: briefChanged.value,
     hasContent: hasContent.value,
     confirming: confirming.value,
+    scheduling: sendMode.value === 'later',
   }),
 )
 const barLabel = computed(() => {
@@ -138,7 +161,7 @@ const barLabel = computed(() => {
     case 'save-next':
       return saving.value ? 'Kaydediliyor…' : bar.value.label
     case 'send':
-      return approving.value ? 'Gönderim başlıyor…' : bar.value.label
+      return approving.value ? (sendMode.value === 'later' ? 'Zamanlanıyor…' : 'Gönderim başlıyor…') : bar.value.label
     default:
       return bar.value.label
   }
@@ -197,7 +220,8 @@ async function approve() {
   approving.value = true
   approveError.value = null
   try {
-    approved.value = await approveCampaign(campaign.value.id)
+    const at = sendMode.value === 'later' ? fromLocalInput(sendWhen.value) : null
+    approved.value = await approveCampaign(campaign.value.id, at ? at.toISOString() : undefined)
     campaign.value = await getCampaign(campaign.value.id)
     go('send')
   } catch (e) {
@@ -207,8 +231,30 @@ async function approve() {
   }
 }
 
+// A scheduled campaign can be cancelled until it starts; if it has started, the server refuses.
+async function cancelScheduled() {
+  if (!campaign.value || cancelling.value) return
+  cancelling.value = true
+  cancelError.value = null
+  try {
+    campaign.value = await cancelCampaign(campaign.value.id)
+    confirmCancel.value = false
+  } catch (e) {
+    cancelError.value = (e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')).message
+    try {
+      campaign.value = await getCampaign(campaign.value.id) // it may have started in the meantime
+    } catch {
+      /* keep what is on screen */
+    }
+    confirmCancel.value = false
+  } finally {
+    cancelling.value = false
+  }
+}
+
 // Progress: ask the server once a second until the campaign is completed.
 let timer: number | null = null
+let clockTimer: number | null = null
 function stopPolling() {
   if (timer !== null) window.clearInterval(timer)
   timer = null
@@ -233,6 +279,8 @@ watch(
   { immediate: true },
 )
 onBeforeUnmount(stopPolling)
+onMounted(() => (clockTimer = window.setInterval(() => (clockNow.value = new Date()), 15_000)))
+onBeforeUnmount(() => clockTimer !== null && window.clearInterval(clockTimer))
 
 // While streaming, every language's tab shows its live preview.
 watch(
@@ -516,6 +564,11 @@ onMounted(async () => {
               :confirming="confirming"
               :frozen="frozen"
               :error="approveError"
+              :mode="sendMode"
+              :when="sendWhen"
+              :schedule-error="scheduleError"
+              @update:mode="sendMode = $event"
+              @update:when="sendWhen = $event"
             />
             <section v-else class="card">
               <h2>Onay</h2>
@@ -526,7 +579,35 @@ onMounted(async () => {
           <!-- 5 · Gönderim -->
           <section v-else class="card" data-testid="delivery">
             <h2>Gönderim</h2>
-            <template v-if="campaign?.delivery">
+            <template v-if="campaign?.status === 'scheduled'">
+              <p class="notice info" role="status" data-testid="scheduled">
+                <strong>Zamanlandı: {{ campaign.scheduled_at ? formatWhen(campaign.scheduled_at) : '' }}</strong>
+                <template v-if="campaign.scheduled_at"> ({{ untilText(campaign.scheduled_at, clockNow) }})</template>
+              </p>
+              <p class="muted small">
+                Kitle şimdi değil, gönderim zamanı geldiğinde o andaki verilerle belirlenir; kişi sayısı değişebilir. Kimsenin burada olması gerekmez.
+                <template v-if="campaign.segment?.audience">
+                  Şu anki tahmin: {{ campaign.segment.audience.sms_reachable }} SMS, {{ campaign.segment.audience.email_reachable }} e-posta.
+                </template>
+              </p>
+              <div class="actions">
+                <button v-if="!confirmCancel" class="link danger" :disabled="cancelling" data-testid="cancel" @click="confirmCancel = true">İptal et</button>
+                <template v-else>
+                  <button class="primary danger" :disabled="cancelling" data-testid="confirm-cancel" @click="cancelScheduled">
+                    {{ cancelling ? 'İptal ediliyor…' : 'Evet, iptal et' }}
+                  </button>
+                  <button class="link" :disabled="cancelling" @click="confirmCancel = false">Vazgeç</button>
+                </template>
+              </div>
+              <p v-if="cancelError" class="notice error" role="alert">{{ cancelError }}</p>
+            </template>
+            <p v-else-if="campaign?.status === 'cancelled'" class="notice info" role="status" data-testid="cancelled">
+              Zamanlanmış gönderim iptal edildi; hiçbir mesaj gönderilmedi.
+            </p>
+            <p v-else-if="campaign?.status === 'failed'" class="notice error" role="alert" data-testid="failed">
+              Zamanlanmış gönderim başlatılamadı: {{ campaign.schedule_error || 'bilinmeyen neden' }}. Hiçbir mesaj gönderilmedi.
+            </p>
+            <template v-else-if="campaign?.delivery">
               <p v-if="approved" class="muted small" data-testid="queued">
                 Kuyruğa alınan: {{ approved.queued.sms }} SMS, {{ approved.queued.email }} e-posta.
                 <template v-if="approved.already_approved">(Bu kampanya zaten onaylanmıştı.)</template>

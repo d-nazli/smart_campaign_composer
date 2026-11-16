@@ -33,6 +33,8 @@ export interface BarInput {
   briefChanged: boolean
   hasContent: boolean
   confirming: boolean
+  /** The person chose to send later (the main button says "Zamanla"). */
+  scheduling?: boolean
 }
 
 /** The main button of the sticky bottom bar for the step being viewed. */
@@ -48,6 +50,7 @@ export function barAction(i: BarInput): { action: BarAction; label: string } {
       return i.frozen ? next : { action: 'save-next', label: 'Onayla' }
     case 'approve':
       if (i.frozen) return next
+      if (i.scheduling) return i.confirming ? { action: 'send', label: 'Evet, zamanla' } : { action: 'ask', label: 'Zamanla' }
       return i.confirming ? { action: 'send', label: 'Evet, gönder' } : { action: 'ask', label: 'Gönder' }
     default:
       return { action: 'dashboard', label: "Dashboard'a git" }

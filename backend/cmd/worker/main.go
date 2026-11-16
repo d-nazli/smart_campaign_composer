@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"smartcampaign/internal/campaign"
 	"smartcampaign/internal/clock"
 	"smartcampaign/internal/config"
 	"smartcampaign/internal/content"
@@ -49,6 +50,17 @@ func main() {
 	go func() {
 		if err := w.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Error("worker stopped", "error", err)
+			stop()
+		}
+	}()
+
+	// Starts the campaigns scheduled for now: builds their audience and queues
+	// the deliveries. Several workers can run this at once; each campaign is
+	// taken by exactly one of them.
+	scheduler := campaign.NewScheduler(pool, policy, clock.Real{}, log)
+	go func() {
+		if err := scheduler.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Error("scheduler stopped", "error", err)
 			stop()
 		}
 	}()

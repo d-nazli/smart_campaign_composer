@@ -103,8 +103,12 @@ type View struct {
 	Translations map[string]*ContentView `json:"translations,omitempty"`
 	Mismatches   []content.Issue         `json:"mismatches"`
 	// Delivery is present once the campaign has been approved.
-	Delivery  *DeliveryView `json:"delivery,omitempty"`
-	CreatedAt time.Time     `json:"created_at"`
+	Delivery *DeliveryView `json:"delivery,omitempty"`
+	// ScheduledAt is when a scheduled campaign starts (set from approval on).
+	// ScheduleError says why a scheduled campaign could not start.
+	ScheduledAt   *time.Time `json:"scheduled_at,omitempty"`
+	ScheduleError string     `json:"schedule_error,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // ---- create (brief -> segment -> audience) --------------------------------
@@ -191,6 +195,8 @@ type campaignRow struct {
 	emailReachable *int
 	bothReachable  *int
 	languageCounts []byte
+	scheduledAt    *time.Time
+	scheduleError  string
 	createdAt      time.Time
 }
 
@@ -200,10 +206,10 @@ func (s *Service) loadRow(ctx context.Context, q interface {
 	var r campaignRow
 	err := q.QueryRow(ctx, `
 		SELECT id, brief, status, segment_status, segment_rule, explanation, question,
-		       matched, sms_reachable, email_reachable, both_reachable, language_counts, created_at
+		       matched, sms_reachable, email_reachable, both_reachable, language_counts, scheduled_at, schedule_error, created_at
 		FROM campaigns WHERE id=$1`, id).
 		Scan(&r.id, &r.brief, &r.status, &r.segmentStatus, &r.segmentRule, &r.explanation, &r.question,
-			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.languageCounts, &r.createdAt)
+			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.languageCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -219,7 +225,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &View{ID: r.id, Brief: r.brief, Status: r.status, CreatedAt: r.createdAt}
+	v := &View{ID: r.id, Brief: r.brief, Status: r.status, ScheduledAt: r.scheduledAt, ScheduleError: r.scheduleError, CreatedAt: r.createdAt}
 
 	if r.segmentStatus != nil {
 		sv := &SegmentView{Status: *r.segmentStatus, Conditions: []segment.Condition{}, Explanation: r.explanation, Question: r.question,

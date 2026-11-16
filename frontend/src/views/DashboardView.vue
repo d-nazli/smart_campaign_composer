@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { AppInfo } from '../api/info'
-import { listCampaigns } from '../api/campaigns'
+import { cancelCampaign, listCampaigns } from '../api/campaigns'
 import { fetchSystem, type SystemHealth as SystemState } from '../api/system'
 import type { CampaignSummary } from '../types'
 import { overallTotals } from '../utils/dashboard'
@@ -33,6 +33,17 @@ async function refresh() {
     // Keep showing the last list; say that it may be stale.
     error.value = e instanceof Error ? e.message : String(e)
   }
+}
+
+async function cancel(id: number) {
+  try {
+    await cancelCampaign(id)
+    error.value = null
+  } catch (e) {
+    // The server refuses when the campaign has already started; the refreshed list shows where it stands.
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+  await refresh()
 }
 
 async function refreshHealth() {
@@ -101,7 +112,7 @@ const shownRate = computed(() => (totals.value.pending > 0 ? rate.value : 0))
     </div>
 
     <div v-if="campaigns && campaigns.length > 0" class="list" data-testid="campaign-table">
-      <CampaignCard v-for="c in campaigns" :key="c.id" :campaign="c" />
+      <CampaignCard v-for="c in campaigns" :key="c.id" :campaign="c" @cancel="cancel" />
     </div>
 
     <p class="muted small foot">

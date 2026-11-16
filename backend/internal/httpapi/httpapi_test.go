@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"smartcampaign/internal/campaign"
 	"smartcampaign/internal/content"
@@ -477,3 +478,92 @@ func TestApproveOverHTTP(t *testing.T) {
 }
 
 var _ = context.Background
+
+func putAllLanguages(t *testing.T, srv *httptest.Server, id int64) {
+	t.Helper()
+	one := func(sms, subject, body string) map[string]string {
+		return map[string]string{"sms_body": sms, "email_subject": subject, "email_body": body}
+	}
+	resp, body := do(t, "PUT", fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id), map[string]any{"languages": map[string]any{
+		"tr": one("{{first_name}}, %30 indirim seni bekliyor!", "%30 indirim", "Merhaba {{first_name}}, %30 indirim var."),
+		"en": one("{{first_name}}, 30% off is waiting for you!", "30% off", "Hi {{first_name}}, enjoy 30% off."),
+		"de": one("{{first_name}}, 30 % Rabatt wartet auf Sie!", "30 % Rabatt", "Hallo {{first_name}}, 30 % Rabatt für Sie."),
+	}})
+	if resp.StatusCode != 200 {
+		t.Fatalf("put: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestScheduleAndCancelOverHTTP(t *testing.T) {
+	srv := newServer(t, mock.New(0))
+	id := createCampaign(t, srv)
+	putAllLanguages(t, srv, id)
+	approve := fmt.Sprintf("%s/api/campaigns/%d/approve", srv.URL, id)
+	cancel := fmt.Sprintf("%s/api/campaigns/%d/cancel", srv.URL, id)
+	at := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+
+	// Bad requests: a time in the past, nonsense, unknown fields. Nothing changes.
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if resp, body := do(t, "POST", approve, map[string]string{"scheduled_at": past}); resp.StatusCode != 400 || !strings.Contains(string(body), `"invalid_input"`) {
+		t.Fatalf("past: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := do(t, "POST", approve, map[string]string{"scheduled_at": "tomorrow"}); resp.StatusCode != 400 {
+		t.Fatalf("nonsense: %d", resp.StatusCode)
+	}
+	if resp, _ := do(t, "POST", approve, map[string]string{"when": "now"}); resp.StatusCode != 400 {
+		t.Fatalf("unknown field: %d", resp.StatusCode)
+	}
+	if resp, body := do(t, "POST", cancel, nil); resp.StatusCode != 409 {
+		t.Fatalf("cancel before scheduling: %d %s", resp.StatusCode, body)
+	}
+
+	resp, body := do(t, "POST", approve, map[string]string{"scheduled_at": at.Format(time.RFC3339)})
+	if resp.StatusCode != 200 {
+		t.Fatalf("schedule: %d %s", resp.StatusCode, body)
+	}
+	var res struct {
+		Status      string    `json:"status"`
+		ScheduledAt time.Time `json:"scheduled_at"`
+		Queued      struct{ SMS, Email int }
+		Audience    *struct{ Matched int }
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "scheduled" || !res.ScheduledAt.Equal(at) || res.Queued.SMS != 0 || res.Queued.Email != 0 || res.Audience != nil {
+		t.Fatalf("schedule body: %s", body)
+	}
+
+	_, body = do(t, "GET", fmt.Sprintf("%s/api/campaigns/%d", srv.URL, id), nil)
+	if !strings.Contains(string(body), `"status":"scheduled"`) || !strings.Contains(string(body), `"scheduled_at"`) {
+		t.Fatalf("get: %s", body)
+	}
+	_, body = do(t, "GET", srv.URL+"/api/campaigns", nil)
+	if !strings.Contains(string(body), `"status":"scheduled"`) || !strings.Contains(string(body), `"scheduled_at"`) {
+		t.Fatalf("list: %s", body)
+	}
+
+	resp, body = do(t, "POST", cancel, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"status":"cancelled"`) {
+		t.Fatalf("cancel: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := do(t, "POST", cancel, nil); resp.StatusCode != 200 {
+		t.Fatalf("cancelling twice: %d", resp.StatusCode)
+	}
+	if resp, _ := do(t, "POST", approve, nil); resp.StatusCode != 409 {
+		t.Fatalf("approve after cancel: %d", resp.StatusCode)
+	}
+	if resp, _ := do(t, "POST", srv.URL+"/api/campaigns/999999/cancel", nil); resp.StatusCode != 404 {
+		t.Fatalf("unknown campaign: %d", resp.StatusCode)
+	}
+
+	// A campaign that already started cannot be cancelled.
+	id2 := createCampaign(t, srv)
+	putAllLanguages(t, srv, id2)
+	if resp, body := do(t, "POST", fmt.Sprintf("%s/api/campaigns/%d/approve", srv.URL, id2), nil); resp.StatusCode != 200 {
+		t.Fatalf("send now: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "POST", fmt.Sprintf("%s/api/campaigns/%d/cancel", srv.URL, id2), nil); resp.StatusCode != 409 {
+		t.Fatalf("cancel a started campaign: %d %s", resp.StatusCode, body)
+	}
+}

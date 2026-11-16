@@ -14,8 +14,14 @@ export function statusLabel(c: Pick<CampaignSummary, 'status' | 'segment_status'
       return 'Kitle hazır'
     case 'content_ready':
       return 'Onay bekliyor'
+    case 'scheduled':
+      return 'Zamanlandı'
     case 'approved':
       return 'Onaylandı'
+    case 'cancelled':
+      return 'İptal edildi'
+    case 'failed':
+      return 'Başlatılamadı'
     case 'sending':
       return 'Gönderiliyor'
     case 'completed':
@@ -45,11 +51,13 @@ export interface Totals {
   rateLimited: number
 }
 
-export type Tone = 'draft' | 'sending' | 'done' | 'attention'
+export type Tone = 'draft' | 'scheduled' | 'sending' | 'done' | 'attention'
 
 /** Colour group of a campaign's badge: draft, sending, done, or stuck on something the user must fix. */
 export function statusTone(c: Pick<CampaignSummary, 'status' | 'segment_status'>): Tone {
   if (c.status === 'completed') return 'done'
+  if (c.status === 'scheduled') return 'scheduled'
+  if (c.status === 'failed') return 'attention'
   if (c.status === 'approved' || c.status === 'sending') return 'sending'
   if (c.status === 'draft' && (c.segment_status === 'unsupported' || c.segment_status === 'needs_clarification')) return 'attention'
   return 'draft'

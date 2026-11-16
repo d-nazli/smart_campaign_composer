@@ -48,7 +48,10 @@ type Summary struct {
 	SegmentStatus string        `json:"segment_status,omitempty"`
 	Matched       *int          `json:"matched,omitempty"`
 	Delivery      *DeliveryView `json:"delivery,omitempty"`
-	CreatedAt     time.Time     `json:"created_at"`
+	// ScheduledAt is when a scheduled campaign starts; ScheduleError why it could not.
+	ScheduledAt   *time.Time `json:"scheduled_at,omitempty"`
+	ScheduleError string     `json:"schedule_error,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // add folds one (channel, status) group into the view.
@@ -159,7 +162,7 @@ func (s *Service) List(ctx context.Context, limit int) ([]Summary, error) {
 		limit = maxListLimit
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, brief, status, coalesce(segment_status, ''), matched, created_at
+		SELECT id, brief, status, coalesce(segment_status, ''), matched, scheduled_at, schedule_error, created_at
 		FROM campaigns ORDER BY id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list campaigns: %w", err)
@@ -169,7 +172,7 @@ func (s *Service) List(ctx context.Context, limit int) ([]Summary, error) {
 	var sending []int64
 	for rows.Next() {
 		var c Summary
-		if err := rows.Scan(&c.ID, &c.Brief, &c.Status, &c.SegmentStatus, &c.Matched, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Brief, &c.Status, &c.SegmentStatus, &c.Matched, &c.ScheduledAt, &c.ScheduleError, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("list campaigns: %w", err)
 		}
 		switch c.Status {
