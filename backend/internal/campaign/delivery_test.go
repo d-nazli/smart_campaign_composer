@@ -73,3 +73,24 @@ func TestDeliveryProgressOfAnEmptyApprovalIsDone(t *testing.T) {
 		t.Fatalf("%+v", v.Delivery)
 	}
 }
+
+// Failed rows are grouped by why they failed, so the dashboard can explain them.
+func TestDeliveryFailuresAreGroupedByReason(t *testing.T) {
+	svc, pool := newService(t, mock.New(0))
+	ctx := context.Background()
+	id := approvableCampaign(t, svc)
+	if _, err := svc.Approve(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	for last, n := range map[string]int{"http 422 invalid recipient": 3, "gave up after 5 attempts; last result: http 503": 2} {
+		if _, err := pool.Exec(ctx, `UPDATE deliveries SET status='failed', last_error=$2 WHERE id IN
+			(SELECT id FROM deliveries WHERE campaign_id=$1 AND channel='sms' AND status='pending' ORDER BY id LIMIT $3)`, id, last, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v, _ := svc.Get(ctx, id)
+	got := v.Delivery.Failures
+	if len(got) != 2 || got[0].Reason != "rejected" || got[0].Count != 3 || got[0].Channel != "sms" || got[1].Reason != "gave_up" || got[1].Count != 2 {
+		t.Fatalf("failures: %+v", got)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"smartcampaign/internal/campaign"
 	"smartcampaign/internal/content"
@@ -21,17 +22,21 @@ const maxBodyBytes = 32 << 10
 type Info struct {
 	LLMMode string
 	Model   string // only reported for the real model
+	// WorkerHealthURL is the worker's /healthz. The browser cannot reach the
+	// worker, so /api/system asks it from here. Empty = not configured.
+	WorkerHealthURL string
 }
 
 // New builds the router. ready is the database readiness check.
 func New(svc *campaign.Service, info Info, ready func(context.Context) error, metricsHandler http.Handler, log *slog.Logger) http.Handler {
-	a := &api{svc: svc, info: info, log: log}
+	a := &api{svc: svc, info: info, ready: ready, log: log}
 	mux := http.NewServeMux()
 	// /healthz is what docker-compose asks: it includes the database. A process
 	// that cannot reach its database is not healthy.
 	mux.HandleFunc("GET /healthz", httpx.HealthzWith(ready))
 	mux.HandleFunc("GET /readyz", httpx.Readyz(ready))
 	mux.HandleFunc("GET /api/info", a.getInfo)
+	mux.HandleFunc("GET /api/system", a.getSystem)
 	mux.HandleFunc("POST /api/campaigns", a.createCampaign)
 	mux.HandleFunc("GET /api/campaigns", a.listCampaigns)
 	mux.HandleFunc("GET /api/campaigns/{id}", a.getCampaign)
@@ -45,9 +50,34 @@ func New(svc *campaign.Service, info Info, ready func(context.Context) error, me
 }
 
 type api struct {
-	svc  *campaign.Service
-	info Info
-	log  *slog.Logger
+	svc   *campaign.Service
+	info  Info
+	ready func(context.Context) error
+	log   *slog.Logger
+}
+
+// getSystem answers "is everything up?" for the dashboard: this api (it is
+// answering), its database, and the worker, which is asked over the network.
+// Each value is "ok", "down" or, when no worker address is configured, "unknown".
+func (a *api) getSystem(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	db, worker := "ok", "unknown"
+	if err := a.ready(ctx); err != nil {
+		db = "down"
+	}
+	if a.info.WorkerHealthURL != "" {
+		worker = "down"
+		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.info.WorkerHealthURL, nil); err == nil {
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					worker = "ok"
+				}
+			}
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"api": "ok", "database": db, "worker": worker})
 }
 
 func (a *api) getInfo(w http.ResponseWriter, _ *http.Request) {

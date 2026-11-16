@@ -26,6 +26,18 @@ type DeliveryView struct {
 	Email ChannelProgress `json:"email"`
 	// Done is true once nothing is pending in either channel.
 	Done bool `json:"done"`
+	// Failures groups the failed deliveries by why they failed (largest first).
+	Failures []FailureReason `json:"failures,omitempty"`
+}
+
+// FailureReason is one group of failed deliveries. Reason is a stable code, not
+// the raw provider text: "rejected" (the provider refused the recipient or the
+// message, so a retry cannot help), "gave_up" (retries ran out), "too_old"
+// (waited too long to be worth sending), "other".
+type FailureReason struct {
+	Channel string `json:"channel"`
+	Reason  string `json:"reason"`
+	Count   int    `json:"count"`
 }
 
 // Summary is one line of the campaign list (the dashboard).
@@ -100,7 +112,36 @@ func (s *Service) deliveryProgressFor(ctx context.Context, ids []int64) (map[int
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("delivery progress: %w", err)
 	}
-	return out, nil
+	rows.Close()
+	return out, s.addFailures(ctx, ids, out)
+}
+
+// addFailures fills DeliveryView.Failures. The worker stores the last provider
+// answer as free text; it is sorted into a few codes here so the screen can
+// explain failures in plain words.
+func (s *Service) addFailures(ctx context.Context, ids []int64, out map[int64]*DeliveryView) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT campaign_id, channel,
+		       CASE WHEN last_error LIKE 'delivery too old%' THEN 'too_old'
+		            WHEN last_error LIKE 'gave up after%' THEN 'gave_up'
+		            WHEN last_error ~ 'http 4[0-9][0-9]' THEN 'rejected'
+		            ELSE 'other' END AS reason,
+		       count(*)
+		FROM deliveries WHERE campaign_id = ANY($1) AND status = 'failed'
+		GROUP BY 1, 2, 3 ORDER BY 4 DESC, 2, 3`, ids)
+	if err != nil {
+		return fmt.Errorf("delivery failures: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var f FailureReason
+		if err := rows.Scan(&id, &f.Channel, &f.Reason, &f.Count); err != nil {
+			return fmt.Errorf("delivery failures: %w", err)
+		}
+		out[id].Failures = append(out[id].Failures, f)
+	}
+	return rows.Err()
 }
 
 const (

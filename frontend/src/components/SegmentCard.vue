@@ -1,104 +1,254 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { Segment } from '../types'
+import { funnel, share } from '../utils/funnel'
 import { describeOffer } from '../utils/formatOffer'
-import { describeSegment } from '../utils/formatRule'
+import { describeCondition } from '../utils/formatRule'
+import AnimatedNumber from './AnimatedNumber.vue'
 
 const props = defineProps<{ segment: Segment; busy?: boolean }>()
 const emit = defineEmits<{ (e: 'send-to-all'): void }>()
 
-const nf = new Intl.NumberFormat('tr-TR')
-const rule = computed(() => describeSegment(props.segment))
+const chips = computed(() => props.segment.conditions.map(describeCondition))
+const joiner = computed(() => (props.segment.match === 'any' ? 'veya' : 've'))
 const offerText = computed(() => describeOffer(props.segment.offer))
-const unreachable = computed(() => {
-  const a = props.segment.audience
-  return a ? a.matched - Math.max(a.sms_reachable, a.email_reachable) : 0
-})
+const f = computed(() => (props.segment.audience ? funnel(props.segment.audience) : null))
+
+// Bars start empty and grow to their share once the card is on screen.
+const grown = ref(false)
+onMounted(() => requestAnimationFrame(() => (grown.value = true)))
+const w = (n: number) => (grown.value && f.value ? `${share(n, f.value.matched)}%` : '0%')
 </script>
 
 <template>
-  <section class="card" aria-live="polite">
+  <section id="step-audience" class="card segment" :class="segment.status" aria-live="polite">
     <h2>Kitle</h2>
 
-    <template v-if="segment.status === 'ok' && segment.audience">
+    <template v-if="segment.status === 'ok' && segment.audience && f">
       <p class="explanation">{{ segment.explanation }}</p>
-      <ul class="conditions">
-        <li v-for="line in rule.lines" :key="line">{{ line }}</li>
-      </ul>
-      <p v-if="segment.conditions.length > 1" class="muted small">{{ rule.match }}</p>
-      <p class="offer" data-testid="offer"><strong>Teklif:</strong> {{ offerText }}</p>
 
-      <div class="stats">
-        <div class="stat">
-          <strong data-testid="matched">{{ nf.format(segment.audience.matched) }}</strong>
-          <span>eşleşen kişi</span>
+      <ul class="chips" aria-label="Kural koşulları">
+        <template v-for="(c, i) in chips" :key="c">
+          <li v-if="i > 0" class="joiner" aria-hidden="true">{{ joiner }}</li>
+          <li class="chip">{{ c }}</li>
+        </template>
+      </ul>
+      <p class="offer" data-testid="offer"><span class="chip offer-chip">Teklif</span> {{ offerText }}</p>
+
+      <div class="funnel">
+        <div class="row matched">
+          <div class="meta">
+            <span class="label">Eşleşen kişi</span>
+            <strong class="value num" data-testid="matched"><AnimatedNumber :value="f.matched" from-zero /></strong>
+          </div>
+          <div class="track"><span class="bar" :style="{ width: grown ? '100%' : '0%' }" /></div>
         </div>
-        <div class="stat">
-          <strong data-testid="sms-reachable">{{ nf.format(segment.audience.sms_reachable) }}</strong>
-          <span>SMS ile ulaşılabilir</span>
-        </div>
-        <div class="stat">
-          <strong data-testid="email-reachable">{{ nf.format(segment.audience.email_reachable) }}</strong>
-          <span>e-posta ile ulaşılabilir</span>
+
+        <div class="split">
+          <div class="row sms">
+            <div class="meta">
+              <span class="label">SMS ile ulaşılabilir</span>
+              <strong class="value num" data-testid="sms-reachable"><AnimatedNumber :value="f.sms" from-zero /></strong>
+            </div>
+            <div class="track"><span class="bar" :style="{ width: w(f.sms) }" /></div>
+          </div>
+          <div class="row email">
+            <div class="meta">
+              <span class="label">E-posta ile ulaşılabilir</span>
+              <strong class="value num" data-testid="email-reachable"><AnimatedNumber :value="f.email" from-zero /></strong>
+            </div>
+            <div class="track"><span class="bar" :style="{ width: w(f.email) }" /></div>
+          </div>
+          <div class="row none" :class="{ zero: f.unreachable === 0 }">
+            <div class="meta">
+              <span class="label">Hiçbir kanaldan ulaşılamayan</span>
+              <strong class="value num" data-testid="unreachable"><AnimatedNumber :value="f.unreachable" from-zero /></strong>
+            </div>
+            <div class="track"><span class="bar" :style="{ width: w(f.unreachable) }" /></div>
+          </div>
         </div>
       </div>
-      <p class="muted small">
-        Ulaşılabilir = o kanal için izin vermiş ve telefon/e-postası kayıtlı. İzni olmayan kişiye o kanaldan mesaj gönderilmez.
-        <template v-if="unreachable > 0">{{ nf.format(unreachable) }} kişiye hiçbir kanaldan ulaşılamıyor.</template>
+
+      <p class="why muted small">
+        <template v-if="f.unreachable > 0">
+          Ulaşılamayanlar o kanallar için iletişim izni vermemiş ya da kayıtlı telefonu / e-postası yok; onlara mesaj gönderilmez.
+        </template>
+        <template v-else>Eşleşen herkese en az bir kanaldan ulaşılabiliyor.</template>
+        <template v-if="f.smsOnly > 0 || f.emailOnly > 0">
+          {{ f.both }} kişiye iki kanaldan, {{ f.smsOnly }} kişiye yalnız SMS, {{ f.emailOnly }} kişiye yalnız e-posta ile ulaşılır.
+        </template>
       </p>
       <p v-if="segment.audience.matched === 0" class="notice warn">Bu kurala uyan kimse yok. Brief'i değiştirmeyi deneyin.</p>
     </template>
 
     <template v-else-if="segment.status === 'needs_clarification'">
-      <p class="notice info" role="status"><strong>Biraz daha bilgi lazım:</strong> {{ segment.question }}</p>
-      <p v-if="segment.offer && segment.offer.kind !== 'none'" class="offer" data-testid="offer">
-        <strong>Anladığım teklif:</strong> {{ offerText }}
-      </p>
-      <div v-if="segment.suggestion === 'all_customers'" class="actions">
-        <button class="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</button>
-        <span class="muted small">İzin vermemiş olanlara yine de gönderilmez.</span>
+      <div class="box clarify" role="status">
+        <strong>Biraz daha bilgi lazım</strong>
+        <p>{{ segment.question }}</p>
+        <p v-if="segment.offer && segment.offer.kind !== 'none'" class="offer" data-testid="offer">
+          <span class="chip offer-chip">Anladığım teklif</span> {{ offerText }}
+        </p>
+        <div v-if="segment.suggestion === 'all_customers'" class="actions">
+          <button class="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</button>
+          <span class="small">İzin vermemiş olanlara yine de gönderilmez.</span>
+        </div>
+        <p class="small">Ya da brief'i kime göndereceğinizi yazarak güncelleyip tekrar deneyin.</p>
       </div>
-      <p class="muted small">Ya da brief'i kime göndereceğinizi yazarak güncelleyip tekrar deneyin.</p>
     </template>
 
     <template v-else-if="segment.status === 'unsupported'">
-      <p class="notice warn"><strong>Bu brief desteklenmiyor:</strong> {{ segment.explanation }}</p>
+      <div class="box unsupported" role="alert">
+        <strong>Bu brief desteklenmiyor</strong>
+        <p>{{ segment.explanation }}</p>
+      </div>
     </template>
   </section>
 </template>
 
 <style scoped>
 .explanation {
-  margin: 0 0 8px;
+  margin: 0 0 12px;
+  font-size: 1.02rem;
   font-weight: 600;
+  max-width: 70ch;
 }
-.conditions {
-  margin: 0 0 8px;
-  padding-left: 20px;
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+.chip {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--info);
+  font-size: 0.86rem;
+  font-weight: 550;
+}
+.joiner {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 .offer {
-  margin: 0 0 8px;
+  margin: 0 0 20px;
 }
-.stats {
+.offer-chip {
+  background: var(--warn-bg);
+  color: var(--warn);
+  margin-right: 4px;
+}
+
+.funnel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
-  margin: 16px 0 8px;
+  gap: 14px;
 }
-.stat {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+.row .meta {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 5px;
 }
-.stat strong {
-  font-size: 1.6rem;
-  font-variant-numeric: tabular-nums;
-}
-.stat span {
+.label {
+  font-size: 0.9rem;
   color: var(--muted);
-  font-size: 0.85rem;
+}
+.value {
+  font-size: 1.6rem;
+  font-weight: 650;
+  line-height: 1.1;
+  min-width: 4ch;
+  text-align: right;
+}
+.track {
+  height: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.bar {
+  display: block;
+  height: 100%;
+  border-radius: 12px;
+  background: var(--fg);
+  transition: width 300ms var(--ease);
+}
+.matched .value {
+  font-size: 2.3rem;
+}
+.sms .bar {
+  background: var(--sms);
+}
+.sms .value {
+  color: var(--sms);
+}
+.email .bar {
+  background: var(--email);
+}
+.email .value {
+  color: var(--email);
+}
+.none .bar {
+  background: repeating-linear-gradient(135deg, var(--muted) 0 4px, transparent 4px 8px);
+  opacity: 0.55;
+}
+.none .value {
+  color: var(--muted);
+}
+/* the split rows hang off the matched bar like branches */
+.split {
+  display: grid;
+  gap: 14px;
+  margin-left: 14px;
+  padding-left: 18px;
+  border-left: 2px solid var(--border);
+}
+.why {
+  margin: 14px 0 0;
+  max-width: 75ch;
+}
+
+.box {
+  border-radius: 12px;
+  padding: 14px 16px;
+  border: 1px solid;
+}
+.box p {
+  margin: 6px 0 0;
+}
+.box .actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.clarify {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn);
+}
+.unsupported {
+  background: var(--error-bg);
+  border-color: var(--error-line);
+  color: var(--error);
+}
+
+@media (max-width: 560px) {
+  .value {
+    font-size: 1.35rem;
+  }
+  .matched .value {
+    font-size: 1.9rem;
+  }
+  .split {
+    margin-left: 6px;
+    padding-left: 12px;
+  }
 }
 </style>

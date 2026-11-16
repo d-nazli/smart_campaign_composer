@@ -45,6 +45,32 @@ export interface Totals {
   rateLimited: number
 }
 
+export type Tone = 'draft' | 'sending' | 'done' | 'attention'
+
+/** Colour group of a campaign's badge: draft, sending, done, or stuck on something the user must fix. */
+export function statusTone(c: Pick<CampaignSummary, 'status' | 'segment_status'>): Tone {
+  if (c.status === 'completed') return 'done'
+  if (c.status === 'approved' || c.status === 'sending') return 'sending'
+  if (c.status === 'draft' && (c.segment_status === 'unsupported' || c.segment_status === 'needs_clarification')) return 'attention'
+  return 'draft'
+}
+
+/** Totals over every campaign, for the cards at the top of the dashboard. */
+export function overallTotals(list: CampaignSummary[]): Totals {
+  const t = deliveryTotals(undefined)
+  for (const c of list) {
+    const d = deliveryTotals(c.delivery)
+    t.total += d.total
+    t.sent += d.sent
+    t.failed += d.failed
+    t.skipped += d.skipped
+    t.pending += d.pending
+    t.retries += d.retries
+    t.rateLimited += d.rateLimited
+  }
+  return t
+}
+
 /** Both channels added together (zeros before approval). */
 export function deliveryTotals(d: DeliveryProgress | undefined): Totals {
   const t: Totals = { total: 0, sent: 0, failed: 0, skipped: 0, pending: 0, retries: 0, rateLimited: 0 }

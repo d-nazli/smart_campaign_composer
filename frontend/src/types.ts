@@ -89,12 +89,21 @@ export interface ChannelProgress {
   skipped: number
 }
 
+/** Why some deliveries failed: a code from the API (rejected, gave_up, too_old, other). */
+export interface FailureReason {
+  channel: 'sms' | 'email'
+  reason: string
+  count: number
+}
+
 /** Sending progress of an approved campaign. */
 export interface DeliveryProgress {
   sms: ChannelProgress
   email: ChannelProgress
   /** Nothing is pending in either channel. */
   done: boolean
+  /** Failed deliveries grouped by reason, largest first (absent when none failed). */
+  failures?: FailureReason[]
 }
 
 export interface ApproveResult {

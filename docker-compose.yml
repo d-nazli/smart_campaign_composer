@@ -78,6 +78,8 @@ services:
       # Fixed character allowance per personalization variable (empty = built-in default).
       VARIABLE_BUDGET_FIRST_NAME: ${VARIABLE_BUDGET_FIRST_NAME:-}
       VARIABLE_BUDGET_CITY: ${VARIABLE_BUDGET_CITY:-}
+      # The dashboard's "worker" light: /api/system asks the worker's /healthz here.
+      WORKER_HEALTH_URL: http://worker:9091/healthz
     networks: [app]
     ports:
       - "8081:8080"

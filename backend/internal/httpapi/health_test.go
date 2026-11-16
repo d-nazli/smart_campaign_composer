@@ -151,3 +151,51 @@ func TestListOfNoCampaignsIsAnEmptyArray(t *testing.T) {
 		t.Fatalf("%d %s", resp.StatusCode, body)
 	}
 }
+
+// /api/system is what the dashboard's health lights read: the api, its database
+// and (asked over the network) the worker.
+func TestSystemReportsDatabaseAndWorker(t *testing.T) {
+	var workerUp atomic.Bool
+	workerUp.Store(true)
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !workerUp.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(worker.Close)
+
+	pool := testdb.NewSeeded(t)
+	policy, _ := content.NewPolicy(nil)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := campaign.NewService(pool, mock.New(0), policy, log)
+	var dbDown atomic.Bool
+	check := func(context.Context) error {
+		if dbDown.Load() {
+			return errors.New("gone")
+		}
+		return nil
+	}
+	srv := httptest.NewServer(httpapi.New(svc, httpapi.Info{LLMMode: "mock", WorkerHealthURL: worker.URL}, check, nil, log))
+	t.Cleanup(srv.Close)
+
+	get := func() map[string]string {
+		_, body := do(t, "GET", srv.URL+"/api/system", nil)
+		var m map[string]string
+		if err := json.Unmarshal(body, &m); err != nil {
+			t.Fatal(err, string(body))
+		}
+		return m
+	}
+	if m := get(); m["api"] != "ok" || m["database"] != "ok" || m["worker"] != "ok" {
+		t.Fatalf("all up: %v", m)
+	}
+	workerUp.Store(false)
+	dbDown.Store(true)
+	if m := get(); m["worker"] != "down" || m["database"] != "down" || m["api"] != "ok" {
+		t.Fatalf("worker and db down: %v", m)
+	}
+	worker.Close()
+	if m := get(); m["worker"] != "down" {
+		t.Fatalf("worker unreachable: %v", m)
+	}
+}

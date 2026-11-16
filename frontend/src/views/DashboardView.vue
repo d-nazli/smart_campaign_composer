@@ -1,175 +1,210 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { AppInfo } from '../api/info'
 import { listCampaigns } from '../api/campaigns'
-import type { CampaignSummary, ChannelProgress } from '../types'
-import { briefPreview, deliveryTotals, statusLabel } from '../utils/dashboard'
-import { channelPercent } from '../utils/delivery'
+import { fetchSystem, type SystemHealth as SystemState } from '../api/system'
+import type { CampaignSummary } from '../types'
+import { overallTotals } from '../utils/dashboard'
+import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
+import AnimatedNumber from '../components/AnimatedNumber.vue'
+import CampaignCard from '../components/CampaignCard.vue'
+import SystemHealth from '../components/SystemHealth.vue'
+
+defineProps<{ info: AppInfo | null }>()
 
 const POLL_MS = 2000
+const HEALTH_MS = 5000
 
 const campaigns = ref<CampaignSummary[] | null>(null)
 const error = ref<string | null>(null)
+const system = ref<SystemState | null>(null)
+const apiUnreachable = ref(false)
+const samples = ref<Sample[]>([])
 let timer: number | null = null
+let healthTimer: number | null = null
 
 async function refresh() {
   try {
-    campaigns.value = await listCampaigns()
+    const list = await listCampaigns()
+    campaigns.value = list
     error.value = null
+    samples.value = pushSample(samples.value, { at: performance.now(), sent: overallTotals(list).sent })
   } catch (e) {
     // Keep showing the last list; say that it may be stale.
     error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
+async function refreshHealth() {
+  try {
+    system.value = await fetchSystem()
+    apiUnreachable.value = false
+  } catch {
+    apiUnreachable.value = true
+  }
+}
+
 onMounted(() => {
   void refresh()
+  void refreshHealth()
   timer = window.setInterval(refresh, POLL_MS)
+  healthTimer = window.setInterval(refreshHealth, HEALTH_MS)
 })
 onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
+  if (healthTimer !== null) window.clearInterval(healthTimer)
 })
 
-const nf = new Intl.NumberFormat('tr-TR')
-const when = (iso: string) => new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })
-const channels = (c: CampaignSummary): { key: string; label: string; p: ChannelProgress }[] =>
-  c.delivery
-    ? [
-        { key: 'sms', label: 'SMS', p: c.delivery.sms },
-        { key: 'email', label: 'E-posta', p: c.delivery.email },
-      ]
-    : []
+const totals = computed(() => overallTotals(campaigns.value ?? []))
+const rate = computed(() => ratePerSecond(samples.value))
+// Rate is only meaningful while something is being sent.
+const shownRate = computed(() => (totals.value.pending > 0 ? rate.value : 0))
 </script>
 
 <template>
-  <section class="dash" aria-live="polite">
-    <h2>Kampanyalar</h2>
-    <p v-if="error" class="notice error" role="alert">
-      Liste güncellenemedi ({{ error }}). Gösterilen bilgi eski olabilir.
-    </p>
-    <p v-if="campaigns === null && !error" class="muted">Yükleniyor…</p>
-    <p v-else-if="campaigns && campaigns.length === 0" class="muted" data-testid="empty">
-      Henüz kampanya yok. “Yeni kampanya” sekmesinden bir brief yazın.
-    </p>
+  <section class="dash">
+    <div class="top">
+      <h2>Kampanyalar</h2>
+      <SystemHealth :system="system" :unreachable="apiUnreachable" :info="info" />
+    </div>
 
-    <table v-if="campaigns && campaigns.length > 0" data-testid="campaign-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Brief</th>
-          <th>Durum</th>
-          <th>Gönderim</th>
-          <th class="num">Gönderildi</th>
-          <th class="num">Başarısız</th>
-          <th class="num">Tekrar</th>
-          <th class="num">429</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="c in campaigns" :key="c.id" :data-testid="`row-${c.id}`">
-          <td>
-            <a :href="`/?c=${c.id}`">{{ c.id }}</a>
-          </td>
-          <td class="brief">
-            <span :title="c.brief">{{ briefPreview(c.brief, 90) }}</span>
-            <span class="muted small block">{{ when(c.created_at) }}</span>
-          </td>
-          <td>
-            <span class="status" :class="c.status">{{ statusLabel(c) }}</span>
-          </td>
-          <td class="progress-cell">
-            <template v-if="c.delivery">
-              <div v-for="r in channels(c)" :key="r.key" class="chan">
-                <span class="label">{{ r.label }}</span>
-                <progress :value="channelPercent(r.p)" max="100" :aria-label="`${r.label} ilerlemesi`" />
-                <span class="small muted">{{ nf.format(r.p.sent + r.p.failed + r.p.skipped) }}/{{ nf.format(r.p.total) }}</span>
-              </div>
-            </template>
-            <span v-else class="muted small">—</span>
-          </td>
-          <td class="num" data-testid="sent">{{ c.delivery ? nf.format(deliveryTotals(c.delivery).sent) : '—' }}</td>
-          <td class="num" :class="{ bad: c.delivery && deliveryTotals(c.delivery).failed > 0 }" data-testid="failed">
-            {{ c.delivery ? nf.format(deliveryTotals(c.delivery).failed) : '—' }}
-          </td>
-          <td class="num" data-testid="retries">{{ c.delivery ? nf.format(deliveryTotals(c.delivery).retries) : '—' }}</td>
-          <td class="num" data-testid="rate-limited">
-            {{ c.delivery ? nf.format(deliveryTotals(c.delivery).rateLimited) : '—' }}
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="muted small">
-      Sayfa her {{ POLL_MS / 1000 }} saniyede güncellenir. “Tekrar” yeniden denemeleri, “429” bunların kaçının provider’ın hız
+    <p v-if="error" class="notice error" role="alert">Liste güncellenemedi ({{ error }}). Gösterilen bilgi eski olabilir.</p>
+
+    <div class="summary" data-testid="summary">
+      <div class="stat sent">
+        <span class="label">Toplam gönderilen</span>
+        <strong class="value num" data-testid="total-sent"><AnimatedNumber :value="totals.sent" /></strong>
+        <span class="sub muted small">SMS ve e-posta birlikte</span>
+      </div>
+      <div class="stat failed" :class="{ bad: totals.failed > 0 }">
+        <span class="label">Başarısız</span>
+        <strong class="value num" data-testid="total-failed"><AnimatedNumber :value="totals.failed" /></strong>
+        <span class="sub small">{{ totals.failed > 0 ? 'Nedenleri kartlarda' : 'Sorun yok' }}</span>
+      </div>
+      <div class="stat queued">
+        <span class="label">Kuyrukta</span>
+        <strong class="value num" data-testid="total-pending"><AnimatedNumber :value="totals.pending" /></strong>
+        <span class="sub muted small">gönderilmeyi bekliyor</span>
+      </div>
+      <div class="stat rate">
+        <span class="label">Hız</span>
+        <strong class="value num" data-testid="rate"><AnimatedNumber :value="shownRate" :decimals="1" /><small>/sn</small></strong>
+        <span class="sub muted small">son 10 saniyede</span>
+      </div>
+    </div>
+
+    <p v-if="campaigns === null && !error" class="muted">Yükleniyor…</p>
+    <div v-else-if="campaigns && campaigns.length === 0" class="empty card" data-testid="empty">
+      <strong>Henüz kampanya yok</strong>
+      <p class="muted">“Yeni kampanya” sekmesinden bir brief yazarak ilk kampanyanı oluştur.</p>
+      <a href="#/">Yeni kampanya başlat</a>
+    </div>
+
+    <div v-if="campaigns && campaigns.length > 0" class="list" data-testid="campaign-table">
+      <CampaignCard v-for="c in campaigns" :key="c.id" :campaign="c" />
+    </div>
+
+    <p class="muted small foot">
+      Sayfa her {{ POLL_MS / 1000 }} saniyede güncellenir. “Tekrar” yeniden denemeleri, “429” bunların kaçının sağlayıcının hız
       sınırından geldiğini gösterir.
     </p>
   </section>
 </template>
 
 <style scoped>
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.92rem;
-}
-th,
-td {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-th {
-  color: var(--muted);
-  font-weight: 600;
-  font-size: 0.8rem;
-}
-.num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-.bad {
-  color: var(--error);
-  font-weight: 600;
-}
-.brief {
-  max-width: 320px;
-}
-.block {
-  display: block;
-}
-.status {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  font-size: 0.8rem;
-  white-space: nowrap;
-}
-.status.sending,
-.status.approved {
-  background: var(--info-bg);
-  color: var(--info);
-}
-.status.completed {
-  background: var(--ok-bg);
-  color: var(--ok);
-}
-.progress-cell {
-  min-width: 190px;
-}
-.chan {
-  display: grid;
-  grid-template-columns: 52px 1fr auto;
+.top {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  justify-content: space-between;
+  gap: 12px 24px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.top h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  min-height: 118px;
+  transition: background var(--t-med) var(--ease), border-color var(--t-med) var(--ease);
 }
 .label {
-  font-size: 0.8rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 550;
 }
-progress {
-  width: 100%;
-  height: 10px;
-  accent-color: var(--accent);
+.value {
+  font-size: 2.2rem;
+  font-weight: 650;
+  line-height: 1.15;
+  /* a fixed height and tabular digits keep the card from changing size as the number grows */
+  min-height: 1.15em;
+}
+.value small {
+  font-size: 0.95rem;
+  font-weight: 550;
+  color: var(--muted);
+  margin-left: 3px;
+  letter-spacing: 0;
+}
+.stat.sent .value {
+  color: var(--ok);
+}
+.stat.bad {
+  background: var(--error-bg);
+  border-color: var(--error-line);
+}
+.stat.bad .value,
+.stat.bad .label,
+.stat.bad .sub {
+  color: var(--error);
+}
+.stat.failed .sub {
+  color: var(--muted);
+}
+.list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.empty {
+  text-align: center;
+  padding: 40px 20px;
+}
+.empty p {
+  margin: 6px 0 14px;
+}
+.foot {
+  margin-top: 22px;
+  max-width: 80ch;
+}
+
+@media (max-width: 860px) {
+  .summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 420px) {
+  .value {
+    font-size: 1.8rem;
+  }
+  .stat {
+    padding: 12px 14px;
+    min-height: 104px;
+  }
 }
 </style>
