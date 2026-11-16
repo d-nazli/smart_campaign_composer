@@ -22,3 +22,29 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/
+
+# More secrets / keys
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials*.json
+
+# Logs / temp / coverage
+*.log
+npm-debug.log*
+tmp/
+*.tmp
+coverage/
+*.coverprofile
+.cache/
+.vite/
+
+# Go build output / vendoring
+bin/
+backend/vendor/
+
+# Local overrides
+docker-compose.override.yml
+*.local
