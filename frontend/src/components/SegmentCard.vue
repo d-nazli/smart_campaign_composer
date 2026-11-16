@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Segment } from '../types'
+import { describeOffer } from '../utils/formatOffer'
 import { describeSegment } from '../utils/formatRule'
 
 const props = defineProps<{ segment: Segment }>()
 
 const nf = new Intl.NumberFormat('tr-TR')
 const rule = computed(() => describeSegment(props.segment))
+const offerText = computed(() => describeOffer(props.segment.offer))
 const unreachable = computed(() => {
   const a = props.segment.audience
   return a ? a.matched - Math.max(a.sms_reachable, a.email_reachable) : 0
@@ -23,6 +25,7 @@ const unreachable = computed(() => {
         <li v-for="line in rule.lines" :key="line">{{ line }}</li>
       </ul>
       <p v-if="segment.conditions.length > 1" class="muted small">{{ rule.match }}</p>
+      <p class="offer" data-testid="offer"><strong>Teklif:</strong> {{ offerText }}</p>
 
       <div class="stats">
         <div class="stat">
@@ -64,6 +67,9 @@ const unreachable = computed(() => {
 .conditions {
   margin: 0 0 8px;
   padding-left: 20px;
+}
+.offer {
+  margin: 0 0 8px;
 }
 .stats {
   display: grid;

@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"smartcampaign/internal/llm"
+	"smartcampaign/internal/offer"
 )
 
 // Kind selects what a scripted step does.
@@ -47,6 +48,7 @@ type Call struct {
 	Kind     string // "segment" or "messages"
 	Brief    string
 	Previous []llm.Attempt
+	Offer    offer.Offer
 }
 
 // Client implements llm.Client.
@@ -104,11 +106,11 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 
 func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta func(string)) (llm.Output, error) {
 	c.mu.Lock()
-	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous})
+	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer})
 	step := next(c.messages, &c.msgIdx)
 	c.mu.Unlock()
 
-	out, err := resolve(step, func() string { return smartMessages(req.Brief) })
+	out, err := resolve(step, func() string { return smartMessages(req.Brief, req.Offer) })
 	if err != nil {
 		return out, err
 	}

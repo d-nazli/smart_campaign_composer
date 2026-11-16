@@ -58,6 +58,9 @@ watch(
   },
 )
 
+// Warnings describe the SAVED text; while a new text streams in there is nothing to warn about yet.
+const warnings = computed<Issue[]>(() => (streaming.value ? [] : (campaign.value?.content?.report.warnings ?? [])))
+
 const source = computed(() => stream.value.result?.source ?? campaign.value?.content?.source ?? null)
 
 const fallbackText = computed(() => {
@@ -214,6 +217,7 @@ onMounted(async () => {
         :limits="limits"
         :variables="variables"
         :server-issues="serverIssues"
+        :warnings="warnings"
       />
 
       <template v-if="hasContent && !streaming">

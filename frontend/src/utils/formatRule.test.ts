@@ -29,6 +29,12 @@ describe('describeCondition', () => {
     expect(describeCondition({ field: 'total_spent', op: 'lt', value: 500 })).toBe('Toplam harcama < 500 TL')
     expect(describeCondition({ field: 'days_since_last_cart_add', op: 'gte', value: 0 })).toContain('zamandan bağımsız')
     expect(describeCondition({ field: 'days_since_last_order', op: 'lte', value: 14 })).toBe('Son 14 gün içinde sipariş vermiş')
+    expect(describeCondition({ field: 'days_since_last_order_or_never', op: 'gt', value: 30 })).toBe(
+      'Son 30 günde sipariş vermemiş (hiç sipariş vermemişler dahil)',
+    )
+    expect(describeCondition({ field: 'days_since_last_order_or_never', op: 'gte', value: 30 })).toBe(
+      'En az 30 gündür sipariş vermemiş (hiç sipariş vermemişler dahil)',
+    )
   })
 
   it('falls back gracefully for unknown fields', () => {

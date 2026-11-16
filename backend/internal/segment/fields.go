@@ -91,6 +91,22 @@ func daysSince(col string) func(op string, v any, now time.Time, a *args) (strin
 	}
 }
 
+// daysSinceOrNever is the NULL-inclusive complement of daysSince(...) lte/lt:
+// "no event in the last N days", where having NEVER had the event counts. It
+// only supports the "longer ago" operators; for lte/lt/eq a NULL cannot match.
+func daysSinceOrNever(col string) func(op string, v any, now time.Time, a *args) (string, error) {
+	return func(op string, v any, now time.Time, a *args) (string, error) {
+		t := now.Add(-time.Duration(v.(int64)) * 24 * time.Hour)
+		switch op {
+		case OpGt: // not within the last N days (older than N days, or never)
+			return fmt.Sprintf("(%s IS NULL OR %s < %s)", col, col, a.add(t)), nil
+		case OpGte:
+			return fmt.Sprintf("(%s IS NULL OR %s <= %s)", col, col, a.add(t)), nil
+		}
+		return "", fmt.Errorf("operator %q not supported", op)
+	}
+}
+
 func numeric(col string) func(op string, v any, now time.Time, a *args) (string, error) {
 	return func(op string, v any, _ time.Time, a *args) (string, error) {
 		sym, ok := sqlCmp[op]
@@ -133,6 +149,12 @@ var fields = []fieldDef{
 			Description: "Whole days since the customer's last order. Customers with no orders never match (use order_count eq 0 for them)."},
 		kind: kindInt,
 		sql:  daysSince("last_order_at"),
+	},
+	{
+		FieldInfo: FieldInfo{Name: "days_since_last_order_or_never", Type: "integer", Ops: []string{OpGt, OpGte}, Min: 0, Max: 3650,
+			Description: "Customers who have NOT ordered in the last N days, INCLUDING customers who never ordered at all. 'Has not ordered in the last 30 days' = gt 30. Use this, not days_since_last_order gt N, for 'did not order in the last N days' (that one silently drops everyone who never ordered)."},
+		kind: kindInt,
+		sql:  daysSinceOrNever("last_order_at"),
 	},
 	{
 		FieldInfo: FieldInfo{Name: "order_count", Type: "integer", Ops: cmpOps, Min: 0, Max: 100000,

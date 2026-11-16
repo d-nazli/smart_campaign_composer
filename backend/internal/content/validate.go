@@ -29,6 +29,9 @@ const (
 	CodeControlCharacter  = "control_character"
 	CodeUnknownVariable   = "unknown_variable"
 	CodeMalformedTemplate = "malformed_placeholder"
+	CodeOfferMissing      = "offer_missing"
+	CodeOfferConflict     = "offer_conflict"
+	CodeRepeatedWord      = "repeated_word"
 )
 
 // Issue is one validation problem. Message is written in Turkish for the UI and
@@ -44,8 +47,11 @@ type Issue struct {
 // Report is the outcome of Validate. SMSLength and SubjectLength are the
 // effective lengths (variables counted at their budget) for UI counters.
 type Report struct {
-	OK            bool    `json:"ok"`
-	Issues        []Issue `json:"issues"`
+	OK     bool    `json:"ok"`
+	Issues []Issue `json:"issues"`
+	// Warnings are quality problems (missing offer, repeated word). They never
+	// make OK false: a person may still send what they edited.
+	Warnings      []Issue `json:"warnings"`
 	SMSLength     int     `json:"sms_length"`
 	SubjectLength int     `json:"subject_length"`
 }
@@ -72,7 +78,7 @@ func (p Policy) Validate(c Content) (Content, Report) {
 		EmailSubject: strings.TrimSpace(c.EmailSubject),
 		EmailBody:    strings.TrimSpace(normalizeNewlines(c.EmailBody)),
 	}
-	rep := Report{Issues: []Issue{}}
+	rep := Report{Issues: []Issue{}, Warnings: []Issue{}}
 
 	out.SMSBody = p.checkText(&rep, FieldSMSBody, out.SMSBody, SMSMaxRunes, "SMS", true)
 	out.EmailSubject = p.checkText(&rep, FieldEmailSubject, out.EmailSubject, SubjectMaxRunes, "E-posta konusu", false)

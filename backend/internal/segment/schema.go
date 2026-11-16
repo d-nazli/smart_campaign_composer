@@ -1,5 +1,7 @@
 package segment
 
+import "smartcampaign/internal/offer"
+
 // JSONSchema is the structured-output schema sent to the LLM. It is derived
 // from the field whitelist. The API's schema language cannot express ranges,
 // lengths or per-field value types, so Parse re-checks everything; the schema
@@ -33,6 +35,20 @@ func JSONSchema() map[string]any {
 		"required":             []any{"field", "op", "value"},
 		"additionalProperties": false,
 	}
+	kinds := make([]any, len(offer.Kinds))
+	for i, k := range offer.Kinds {
+		kinds[i] = string(k)
+	}
+	offerSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"kind":  map[string]any{"type": "string", "enum": kinds},
+			"value": map[string]any{"type": "number"},
+			"code":  str,
+		},
+		"required":             []any{"kind", "value", "code"},
+		"additionalProperties": false,
+	}
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -41,8 +57,9 @@ func JSONSchema() map[string]any {
 			"conditions":  map[string]any{"type": "array", "items": condition},
 			"explanation": str,
 			"question":    str,
+			"offer":       offerSchema,
 		},
-		"required":             []any{"status", "match", "conditions", "explanation", "question"},
+		"required":             []any{"status", "match", "conditions", "explanation", "question", "offer"},
 		"additionalProperties": false,
 	}
 }

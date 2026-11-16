@@ -29,6 +29,11 @@ export function describeCondition(c: Condition): string {
       return days('cart', c.op, Number(c.value))
     case 'days_since_last_order':
       return days('order', c.op, Number(c.value))
+    case 'days_since_last_order_or_never': {
+      const n = Number(c.value)
+      const tail = '(hiç sipariş vermemişler dahil)'
+      return c.op === 'gte' ? `En az ${n} gündür sipariş vermemiş ${tail}` : `Son ${n} günde sipariş vermemiş ${tail}`
+    }
     case 'order_count':
       return `Sipariş sayısı ${SYMBOL[c.op] ?? c.op} ${c.value}`
     case 'total_spent':

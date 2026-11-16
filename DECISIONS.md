@@ -184,6 +184,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 ## D34 — Segment DSL düz (iç içe grup yok) · `Kesin (kullanıcı kararı)`
 - Alternatif: iç içe `all/any/not` ağacı.
 - Gerekçe: structured outputs özyinelemeli şemayı desteklemez; düz liste + tek `match` (`all|any`) şemaya sığar, doğrulaması ve derlemesi basit, saldırı yüzeyi küçük. `not` ihtiyacı `neq`/`not_in` ile karşılanır. Brief'ler pratikte "ve" ile bağlanan koşullardır.
+- **Güncelleme (D50):** "Son N günde sipariş vermemiş" için DSL'e bir OR/iç içe grup eklemedik; düz kalıyor. Bunun yerine whitelist'e NULL'ı da kapsayan tek bir alan eklendi (`days_since_last_order_or_never`). Düzlük kararı geçerli; değişen, düz kuralın bu en yaygın kampanyayı ifade edebilmesi.
 - Bedeli: "(A veya B) ve C" gibi karma ifadeler yok; LLM bunu ifade edemezse `unsupported`/`needs_clarification` döner. Kabul edildi.
 
 ## D35 — Değişkenler `first_name` ve `city`; tek yerde tanımlı (`content.Variables`) · `Kesin (kullanıcı kararı)`
@@ -226,8 +227,58 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Test için senaryo modu: bozuk JSON, kısaltılmış (`max_tokens`), reddetme, API hatası, akış kopması. Mock çağrıları kaydeder; testler "modele hangi geri bildirim gitti" sorusunu doğrular.
 - Gizlilik: LLM'e yalnız brief, şema, şehir listesi ve değişken payları gider; **hiçbir kullanıcı kaydı gitmez**. Brief `<brief>` etiketleri arasında "güvenilmeyen veri" olarak sunulur (`</brief>` kaçışı temizlenir); çıktısı yine doğrulanır.
 - Her deneme (geçerli/geçersiz, gerçek/mock) `llm_generations` tablosuna yazılır: ham çıktı (≤8 KB), neden reddedildi, token, süre.
+- **Güncelleme (D44–D49):** mock artık kendi regex'lerini taşımıyor; segment tarafında `brief.Analyze` ile "kusursuz model" gibi davranıyor, mesaj tarafında teklifi yazıyor ve kelime tekrarı üretmiyor.
+
+## D44 — Brief'teki hiçbir koşul sessizce atlanmaz · `Kesin (kullanıcı kararı)`
+- **Kural:** Brief'te geçen bir kitle koşulu ya kurala girer, ya da cevap `needs_clarification` / `unsupported` olur ve ekranda *hangi ifadenin* neden uygulanamadığı yazar. "Anlamadım ama devam ettim" yoktur.
+- **Olay:** "…sepete ekleme yapmış ancak sipariş oluşturmamış…" brief'inde "sipariş oluşturmamış" kuralda yoktu; kitle 54 çıktı, doğrusu 50'ydi (sepete ekleyip sonra alışveriş yapmış 4 kişi de gidecekti). Kök neden: mock'un "almamış" sözlüğünde bu ifade yoktu ve eşleşmeyen ifade hiçbir hata üretmeden düşüyordu. Gerçek Claude'da da aynı açık vardı: `Parse` yalnızca kuralın *kendi içinde* geçerli olup olmadığına bakar, kuralın brief'i *karşılayıp karşılamadığına* bakmaz; prompt'ta "kısmen ifade edilebilir" durumu tanımsızdı.
+- **Üç katman (`internal/brief`):**
+  1. `Analyze`: brief'i kodla okur (şehir/hariç, zaman penceresi, aldı/almadı, teklif). Veritabanında olmayan (yaş, cinsiyet, ürün kategorisi/marka, doğum günü, üyelik/kayıt tarihi, e-posta etkileşimi) ya da belirsiz (takvime bağlı "bu ay/geçen hafta", saat/dakika, birden fazla süre, tutar eşiği, çelişen alma/almama, kodu verilmemiş kupon, tanımadığımız "…mamış/…meyen" ifadesi) bir şey görürse cevabı **kod verir ve modele sorulmaz**. Sebep: model "yardımcı olmak için" zor kısmı atlayan taraftır; atlayacağı şeyi ona hiç göstermiyoruz.
+  2. `Verify`: model cevap verirse kural brief'teki her parçayı içermeli (şehirler, pencere, satın almama, teklif); eksik, yanlış değerli ya da brief'te olmayan (uydurma) parça için hata mesajı modele geri verilir (repair, 3 deneme).
+  3. Model düzeltemezse sonuç sessiz bir kitle değil, neyin uygulanamadığını yazan `needs_clarification` sorusudur.
+- **Alternatifler:** (a) yalnız prompt'a "atlama" yazmak: model uyarsa bile kanıt yok, test edilemez. (b) Modele ayrıca "brief'in neresini kullanmadın?" diye sormak: ikinci bir güvenilmez çıktı. (c) Her şeyi sözlüğe bırakmak: sözlük sonlu; bu yüzden (2) ve prompt kuralı birlikte çalışır.
+- **Bedeli / sınırı (dürüst):** Sözlük yalnız bildiği ifadeleri yakalar. Sözlükte olmayan bir kısıt (ör. "VIP müşteriler") mock'ta sessizce görmezden gelinebilir; gerçek Claude'da prompt kuralı ve `unsupported` yargısı devreye girer ama kod garantisi yoktur. Bilinmeyen "…mamış/…meyen" ifadeleri sorulur, bu da nadiren yanlış alarm (ör. "kaçırmamış") üretebilir; kabul edildi: yanlış alarm bir soru, sessiz atlama yanlış kampanyadır.
+- **Denetim:** Kodla karara bağlanan brief'lerde model çağrılmadığı için `llm_generations` satırı oluşmaz; sonuç `campaigns.segment_status/explanation/question` alanlarında durur.
+
+## D45 — Teklif (`offer`) segment adımında çıkarılır ve kuralla birlikte saklanır · `Kesin (kullanıcı kararı)`
+- Şema: `offer {kind: none|percent|amount|free_shipping|coupon_code, value, code}`. `segment_rule` jsonb içinde durur (migration yok; eski kampanyalarda alan yoksa `none`).
+- Brief'te teklif birden fazlaysa (`%15` ve ücretsiz kargo, ya da iki farklı yüzde) veya geçersizse (`%150`) tahmin edilmez: `needs_clarification`. `%` ve `yüzde` yazımları, "yüzde on beş", "100 TL", "1.000 TL", `₺`, "ücretsiz kargo", kupon kodu desteklenir. Kod yalnız "kod/kupon" kelimesine bitişik BÜYÜK HARF ya da rakamlı bir sözcükse alınır; "kod" geçip kod yoksa sorulur. Teklif `Verify` ile brief'ten bağımsız doğrulanır (model "unuttu" veya "uydurdu" ise düzeltmeye girer).
+- Takvime bağlı süreler ("bu ay", "geçen hafta") **desteklenmiyor**: kuralda yalnız kayan pencere var; sorulur. "bu ay sonuna kadar geçerli" gibi bir son-kullanma ifadesi segment koşulu sayılmaz.
+- "Ödemeyi tamamlamamış": ödeme adımı verimizde ayrı olay değil; "sepete ekleyip satın almamış" olarak yorumlanır ve açıklamada yazılır. "Son N günde sipariş vermemiş" (sepetsiz) önce **unsupported** dönüyordu; artık destekleniyor (D50).
+
+## D46 — Mesaj doğrulaması: teklif ve kelime tekrarı · `Kesin (kullanıcı kararı)`
+- `content.Policy.Quality(content, offer)`: (1) SMS teklifi aynen yazmalı; e-posta konusu veya metni yazmalı; (2) brief'teki dışında bir yüzde yazılamaz, teklif yoksa hiç yüzde yazılamaz (uydurma indirim); (3) aynı cümlede birbirine ≤2 kelime mesafedeki iki sözcük aynı kelime ya da aynı kök olamaz ("özel fırsat fırsatından").
+- **Model çıktısı için sert:** sorunlar repair geri bildirimi olur (`validateMessages`), 3 denemede düzelmezse şablon. **Elle düzenleme için uyarı:** kişi metni değiştirebilir (son karar insanda), engellenmez; `report.warnings` ile ekranda sarı uyarı çıkar. `Report.OK` yalnız sert kurallara bağlı kalır (160/80 vb.).
+- Şablon fallback'i de teklifi yazar (`Fallback(offer)`); yoksa model başarısız olduğunda indirim sessizce kaybolurdu. Test: her teklif türü için şablon hem `Validate` hem `Quality` geçer.
+- Kelime tekrarı sezgiseldir: aynı cümlede, ≤2 kelime mesafede, ≥5 harflik ortak kök (kısa kelimeler karşılaştırılmaz). Bilinen sınır: sıradan bir tekrar da yakalanabilir; sonuç yalnız bir yeniden yazım turudur.
+
+## D47 — Test seti tablo tabanlı, önce kırmızı · `Kesin (kullanıcı kararı)`
+- `internal/brief/brief_test.go`: her satır = brief, beklenen koşullar, beklenen teklif, beklenen durum (ok / needs_clarification / unsupported); ok olmayan satırlarda ekranda görünen metin ilgili ifadeyi anmalı. Ayrıca modelin bir koşulu/teklifi düşürdüğü senaryolar (scripted mock) ve "model hiç düzeltemezse soru" testi.
+- `content/quality_test.go`, `offer/offer_test.go`, `campaign/offer_test.go` (gerçek DB: raporlanan brief'in kitlesi doğrudan SQL ile eşleşir), `llm/offer_messages_test.go`.
+- Düzeltmeden önce testler gerçekten kırmızıydı (raporlanan brief: kitle 54, beklenen 50).
+
+## D48 — `brief` paketinde sözlük tek yerde; mock ve doğrulayıcı aynı okuyucuyu kullanır · `Kesin`
+- Mock'un kendi regex'leri kaldırıldı. Bu bilinçli bir takas: mock artık "kusursuz model"dir, bu yüzden tablo testi mock'u değil sözlüğü ve doğrulayıcıyı sınar; modelin hata yolları scripted `Raw` adımlarıyla ayrıca denenir.
+- Ortak yardımcılar: `trtext.Fold` (Türkçe katlama, tek yerde), `offer` paketi (tür, doğrulama, metinde arama).
+
+## D49 — Yeni şablon/prompt kuralları gerçek Claude'a da gider · `Önerildi`
+- Segment prompt'u: `offer` alanının nasıl doldurulacağı ve "brief'in hiçbir kısmını sessizce atlama; ifade edemiyorsan unsupported/needs_clarification" kuralı. Mesaj prompt'u: teklifin SMS ve e-postada aynen yazılması, başka indirim sayısı yazılmaması, kelime tekrarı yasağı; kullanıcı mesajında teklif açıkça verilir. Bu iki prompt gerçek modelde `make test-live` ile denenmedi (key yok); mock ve doğrulayıcı katmanı test edildi.
+
+## D50 — "Son N günde sipariş vermemiş": hiç siparişi olmayan da koşulu sağlar · `Kesin (kullanıcı kararı)`
+- **Sorun:** "Son 30 günde sipariş vermemiş" = hiç sipariş vermemişler ∪ son siparişi 30 günden eski olanlar. `days_since_last_order gt 30` NULL zaman damgasında hiç eşleşmediği için hiç sipariş vermemişleri **sessizce düşürürdü** (D44'ün yasakladığı şey).
+- **Çözüm:** yeni alan `days_since_last_order_or_never` (yalnız `gt`, `gte`). SQL: `(last_order_at IS NULL OR last_order_at < $1)`. `lte/lt/eq` bu alanda anlamsız (NULL asla "N gün içinde" olamaz), bu yüzden reddedilir. "Son 30 günde sipariş vermemiş" = `gt 30`; "son 30 günde sipariş vermiş" (`days_since_last_order lte 30`) ile tüm kullanıcıları ayrık biçimde böler (testte 5000 = ikisinin toplamı).
+- **Alternatifler:** (a) `match: any` + `order_count eq 0` ∪ `days_since_last_order gt N`: `any` diğer koşullarla (şehir) birleşemez, çünkü DSL düz ve tek `match` var (şehir de OR'a girerdi); yanlış kitle. (b) İç içe grup: D34'ü bozar, structured outputs şeması özyinelemeyi desteklemez. (c) Tek alan: şema, derleyici ve doğrulayıcıya bir satır; seçildi.
+- **Koruma:** model `days_since_last_order gt 30` ya da `order_count eq 0` yazarsa `Verify` hatayı verip düzeltmeye gönderir (testli: bu "benzer görünen" yanlış kural kabul edilmez). Sepet anılan brief'ler (`sepete ekleyip sipariş vermemiş`) eskisi gibi `purchased_since_last_cart_add eq false` kullanır.
+- Sözlük genişledi: "satın alma yapmamış / alım yapmamış" ve "satın alma yapan" kalıpları da tanınır.
+- Test: `brief_test` tablosu (7 yeni satır), `TestNoOrderInWindowRejectsTheLookalikes`, `segment` derleme/ayrıştırma satırları, gerçek DB'de `TestNoOrderInWindowIncludesPeopleWhoNeverOrdered` (doğrudan SQL ile eşleşir; önce kırmızıydı).
+
+## D51 — Bilinen sınır: yazım hatası "satın almama" koşulunu düşürebilir · `Açık iş (kullanıcı kararı: şimdi çözülmüyor)`
+- **Gözlem (gerçek Claude ile):** brief'te yazım hatası olduğunda (ör. "oluşturmmaış") `purchased_since_last_cart_add eq false` koşulu yine sessizce düştü.
+- **Neden korumadı:** `Analyze` yazım hatalı sözcüğü ne "bilinen negasyon" ne de `…mamış/…meyen` kalıbı olarak yakalar ("oluşturmmaış" kalıba uymaz), dolayısıyla brief'te satın almama ifadesi hiç görülmez. `Verify` yalnız `Analyze`'ın gördüğü ifadeleri zorunlu kılar, o yüzden model koşulu düşürse de itiraz edilmez. Bu, D44'ün "sözlük sonlu" sınırının bir örneği.
+- **Karar:** şimdi çözülmüyor; PLAN.md "Açık işler"e ve README "Bilinen sınırlamalar"a yazıldı. Olası çözümler (yapılmadı): yazım toleranslı eşleme (bulanık/Levenshtein), ya da modelin kendi çıkardığı "brief'te gördüğüm koşullar" listesiyle kuralı çapraz doğrulama.
 
 ---
 
 ## Açık / onay bekleyenler
-- Yok. D3, D19, D20, D21, D24 ve PLAN §9 varsayımları kullanıcı tarafından onaylandı.
+- Yazım hatalı "satın almama" ifadesi (D51): bilinen sınır, çözülecek.
+- Başka yok. D3, D19, D20, D21, D24 ve PLAN §9 varsayımları kullanıcı tarafından onaylandı.

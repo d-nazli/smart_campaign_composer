@@ -63,7 +63,7 @@ func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta f
 		llm.MessagesSystemPrompt(req.Policy),
 		content.JSONSchema(),
 		sdk.OutputConfigEffortMedium, // copywriting: some reasoning pays off
-		conversation(llm.MessagesUserPrompt(req.Brief, req.Explanation), req.Previous),
+		conversation(llm.MessagesUserPrompt(req.Brief, req.Explanation, req.Offer), req.Previous),
 	)
 	stream := c.api.Messages.NewStreaming(ctx, params)
 	defer stream.Close()

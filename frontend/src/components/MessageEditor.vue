@@ -11,6 +11,8 @@ const props = defineProps<{
   variables: VariableInfo[]
   /** Problems reported by the server (e.g. after a rejected save). */
   serverIssues?: Issue[]
+  /** Quality warnings for the saved text (offer missing, repeated word); they do not block saving. */
+  warnings?: Issue[]
 }>()
 const emit = defineEmits<{ 'update:modelValue': [MessageContent] }>()
 
@@ -31,6 +33,10 @@ function issuesFor(field: ContentField): Issue[] {
   return [...check.value.issues, ...(props.serverIssues ?? [])]
     .filter((i) => i.field === field)
     .filter((i) => (seen.has(i.message) ? false : (seen.add(i.message), true)))
+}
+
+function warningsFor(field: ContentField): Issue[] {
+  return (props.warnings ?? []).filter((w) => w.field === field)
 }
 
 function update(field: ContentField, value: string) {
@@ -59,6 +65,7 @@ function update(field: ContentField, value: string) {
         @input="update('sms_body', ($event.target as HTMLTextAreaElement).value)"
       />
       <p v-for="i in issuesFor('sms_body')" :key="i.message" class="issue">{{ i.message }}</p>
+      <p v-for="w in warningsFor('sms_body')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
     </div>
 
     <div class="field">
@@ -75,6 +82,7 @@ function update(field: ContentField, value: string) {
         @input="update('email_subject', ($event.target as HTMLInputElement).value)"
       />
       <p v-for="i in issuesFor('email_subject')" :key="i.message" class="issue">{{ i.message }}</p>
+      <p v-for="w in warningsFor('email_subject')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
     </div>
 
     <div class="field">
@@ -88,6 +96,7 @@ function update(field: ContentField, value: string) {
         @input="update('email_body', ($event.target as HTMLTextAreaElement).value)"
       />
       <p v-for="i in issuesFor('email_body')" :key="i.message" class="issue">{{ i.message }}</p>
+      <p v-for="w in warningsFor('email_body')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
     </div>
   </div>
 </template>
@@ -125,6 +134,11 @@ input[readonly] {
 }
 .issue {
   color: var(--error);
+  font-size: 0.85rem;
+  margin: 4px 0 0;
+}
+.warning {
+  color: var(--warn);
   font-size: 0.85rem;
   margin: 4px 0 0;
 }

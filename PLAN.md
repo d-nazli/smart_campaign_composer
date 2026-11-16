@@ -4,6 +4,7 @@
 > İlerleme: **Aşama 0, 1 ve birleşik Aşama 2+3 (segment + mesaj üretimi) tamamlandı** (birleşik aşama kullanıcı onayı bekleniyor). Aşama 4 (onay + kuyruk + gönderim), 5 (dashboard/metrics), 6 (cilalama) bekliyor.
 > Aşama 1 sapmaları: `language` kolonu yok (D29), mock provider'da `/admin/*` yok (D28), türev kolonlar seed'de Go'da hesaplanıp SQL ile doğrulanıyor (D26), Postgres healthcheck TCP (D32).
 > Aşama 2+3 sapmaları (nedenleri DECISIONS.md D33–D43): Sonnet 5.5 zorunlu `tool_choice`'u reddettiği için **structured outputs**; DSL **düz** (iç içe `all/any/not` yok); değişkenler yalnız `first_name` ve `city` ve **sabit karakter payıyla** sayılır; kuyruk tablosunun adı `deliveries`; Go 1.25.
+> Aşama 2+3 düzeltmesi (D44–D49): brief'teki hiçbir koşul sessizce atlanmaz (`internal/brief`: unsupported/needs_clarification kodla belirlenir, model kuralı brief'e karşı doğrulanır); segment adımı **teklifi** (`offer`) çıkarır, mesaj doğrulaması teklifi ve kelime tekrarını denetler.
 > Alınan kararların gerekçeleri için bkz. [DECISIONS.md](DECISIONS.md).
 
 ---
@@ -169,7 +170,7 @@ Gerçek şema `backend/internal/store/migrations/` altındadır.
   "question": ""
 }
 ```
-- Alan **whitelist**'i tek yerde: `backend/internal/segment/fields.go` (`city`, `days_since_last_cart_add`, `days_since_last_order`, `order_count`, `total_spent`, `purchased_since_last_cart_add`). Her alanın tipi, aralığı ve izinli operatörleri kodda tanımlı; JSON şeması ve LLM prompt'u bu listeden türetilir.
+- Alan **whitelist**'i tek yerde: `backend/internal/segment/fields.go` (`city`, `days_since_last_cart_add`, `days_since_last_order`, `days_since_last_order_or_never` (D50: "son N günde sipariş vermemiş", hiç siparişi olmayanlar dahil), `order_count`, `total_spent`, `purchased_since_last_cart_add`). Her alanın tipi, aralığı ve izinli operatörleri kodda tanımlı; JSON şeması ve LLM prompt'u bu listeden türetilir.
 - `match`: `all` / `any`. 1–8 koşul; boş kural reddedilir (herkesi seçerdi). Şehirler bilinen listeye kanonikleştirilir (İstanbul/Istanbul/istanbul).
 - Compiler: alan → **sabit SQL ifadesi** (kodda), değer → **bind parametresi** (`$1…`). Hiçbir LLM string'i SQL metnine girmez.
 - İzin filtresi (`sms_consent`, telefon var mı…) **LLM kuralının parçası değil**; sistem tarafından her zaman eklenir (`segment.SMSReachableSQL` / `EmailReachableSQL`; Aşama 4'te enqueue aynı sabitleri kullanır).
@@ -368,6 +369,9 @@ insider_one_case/
 ### Aşama 6 — Cilalama ve teslim
 - Frontend testleri (vitest: composable + kritik bileşenler), hata/boş durum UI'ları, README (kurulum, mimari, yapılmayanlar), DECISIONS son hali, `make test` Windows notları, ai-sessions export + temizlik, repo'yu GitHub'a push.
 - **Test:** temiz klonla `cp .env.example .env && docker compose up` ve `make test` sıfırdan geçer.
+
+### Açık işler (bilinen eksikler, henüz çözülmedi)
+- **Yazım hatası satın-almama koşulunu düşürebilir (D51).** Gerçek Claude ile görüldü: brief'te "oluşturmmaış" gibi bir yazım hatası olunca `purchased_since_last_cart_add eq false` sessizce düştü. `brief.Analyze` sözlüğü yazım hatasını tanımadığı için `Verify` koşulu zorunlu kılmıyor (D44'ün "sözlük sonlu" sınırı). Aday çözümler: yazım toleranslı eşleme veya modelin çıkardığı koşul listesiyle çapraz doğrulama. Kullanıcı kararı: şimdi çözülmüyor; Aşama 6'da vakit varsa ele alınır, README'de bilinen sınırlama olarak duruyor.
 
 ### Aşama 7 — Bonus: **YAPILMAYACAK** (kullanıcı kararı)
 Zamanlanmış gönderim, A/B, dile göre içerik ve CI kapsam dışı; README'de "yapılmadı" olarak belirtilecek.

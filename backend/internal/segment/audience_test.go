@@ -2,6 +2,7 @@ package segment_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -54,6 +55,45 @@ func TestExampleBriefAudienceMatchesSeedGoldenNumbers(t *testing.T) {
 	want := segment.Audience{Matched: 300, SMSReachable: 203, EmailReachable: 227, BothReachable: 165}
 	if got != want {
 		t.Fatalf("audience = %+v, want %+v", got, want)
+	}
+}
+
+// "Has not ordered in the last N days" must include people who NEVER ordered.
+// days_since_last_order gt N cannot: a NULL timestamp never matches it.
+func TestNoOrderInWindowIncludesPeopleWhoNeverOrdered(t *testing.T) {
+	db, now := seeded(t)
+	ctx := context.Background()
+	rule := func(field, op string, n int) string {
+		return `{"status":"ok","match":"all","conditions":[{"field":"` + field + `","op":"` + op + `","value":` + strconv.Itoa(n) + `}],"explanation":"x","question":""}`
+	}
+	cut := now.Add(-30 * 24 * time.Hour)
+
+	var want, never, recent int
+	if err := db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE last_order_at IS NULL OR last_order_at < $1),
+	                                   count(*) FILTER (WHERE last_order_at IS NULL),
+	                                   count(*) FILTER (WHERE last_order_at >= $1) FROM users`, cut).Scan(&want, &never, &recent); err != nil {
+		t.Fatal(err)
+	}
+	if never == 0 || recent == 0 {
+		t.Fatalf("seed must contain people who never ordered (%d) and recent buyers (%d)", never, recent)
+	}
+
+	got := count(t, db, rule("days_since_last_order_or_never", "gt", 30), now)
+	if got.Matched != want {
+		t.Fatalf("no order in 30 days = %d, want %d (never ordered %d + ordered long ago)", got.Matched, want, never)
+	}
+	// The lookalike field really does lose them, which is why the new one exists.
+	lookalike := count(t, db, rule("days_since_last_order", "gt", 30), now)
+	if lookalike.Matched != want-never {
+		t.Fatalf("days_since_last_order gt 30 = %d, want %d", lookalike.Matched, want-never)
+	}
+	// Together with "ordered within 30 days" it partitions all users.
+	bought := count(t, db, rule("days_since_last_order", "lte", 30), now)
+	if got.Matched+bought.Matched != 5000 || bought.Matched != recent {
+		t.Fatalf("no-order(%d) + ordered(%d) != 5000 (recent=%d)", got.Matched, bought.Matched, recent)
+	}
+	if ge := count(t, db, rule("days_since_last_order_or_never", "gte", 30), now); ge.Matched < got.Matched {
+		t.Fatalf("gte %d < gt %d", ge.Matched, got.Matched)
 	}
 }
 

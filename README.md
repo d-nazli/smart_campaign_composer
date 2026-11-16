@@ -47,6 +47,16 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 - Not: gerçek SMS ağlarında Türkçe karakterli (ş, ğ, ı …) bir mesaj 70 karakterle sınırlıdır; case 160 dediği için burada
   karakter sayılır.
 
+## Bilinen sınırlamalar
+
+- **Yazım hatası "satın almama" koşulunu düşürebilir.** Brief'teki kitle ifadeleri (ör. "sipariş oluşturmamış") bilinen
+  kalıplarla okunur ve model kuralı bunlara karşı doğrulanır. Sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz;
+  gerçek Claude ile bu durumda `purchased=false` koşulunun kuraldan düştüğü görüldü. Kampanyayı onaylamadan önce
+  ekrandaki kitle kartındaki koşulları kontrol edin. Açık iş olarak PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
+- Desteklenmeyen kısıtlar (yaş, cinsiyet, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen hafta")
+  sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
+  Sözlükte hiç olmayan bir kısıt ise mock'ta fark edilmeyebilir.
+
 ## Seed verisi hakkında notlar
 
 - `docker compose up` sırasında `migrate` servisi şemayı kurar ve ~5.000 sahte kullanıcıyı yükler.

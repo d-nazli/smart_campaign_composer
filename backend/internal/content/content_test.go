@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"smartcampaign/internal/offer"
 	"smartcampaign/internal/seed"
 )
 
@@ -235,13 +236,13 @@ func TestRenderUsesValueOrFallback(t *testing.T) {
 
 func TestFallbackContentIsValid(t *testing.T) {
 	p := mustPolicy(t, nil)
-	if _, rep := p.Validate(p.Fallback()); !rep.OK {
+	if _, rep := p.Validate(p.Fallback(offer.Offer{})); !rep.OK {
 		t.Fatalf("default fallback invalid: %+v", rep.Issues)
 	}
 	// Absurdly large budgets would break the personalized fallback; the
 	// variable-free one must still be returned and be valid.
 	big := mustPolicy(t, map[string]int{"first_name": 100, "city": 100})
-	f := big.Fallback()
+	f := big.Fallback(offer.Offer{})
 	if _, rep := big.Validate(f); !rep.OK {
 		t.Fatalf("fallback with large budgets invalid: %+v", rep.Issues)
 	}
@@ -264,7 +265,7 @@ func TestRenderedMessagesNeverExceedLimitsForAnySeedUser(t *testing.T) {
 	templates := []Content{
 		{SMSBody: strings.Repeat("a", 160-20-15) + "{{first_name}}{{city}}", EmailSubject: strings.Repeat("b", 80-20-15) + "{{first_name}}{{city}}", EmailBody: "x"},
 		{SMSBody: strings.Repeat("ş", 120) + "{{first_name}}{{first_name}}", EmailSubject: "{{first_name}} {{first_name}} {{first_name}}", EmailBody: "x"},
-		p.Fallback(),
+		p.Fallback(offer.Offer{}),
 	}
 	longNames := 0
 	for _, tpl := range templates {

@@ -12,6 +12,7 @@ import (
 	"fmt"
 
 	"smartcampaign/internal/content"
+	"smartcampaign/internal/offer"
 )
 
 // Stop reasons, normalized across clients.
@@ -47,7 +48,8 @@ type SegmentRequest struct {
 
 type MessageRequest struct {
 	Brief       string
-	Explanation string // what the audience is, from the segment step
+	Explanation string      // what the audience is, from the segment step
+	Offer       offer.Offer // the incentive the messages must state
 	Policy      content.Policy
 	Previous    []Attempt
 }

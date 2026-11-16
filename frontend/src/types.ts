@@ -19,6 +19,8 @@ export interface Issue {
 export interface Report {
   ok: boolean
   issues: Issue[]
+  /** Quality problems that do not block saving: offer missing, repeated word. */
+  warnings?: Issue[]
   sms_length: number
   subject_length: number
 }
@@ -40,6 +42,15 @@ export interface Audience {
 
 export type SegmentStatus = 'ok' | 'needs_clarification' | 'unsupported'
 
+export type OfferKind = 'none' | 'percent' | 'amount' | 'free_shipping' | 'coupon_code'
+
+/** The incentive the brief promises; the SMS and the email must state it. */
+export interface Offer {
+  kind: OfferKind
+  value: number
+  code: string
+}
+
 export interface Segment {
   status: SegmentStatus
   match?: 'all' | 'any'
@@ -47,6 +58,7 @@ export interface Segment {
   explanation: string
   question?: string
   audience?: Audience
+  offer?: Offer
 }
 
 export type ContentSource = 'llm' | 'fallback' | 'edited'

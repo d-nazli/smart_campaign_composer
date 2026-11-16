@@ -70,6 +70,10 @@ func TestCompileMoreShapes(t *testing.T) {
 			"(((last_cart_add_at IS NOT NULL AND last_order_at IS NOT NULL AND last_order_at >= last_cart_add_at)))", 0},
 		{"days eq uses two args", `{"status":"ok","match":"all","conditions":[{"field":"days_since_last_order","op":"eq","value":7}],"explanation":"x","question":""}`,
 			"(((last_order_at <= $1 AND last_order_at > $2)))", 2},
+		{"no order in window includes NULL", `{"status":"ok","match":"all","conditions":[{"field":"days_since_last_order_or_never","op":"gt","value":30}],"explanation":"x","question":""}`,
+			"(((last_order_at IS NULL OR last_order_at < $1)))", 1},
+		{"no order in window gte", `{"status":"ok","match":"all","conditions":[{"field":"days_since_last_order_or_never","op":"gte","value":30}],"explanation":"x","question":""}`,
+			"(((last_order_at IS NULL OR last_order_at <= $1)))", 1},
 		{"days gte", `{"status":"ok","match":"all","conditions":[{"field":"days_since_last_cart_add","op":"gte","value":0}],"explanation":"x","question":""}`,
 			"((last_cart_add_at <= $1))", 1},
 	}
@@ -130,6 +134,7 @@ func TestParseRejectsBadRules(t *testing.T) {
 		{"unknown op", rule(`{"field":"city","op":"like","value":"%"}`), "geçersiz"},
 		{"sql in op", rule(`{"field":"order_count","op":"> 0 OR 1=1 --","value":1}`), "geçersiz"},
 		{"op not allowed for field", rule(`{"field":"total_spent","op":"eq","value":10}`), "geçersiz"},
+		{"or_never only makes sense for 'longer ago'", rule(`{"field":"days_since_last_order_or_never","op":"lte","value":30}`), "geçersiz"},
 		{"neq on int", rule(`{"field":"order_count","op":"neq","value":1}`), "geçersiz"},
 		{"unknown city", rule(`{"field":"city","op":"eq","value":"Atlantis"}`), "bilinmeyen şehir"},
 		{"sql in city value", rule(`{"field":"city","op":"eq","value":"x' OR '1'='1"}`), "bilinmeyen şehir"},

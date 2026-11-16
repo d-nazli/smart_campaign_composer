@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"smartcampaign/internal/offer"
 )
 
 // Rule statuses.
@@ -40,6 +42,7 @@ type rawRule struct {
 	Conditions  []rawCondition `json:"conditions"`
 	Explanation string         `json:"explanation"`
 	Question    string         `json:"question"`
+	Offer       *offer.Offer   `json:"offer"`
 }
 
 type rawCondition struct {
@@ -63,6 +66,9 @@ type Rule struct {
 	Conditions  []Condition `json:"conditions"`
 	Explanation string      `json:"explanation"`
 	Question    string      `json:"question,omitempty"`
+	// Offer is the incentive the brief promises (kind "none" when it promises
+	// nothing). It is only meaningful for status "ok".
+	Offer offer.Offer `json:"offer"`
 }
 
 // ParseError lists every problem found, so it can be fed back to the LLM.
@@ -92,7 +98,7 @@ func validate(rr rawRule) (Rule, error) {
 	var problems []string
 	bad := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
 
-	out := Rule{Status: rr.Status, Conditions: []Condition{}}
+	out := Rule{Status: rr.Status, Conditions: []Condition{}, Offer: offer.Offer{Kind: offer.KindNone}}
 
 	if utf8.RuneCountInString(rr.Explanation) > MaxExplanation {
 		bad("explanation en fazla %d karakter olmalı", MaxExplanation)
@@ -116,6 +122,13 @@ func validate(rr rawRule) (Rule, error) {
 		}
 		if out.Question != "" {
 			bad("status \"ok\" iken question boş olmalı")
+		}
+		if rr.Offer != nil {
+			if err := rr.Offer.Validate(); err != nil {
+				bad("%v", err)
+			} else {
+				out.Offer = rr.Offer.Normalize()
+			}
 		}
 		for i, rc := range rr.Conditions {
 			if i >= MaxConditions {

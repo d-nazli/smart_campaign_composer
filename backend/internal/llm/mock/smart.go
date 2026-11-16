@@ -2,115 +2,20 @@ package mock
 
 import (
 	"encoding/json"
-	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 
+	"smartcampaign/internal/brief"
+	"smartcampaign/internal/offer"
 	"smartcampaign/internal/segment"
 )
 
-var (
-	unsupportedRe = regexp.MustCompile(`\b(yas|yasindaki|cinsiyet|dogum|kadin|kadinlara|erkek|erkeklere)\b`)
-	windowRe      = regexp.MustCompile(`(?:son\s+)?(\d+)\s*gun`)
-	notBoughtRe   = regexp.MustCompile(`(satin\s*alma(yan|mis)|alisveris\s*yapma(yan|mis)|siparis\s*verme(yen|mis)|almayan|yapmayan|vermeyen)`)
-	boughtRe      = regexp.MustCompile(`(satin\s*alan|alisveris\s*yapan|siparis\s*veren)`)
-	discountRe    = regexp.MustCompile(`(?:%\s*(\d{1,2})|(\d{1,2})\s*%)`)
-)
-
-type cond struct {
-	Field string `json:"field"`
-	Op    string `json:"op"`
-	Value any    `json:"value"`
-}
-
-type segmentJSON struct {
-	Status      string `json:"status"`
-	Match       string `json:"match"`
-	Conditions  []cond `json:"conditions"`
-	Explanation string `json:"explanation"`
-	Question    string `json:"question"`
-}
-
-// smartSegment reads a Turkish brief with keyword rules. It is intentionally
-// simple: its job is to give a believable demo and to be deterministic.
-func smartSegment(brief string) string {
-	b := segment.Fold(brief)
-	out := segmentJSON{Status: segment.StatusOK, Match: segment.MatchAll, Conditions: []cond{}}
-	finish := func() string {
-		raw, _ := json.Marshal(out)
-		return string(raw)
-	}
-
-	if unsupportedRe.MatchString(b) {
-		out.Status, out.Explanation = segment.StatusUnsupported,
-			"Brief, veritabanında bulunmayan bir müşteri bilgisine (yaş, cinsiyet gibi) dayanıyor; şehir, sepet ve sipariş geçmişiyle ifade edilebilen bir kitle tanımlayın."
-		return finish()
-	}
-
-	var cities []string
-	for _, c := range segment.KnownCities {
-		if strings.Contains(b, segment.Fold(c)) {
-			cities = append(cities, c)
-		}
-	}
-
-	var parts []string // pieces of the explanation
-	switch len(cities) {
-	case 0:
-	case 1:
-		out.Conditions = append(out.Conditions, cond{"city", segment.OpEq, cities[0]})
-		parts = append(parts, cities[0]+"'daki müşteriler")
-	default:
-		out.Conditions = append(out.Conditions, cond{"city", segment.OpIn, cities})
-		parts = append(parts, strings.Join(cities, ", ")+" şehirlerindeki müşteriler")
-	}
-
-	days := -1
-	if m := windowRe.FindStringSubmatch(b); m != nil {
-		days, _ = strconv.Atoi(m[1])
-		if days > 3650 {
-			days = 3650
-		}
-	}
-	notBought, bought := notBoughtRe.MatchString(b), boughtRe.MatchString(b)
-
-	if strings.Contains(b, "sepet") {
-		if days >= 0 {
-			out.Conditions = append(out.Conditions, cond{"days_since_last_cart_add", segment.OpLte, days})
-			parts = append(parts, fmt.Sprintf("son %d günde sepete ürün ekleyen", days))
-		} else {
-			out.Conditions = append(out.Conditions, cond{"days_since_last_cart_add", segment.OpGte, 0})
-			parts = append(parts, "sepete ürün eklemiş")
-		}
-		if notBought {
-			out.Conditions = append(out.Conditions, cond{"purchased_since_last_cart_add", segment.OpEq, false})
-			parts = append(parts, "sonrasında satın almamış")
-		} else if bought {
-			out.Conditions = append(out.Conditions, cond{"purchased_since_last_cart_add", segment.OpEq, true})
-			parts = append(parts, "sonrasında satın almış")
-		}
-	} else {
-		switch {
-		case notBought:
-			out.Conditions = append(out.Conditions, cond{"order_count", segment.OpEq, 0})
-			parts = append(parts, "hiç sipariş vermemiş")
-		case bought && days >= 0:
-			out.Conditions = append(out.Conditions, cond{"days_since_last_order", segment.OpLte, days})
-			parts = append(parts, fmt.Sprintf("son %d günde sipariş veren", days))
-		case bought:
-			out.Conditions = append(out.Conditions, cond{"order_count", segment.OpGt, 0})
-			parts = append(parts, "en az bir sipariş vermiş")
-		}
-	}
-
-	if len(out.Conditions) == 0 {
-		out.Status = segment.StatusNeedsClarification
-		out.Question = "Mesajı kimlere göndermek istiyorsunuz? Örneğin bir şehir, sepet davranışı (sepete ekleyip satın almayanlar) veya sipariş geçmişi belirtebilirsiniz."
-		return finish()
-	}
-	out.Explanation = strings.Join(parts, ", ")
-	return finish()
+// smartSegment answers the way a flawless model would: it uses the same brief
+// reader the backend verifies the real model against. The mock is a demo and
+// test double, so it is deterministic; the interesting failure paths (a model
+// that drops a condition or the offer) are scripted in tests with Raw steps.
+func smartSegment(text string) string {
+	raw, _ := json.Marshal(brief.Analyze(text).Rule())
+	return string(raw)
 }
 
 type messagesJSON struct {
@@ -120,79 +25,115 @@ type messagesJSON struct {
 }
 
 // smartMessages writes believable Turkish copy that follows the brief's tone
-// and discount, always inside the SMS/subject limits.
-func smartMessages(brief string) string {
-	b := segment.Fold(brief)
+// and states the offer, always inside the SMS/subject limits and without
+// repeating words.
+func smartMessages(text string, o offer.Offer) string {
+	b := segment.Fold(text)
 	informal := strings.Contains(b, "samimi") || strings.Contains(b, "sen ")
 	short := strings.Contains(b, "kisa")
 	cart := strings.Contains(b, "sepet")
-
-	discount := ""
-	if m := discountRe.FindStringSubmatch(b); m != nil {
-		d := m[1]
-		if d == "" {
-			d = m[2]
-		}
-		discount = "%" + d + " indirim"
-	}
+	o = o.Normalize()
+	what, code := offerWhat(o)
 
 	var m messagesJSON
 	switch {
 	case cart && informal:
-		offer := "özel fırsatı"
-		if discount != "" {
-			offer = discount + " fırsatını"
-		}
-		m.SMSBody = fmt.Sprintf("{{first_name}}, sepetindeki ürünler seni bekliyor! %s kaçırma.", capitalizeFirst(offer))
-		m.EmailSubject = "{{first_name}}, sepetindekiler seni bekliyor"
-		if discount != "" {
-			m.EmailSubject = fmt.Sprintf("{{first_name}}, sepetindekiler %s", discount+"de")
-		}
-		m.EmailBody = "Merhaba {{first_name}},\n\nSepetine eklediğin ürünler hâlâ seni bekliyor. " + offerLine(discount, true) +
+		m.SMSBody = "{{first_name}}, sepetindeki ürünler seni bekliyor! " + offerSentence(o, what, code, true)
+		m.EmailSubject = subjectFor("{{first_name}}, sepetindekiler seni bekliyor", "{{first_name}}, sepetindekilerde ", what, o)
+		m.EmailBody = "Merhaba {{first_name}},\n\nSepetine eklediğin ürünler hâlâ seni bekliyor. " + offerSentence(o, what, code, true) +
 			"\n\nAlışverişini tamamlamak için sepetine göz atman yeterli.\n\nGörüşmek üzere!"
 	case cart:
-		m.SMSBody = "Sayın {{first_name}}, sepetinizdeki ürünler sizi bekliyor. " + offerLineSMS(discount) + " fırsatından yararlanın."
-		m.EmailSubject = "Sepetinizdeki ürünler sizi bekliyor"
-		m.EmailBody = "Sayın {{first_name}},\n\nSepetinize eklediğiniz ürünler hâlâ sizi bekliyor. " + offerLine(discount, false) +
+		m.SMSBody = "Sayın {{first_name}}, sepetinizdeki ürünler sizi bekliyor. " + offerSentence(o, what, code, false)
+		m.EmailSubject = subjectFor("Sepetinizdeki ürünler sizi bekliyor", "Sepetinizdekilerde ", what, o)
+		m.EmailBody = "Sayın {{first_name}},\n\nSepetinize eklediğiniz ürünler hâlâ sizi bekliyor. " + offerSentence(o, what, code, false) +
 			"\n\nAlışverişinizi tamamlamak için sepetinize göz atabilirsiniz.\n\nSaygılarımızla"
 	case informal:
-		m.SMSBody = "{{first_name}}, sana özel " + offerLineSMS(discount) + " seni bekliyor!"
-		m.EmailSubject = "{{first_name}}, sana özel bir fırsat var"
-		m.EmailBody = "Merhaba {{first_name}},\n\nSana özel bir kampanyamız var. " + offerLine(discount, true) + "\n\nGörüşmek üzere!"
+		m.SMSBody = "{{first_name}}, sana özel " + specialLine(o, what, "seni bekliyor!") + codeSuffix(o, code)
+		m.EmailSubject = subjectFor("{{first_name}}, sana özel bir fırsat var", "{{first_name}}, sana özel ", what, o)
+		m.EmailBody = "Merhaba {{first_name}},\n\nSana özel bir kampanyamız var. " + offerSentence(o, what, code, true) + "\n\nGörüşmek üzere!"
 	default:
-		m.SMSBody = "Sayın {{first_name}}, size özel " + offerLineSMS(discount) + " sizi bekliyor."
-		m.EmailSubject = "Size özel bir fırsat var"
-		m.EmailBody = "Sayın {{first_name}},\n\nSize özel bir kampanyamız var. " + offerLine(discount, false) + "\n\nSaygılarımızla"
+		m.SMSBody = "Sayın {{first_name}}, size özel " + specialLine(o, what, "sizi bekliyor.") + codeSuffix(o, code)
+		m.EmailSubject = subjectFor("Size özel bir fırsat var", "Size özel ", what, o)
+		m.EmailBody = "Sayın {{first_name}},\n\nSize özel bir kampanyamız var. " + offerSentence(o, what, code, false) + "\n\nSaygılarımızla"
 	}
 	if short {
-		if i := strings.Index(m.EmailBody, "\n\nAlışverişini"); i > 0 {
-			m.EmailBody = m.EmailBody[:i] + "\n\nGörüşmek üzere!"
-		}
-		if i := strings.Index(m.EmailBody, "\n\nAlışverişinizi"); i > 0 {
-			m.EmailBody = m.EmailBody[:i] + "\n\nSaygılarımızla"
+		for _, cut := range []struct{ from, to string }{
+			{"\n\nAlışverişini", "\n\nGörüşmek üzere!"},
+			{"\n\nAlışverişinizi", "\n\nSaygılarımızla"},
+		} {
+			if i := strings.Index(m.EmailBody, cut.from); i > 0 {
+				m.EmailBody = m.EmailBody[:i] + cut.to
+			}
 		}
 	}
 	raw, _ := json.Marshal(m)
 	return string(raw)
 }
 
-func offerLine(discount string, informal bool) string {
+// offerWhat is how the offer reads inside a sentence, plus the code to append.
+func offerWhat(o offer.Offer) (what, code string) {
+	switch o.Kind {
+	case offer.KindPercent:
+		return "%" + offer.FormatNumber(o.Value) + " indirim", o.Code
+	case offer.KindAmount:
+		return offer.FormatNumber(o.Value) + " TL indirim", o.Code
+	case offer.KindFreeShipping:
+		return "ücretsiz kargo", o.Code
+	case offer.KindCouponCode:
+		return "", o.Code
+	}
+	return "", ""
+}
+
+func codeSuffix(o offer.Offer, code string) string {
+	if code == "" || o.Kind == offer.KindCouponCode {
+		return ""
+	}
+	return " Kupon kodu: " + code + "."
+}
+
+// offerSentence is the sentence that states the offer in the closing tone.
+func offerSentence(o offer.Offer, what, code string, informal bool) string {
 	switch {
-	case discount != "" && informal:
-		return discount + " fırsatını kaçırma."
-	case discount != "":
-		return discount + " fırsatını kaçırmayın."
+	case what != "" && informal:
+		return capitalizeFirst(what) + " fırsatını kaçırma." + codeSuffix(o, code)
+	case what != "":
+		return capitalizeFirst(what) + " fırsatından yararlanın." + codeSuffix(o, code)
+	case o.Kind == offer.KindCouponCode && informal:
+		return code + " koduyla fırsatı yakala."
+	case o.Kind == offer.KindCouponCode:
+		return code + " koduyla fırsatı yakalayın."
 	case informal:
 		return "Fırsatı kaçırma."
 	}
 	return "Fırsatı kaçırmayın."
 }
 
-func offerLineSMS(discount string) string {
-	if discount == "" {
-		return "özel fırsat"
+// specialLine completes "sana özel ..." / "size özel ...".
+func specialLine(o offer.Offer, what, verb string) string {
+	switch {
+	case what != "":
+		return what + " " + verb
+	case o.Kind == offer.KindCouponCode:
+		return o.Code + " kodu " + verb
 	}
-	return discount
+	return "bir fırsat " + verb
+}
+
+// subjectFor is the email subject: the plain one when there is no offer, else
+// a subject that states it.
+func subjectFor(plain, prefix, what string, o offer.Offer) string {
+	switch {
+	case what != "" && strings.HasSuffix(prefix, "özel "):
+		return prefix + what
+	case what != "":
+		return prefix + what + " var"
+	case o.Kind == offer.KindCouponCode && strings.HasSuffix(prefix, "özel "):
+		return prefix + o.Code + " kodu"
+	case o.Kind == offer.KindCouponCode:
+		return strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(prefix, "de "), "da ")) + " için " + o.Code + " kodu hazır"
+	}
+	return plain
 }
 
 func capitalizeFirst(s string) string {

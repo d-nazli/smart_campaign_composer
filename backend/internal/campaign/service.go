@@ -13,8 +13,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	briefs "smartcampaign/internal/brief"
 	"smartcampaign/internal/content"
 	"smartcampaign/internal/llm"
+	"smartcampaign/internal/offer"
 	"smartcampaign/internal/segment"
 )
 
@@ -73,6 +75,7 @@ type SegmentView struct {
 	Explanation string              `json:"explanation"`
 	Question    string              `json:"question,omitempty"`
 	Audience    *segment.Audience   `json:"audience,omitempty"`
+	Offer       offer.Offer         `json:"offer"`
 }
 
 type ContentView struct {
@@ -109,23 +112,7 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	genCtx, cancel := context.WithTimeout(ctx, segmentTimeout)
 	defer cancel()
 
-	rule, err := llm.Repair(genCtx, maxAttempts,
-		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
-			return s.llm.Segment(ctx, llm.SegmentRequest{Brief: brief, Previous: prev})
-		},
-		func(raw string) (segment.Rule, []string) {
-			r, err := segment.Parse(raw)
-			if err != nil {
-				var pe *segment.ParseError
-				if errors.As(err, &pe) {
-					return r, pe.Problems
-				}
-				return r, []string{err.Error()}
-			}
-			return r, nil
-		},
-		llm.Hooks{OnLog: s.recorder(id, "segment")},
-	)
+	rule, err := briefs.ResolveSegment(genCtx, s.llm, brief, llm.Hooks{OnLog: s.recorder(id, "segment")})
 	if err != nil {
 		return nil, s.generationError(err, "Kitle kuralı üretilemedi")
 	}
@@ -207,13 +194,14 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 	v := &View{ID: r.id, Brief: r.brief, Status: r.status, CreatedAt: r.createdAt}
 
 	if r.segmentStatus != nil {
-		sv := &SegmentView{Status: *r.segmentStatus, Conditions: []segment.Condition{}, Explanation: r.explanation, Question: r.question}
+		sv := &SegmentView{Status: *r.segmentStatus, Conditions: []segment.Condition{}, Explanation: r.explanation, Question: r.question,
+			Offer: offer.Offer{Kind: offer.KindNone}}
 		if len(r.segmentRule) > 0 {
 			var stored segment.Rule
 			if err := json.Unmarshal(r.segmentRule, &stored); err != nil {
 				return nil, fmt.Errorf("stored rule is corrupt: %w", err)
 			}
-			sv.Match, sv.Conditions = stored.Match, stored.Conditions
+			sv.Match, sv.Conditions, sv.Offer = stored.Match, stored.Conditions, stored.Offer.Normalize()
 		}
 		if r.matched != nil {
 			sv.Audience = &segment.Audience{Matched: *r.matched, SMSReachable: *r.smsReachable,
@@ -228,6 +216,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 	switch {
 	case err == nil:
 		_, cv.Report = s.policy.Validate(cv.Content)
+		cv.Report.Warnings = s.policy.Quality(cv.Content, rowOffer(r))
 		v.Content = &cv
 	case errors.Is(err, pgx.ErrNoRows):
 	default:
@@ -264,12 +253,13 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 	genCtx, cancel := context.WithTimeout(ctx, messagesTimeout)
 	defer cancel()
 
+	promised := rowOffer(row)
 	var scanner *llm.FieldStream
 	got, err := llm.Repair(genCtx, maxAttempts,
 		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
 			scanner = llm.NewFieldStream(content.FieldSMSBody, content.FieldEmailSubject, content.FieldEmailBody)
 			return s.llm.Messages(ctx, llm.MessageRequest{
-				Brief: row.brief, Explanation: row.explanation, Policy: s.policy, Previous: prev,
+				Brief: row.brief, Explanation: row.explanation, Offer: promised, Policy: s.policy, Previous: prev,
 			}, func(text string) {
 				if ev.Delta == nil {
 					return
@@ -279,7 +269,7 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 				}
 			})
 		},
-		s.validateMessages,
+		func(raw string) (content.Content, []string) { return s.validateMessages(raw, promised) },
 		llm.Hooks{
 			OnAttempt: ev.Attempt,
 			OnRetry:   ev.Retry,
@@ -321,7 +311,7 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 	}
 
 	s.log.Warn("message generation failed; using fallback template", "campaign_id", id, "reason", reason, "error", err)
-	fb, rep := s.policy.Validate(s.policy.Fallback())
+	fb, rep := s.policy.Validate(s.policy.Fallback(promised))
 	if !rep.OK {
 		return fmt.Errorf("built-in fallback violates the limits (misconfigured budgets?): %v", rep.Messages())
 	}
@@ -336,7 +326,7 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 
 // validateMessages parses the model's JSON strictly and applies the content
 // rules. The returned problems are fed back to the model on a retry.
-func (s *Service) validateMessages(raw string) (content.Content, []string) {
+func (s *Service) validateMessages(raw string, promised offer.Offer) (content.Content, []string) {
 	var c content.Content
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -347,10 +337,27 @@ func (s *Service) validateMessages(raw string) (content.Content, []string) {
 		return c, []string{"JSON nesnesinden sonra fazladan içerik var"}
 	}
 	norm, rep := s.policy.Validate(c)
-	if !rep.OK {
-		return c, rep.Messages()
+	problems := rep.Messages()
+	for _, q := range s.policy.Quality(norm, promised) {
+		problems = append(problems, q.Message)
+	}
+	if len(problems) > 0 {
+		return c, problems
 	}
 	return norm, nil
+}
+
+// rowOffer is the offer stored with the campaign's segment rule (none for
+// campaigns created before offers existed).
+func rowOffer(r *campaignRow) offer.Offer {
+	if len(r.segmentRule) == 0 {
+		return offer.Offer{Kind: offer.KindNone}
+	}
+	var stored segment.Rule
+	if err := json.Unmarshal(r.segmentRule, &stored); err != nil {
+		return offer.Offer{Kind: offer.KindNone}
+	}
+	return stored.Offer.Normalize()
 }
 
 // ---- manual edit ----------------------------------------------------------
