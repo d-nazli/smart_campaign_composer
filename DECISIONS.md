@@ -277,6 +277,37 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Neden korumadı:** `Analyze` yazım hatalı sözcüğü ne "bilinen negasyon" ne de `…mamış/…meyen` kalıbı olarak yakalar ("oluşturmmaış" kalıba uymaz), dolayısıyla brief'te satın almama ifadesi hiç görülmez. `Verify` yalnız `Analyze`'ın gördüğü ifadeleri zorunlu kılar, o yüzden model koşulu düşürse de itiraz edilmez. Bu, D44'ün "sözlük sonlu" sınırının bir örneği.
 - **Karar:** şimdi çözülmüyor; PLAN.md "Açık işler"e ve README "Bilinen sınırlamalar"a yazıldı. Olası çözümler (yapılmadı): yazım toleranslı eşleme (bulanık/Levenshtein), ya da modelin kendi çıkardığı "brief'te gördüğüm koşullar" listesiyle kuralı çapraz doğrulama.
 
+## D52 — Onay: tek transaction, CAS, saklı kural yeniden ayrıştırılır · `Kesin (kullanıcı kararı + uygulama)`
+- `POST /api/campaigns/{id}/approve`: `UPDATE … SET status='approved' WHERE status='content_ready'` (CAS) + kayıtlı metnin yeniden doğrulanması + kitlenin o anki zamanla yeniden sayılması + kanal başına `INSERT…SELECT … ON CONFLICT DO NOTHING`, hepsi tek TX. Eşzamanlı ikinci çağrı satır kilidinde bekler, kaybeder, aynı kuyruk sayılarını `already_approved: true` ile döner. Test: 8 eşzamanlı onay → tek kazanan, satırlar bir kez.
+- **Test sırasında bulunan hata:** veritabanından okunan kural JSON'dan geri gelince sayılar `float64` oluyordu, derleyici `int64` bekliyor. Çözüm: saklı kural `segment.Parse` ile yeniden doğrulanıp kanonikleştirilir. Bu aynı zamanda DB'den gelen verinin doğrulamasız SQL'e gitmemesi demektir.
+- Onay anındaki kitle ekrandakinden farklı olabilir ("son 30 gün" kayar, veri değişir). Yanıtta gerçek kuyruk sayısı döner; arayüz fark varsa söyler (`approvalDifference`). Eski sayı sessizce gösterilmez.
+- Elle düzenlemeden gelen *uyarılar* (D46) onayı engellemez; onay yanıtında ve onay kutusunda tekrar gösterilir. Yalnız sert limit ihlali (160/80…) engeller ve hiçbir şeyi değiştirmeden 422 döner.
+- Onaydan sonra metin dondurulur: `PUT content` ve yeniden üretim 409. Sebep: aynı `Idempotency-Key` ile giden yeniden denemenin aynı metni taşıması gerekir (provider parmak izi tutar).
+- Migration `00003`: `campaigns.approved_at`.
+
+## D53 — Kuyruk (`internal/queue`) · `Önerildi → uygulandı`
+- Claim: `FOR UPDATE SKIP LOCKED` + kilit süresi (lease); süresi dolmuş `sending` satırı yeniden alınır. Zaman SQL'e parametredir (testler sahte saatle). İlk claim kampanyayı `approved→sending` yapar.
+- Sonuç yazan metotlar (`MarkSent/Retry/Fail/Skip`) yalnız `status='sending'` satırı değiştirir: lease'i kaybetmiş bir worker'ın geç cevabı final durumu ezemez.
+- Çöken worker'ın satırı yeniden alınırken **deneme hakkı harcanmaz** (suçlu provider değil); aynı `Idempotency-Key` ile yeniden gidince provider kayıttan cevap verir (testte: tek mesaj, 1 replay).
+- `Finish`: bekleyen/uçan satırı kalmayan kampanya `completed` olur; alıcısı hiç olmayan onay da (yoksa sonsuza dek `approved` kalırdı).
+- **Migration `00004`: `deliveries.retries`, `deliveries.rate_limited`.** Sayaçlar süreç belleğinde değil satırda tutulur; Aşama 5'te api `/metrics` için worker'a bağlanmadan "tekrar denenen" ve "429 sayısı"nı DB'den okur, yeniden başlatmada kaybolmaz.
+
+## D54 — Retry politikası ve pacer · `Kesin (kullanıcı kararı + uygulama)`
+- Saf fonksiyon `RetryPolicy.Decide`: 2xx→sent; **429→`Retry-After` kadar bekle, deneme harcanmaz**; 5xx/408/zaman aşımı/bağlantı hatası→en fazla 5 başarısız deneme, `min(60 sn, 2 sn·2ⁿ)` **full jitter**; diğer 4xx (ör. `invalid_recipient`)→kalıcı `failed`, retry yok. Teslimat 10 dk'dan eskiyse (veya beklemek sınırı aşacaksa) retry edilmez, `failed` + "too old".
+- Pacer: kanal başına tek, **varsayılan 90/sn** (`WORKER_RATE_PER_SEC`). Aralık yukarı yuvarlanır, bu yüzden gerçek hız hiçbir zaman ayarı geçmez; boşta kalan zaman "patlama kredisi" biriktirmez. Test: hiçbir 1 sn penceresi hızı aşmaz (1, 7, 90, 100, 333/sn); gerçek saatle provider 100/sn limitini uygularken 300 mesaj hiç 429 görmeden gider.
+- **Bedeli (dürüst):** 429 alınca *tüm kanal* `Retry-After` kadar durur. Provider'ın varsayılan kaosu %3 rastgele 429 enjekte ettiği için bu, kanal hızını düşürür: canlı denemede kanal başına yaklaşık 10–20 mesaj/sn, 1.700 mesaj ≈ 80 sn. Yalnız o mesajı bekletmek daha hızlı olurdu ama gerçek bir hız sınırında diğer isteklerin de 429 yemesine yol açar. Hızlı demo için `.env`'de `PROVIDER_429_RATE=0` yeterli.
+
+## D55 — Worker davranışı · `Önerildi → uygulandı`
+- İzin ve iletişim bilgisi gönderimden hemen önce yeniden kontrol edilir (onaydan sonra izni çeken `skipped`, sebebi `last_error`'da). Test: izni çekilen 10 kişiye hiç istek gitmez.
+- Metin gönderim anında alıcıya göre render edilir (uzun isimler yedek sözcüğe düşer, SMS ≤160 garantisi). Test: tüm istekler için SMS ≤160, konu ≤80 tek satır, kalmış `{{…}}` yok, teklif mesajda var.
+- `Idempotency-Key` = delivery id. Kapanışta uçuştaki gönderimlerin sonucu kendi süresiyle (5 sn) yazılır; kapanış yüzünden yarıda kesilen çağrı "başarısız deneme" sayılmaz, lease dolunca yeniden alınır.
+- Bir `RunOnce` (test/tek seferlik) ve sürekli `Run` (kanal başına claimer + `WORKER_CONCURRENCY` gönderici) aynı `process` kodunu kullanır.
+- Ayarlar: `WORKER_RATE_PER_SEC` (90), `WORKER_CONCURRENCY` (20), `WORKER_MAX_ATTEMPTS` (5), `WORKER_REQUEST_TIMEOUT_MS` (5000; provider'ın 10 sn "asılma" kaosundan kısa).
+
+## D56 — Arayüz: onay kutusu ve 1 sn polling · `Önerildi → uygulandı`
+- "Onayla ve gönder" iki adımlı (sayılar + uyarılar gösterilir, "Evet, gönder"). Kaydedilmemiş düzenleme varken onay kapalı. Onaydan sonra editör salt okunur, kitle/metin kilitli.
+- Gönderim ilerlemesi (kanal başına gönderildi / başarısız / atlandı / bekliyor) her saniye `GET /api/campaigns/{id}` ile güncellenir; `completed` olunca durur. CASE'in Aşama 5 maddesi "canlı akış (SSE ya da polling)" bu polling ile zaten karşılanıyor; Aşama 5'te bu ekran yeniden kullanılır.
+
 ---
 
 ## Açık / onay bekleyenler

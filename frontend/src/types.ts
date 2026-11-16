@@ -71,12 +71,41 @@ export interface StoredContent extends MessageContent {
 
 export type CampaignStatus = 'draft' | 'segment_ready' | 'content_ready' | 'approved' | 'sending' | 'completed'
 
+/** How far one channel has come. `pending` includes rows in flight and waiting for a retry. */
+export interface ChannelProgress {
+  total: number
+  pending: number
+  sent: number
+  failed: number
+  skipped: number
+}
+
+/** Sending progress of an approved campaign. */
+export interface DeliveryProgress {
+  sms: ChannelProgress
+  email: ChannelProgress
+  /** Nothing is pending in either channel. */
+  done: boolean
+}
+
+export interface ApproveResult {
+  id: number
+  status: CampaignStatus
+  already_approved: boolean
+  queued: { sms: number; email: number }
+  /** Audience counted at approval time (absent on a repeated approval). */
+  audience?: Audience
+  warnings: Issue[]
+}
+
 export interface Campaign {
   id: number
   brief: string
   status: CampaignStatus
   segment?: Segment
   content?: StoredContent
+  /** Present once the campaign has been approved. */
+  delivery?: DeliveryProgress
   created_at: string
 }
 

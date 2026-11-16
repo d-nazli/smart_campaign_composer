@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '../api/info'
-import { createCampaign, getCampaign, saveContent } from '../api/campaigns'
+import { approveCampaign, createCampaign, getCampaign, saveContent } from '../api/campaigns'
 import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
 import { emptyContent } from '../composables/streamState'
-import type { Campaign, Issue, MessageContent } from '../types'
+import type { ApproveResult, Campaign, Issue, MessageContent } from '../types'
+import { approvalDifference, shouldPoll } from '../utils/delivery'
 import { checkContent } from '../utils/limits'
+import DeliveryProgress from '../components/DeliveryProgress.vue'
 import MessageEditor from '../components/MessageEditor.vue'
 import SegmentCard from '../components/SegmentCard.vue'
 
@@ -26,6 +28,67 @@ const saving = ref(false)
 const saveError = ref<string | null>(null)
 const serverIssues = ref<Issue[]>([])
 const savedNote = ref(false)
+
+// ---- approval and sending ----------------------------------------------------
+const confirming = ref(false)
+const approving = ref(false)
+const approveError = ref<string | null>(null)
+const approved = ref<ApproveResult | null>(null)
+
+// After approval the text is frozen and the page follows the sending.
+const frozen = computed(() => ['approved', 'sending', 'completed'].includes(campaign.value?.status ?? ''))
+const unsaved = computed(() => {
+  const c = campaign.value?.content
+  return !!c && (c.sms_body !== draft.value.sms_body || c.email_subject !== draft.value.email_subject || c.email_body !== draft.value.email_body)
+})
+const canApprove = computed(
+  () => campaign.value?.status === 'content_ready' && !streaming.value && !saving.value && !unsaved.value && !approving.value,
+)
+const difference = computed(() =>
+  approved.value ? approvalDifference(approved.value.queued, campaign.value?.segment?.audience) : null,
+)
+
+async function approve() {
+  if (!campaign.value || !canApprove.value) return
+  approving.value = true
+  approveError.value = null
+  try {
+    approved.value = await approveCampaign(campaign.value.id)
+    campaign.value = await getCampaign(campaign.value.id)
+    confirming.value = false
+  } catch (e) {
+    approveError.value = (e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')).message
+  } finally {
+    approving.value = false
+  }
+}
+
+// Progress: ask the server once a second until the campaign is completed.
+let timer: number | null = null
+function stopPolling() {
+  if (timer !== null) window.clearInterval(timer)
+  timer = null
+}
+function startPolling() {
+  if (timer !== null) return
+  timer = window.setInterval(async () => {
+    const id = campaign.value?.id
+    if (id === undefined) return stopPolling()
+    try {
+      const c = await getCampaign(id)
+      campaign.value = c
+      if (!shouldPoll(c)) stopPolling()
+    } catch {
+      /* a missed tick is fine; the next one tries again */
+    }
+  }, 1000)
+}
+watch(
+  () => (campaign.value ? shouldPoll(campaign.value) : false),
+  (poll) => (poll ? startPolling() : stopPolling()),
+  { immediate: true },
+)
+onBeforeUnmount(stopPolling)
 
 const limits = computed(() => props.info?.limits)
 const variables = computed(() => props.info?.variables ?? [])
@@ -91,6 +154,9 @@ async function submitBrief() {
   creating.value = true
   createError.value = null
   campaign.value = null
+  approved.value = null
+  confirming.value = false
+  approveError.value = null
   resetStream()
   draft.value = emptyContent()
   try {
@@ -192,7 +258,11 @@ onMounted(async () => {
     <section v-if="segmentReady && limits" class="card">
       <h2>2 · Mesajlar</h2>
 
-      <div class="actions">
+      <p v-if="frozen" class="notice info" role="status">
+        Kampanya onaylandı; metin ve kitle artık değiştirilemez.
+      </p>
+
+      <div v-if="!frozen" class="actions">
         <button class="primary" :disabled="streaming" @click="generate">
           {{ streaming ? 'Üretiliyor…' : hasContent ? 'Yeniden üret' : 'Mesajları üret' }}
         </button>
@@ -213,14 +283,14 @@ onMounted(async () => {
       <MessageEditor
         v-if="hasContent || streaming"
         v-model="draft"
-        :readonly="streaming"
+        :readonly="streaming || frozen"
         :limits="limits"
         :variables="variables"
         :server-issues="serverIssues"
         :warnings="warnings"
       />
 
-      <template v-if="hasContent && !streaming">
+      <template v-if="hasContent && !streaming && !frozen">
         <div class="actions">
           <button class="primary" :disabled="!canSave" @click="save">{{ saving ? 'Kaydediliyor…' : 'Düzenlemeyi kaydet' }}</button>
           <span v-if="source" class="muted small">
@@ -230,8 +300,42 @@ onMounted(async () => {
         </div>
         <p v-if="saveError" class="notice error" role="alert">{{ saveError }}</p>
         <p v-if="savedNote" class="notice ok" role="status">Kaydedildi. Metin tüm sınırlara uyuyor.</p>
-        <p class="muted small">Onay ve gönderim sonraki aşamada eklenecek.</p>
       </template>
+    </section>
+
+    <section v-if="campaign?.status === 'content_ready' && !streaming" class="card">
+      <h2>3 · Onay ve gönderim</h2>
+      <p v-if="unsaved" class="notice warn" role="status">Kaydedilmemiş düzenleme var; onaylamadan önce kaydedin.</p>
+      <div v-if="!confirming" class="actions">
+        <button class="primary" :disabled="!canApprove" data-testid="approve" @click="confirming = true">Onayla ve gönder</button>
+      </div>
+      <div v-else class="confirm" role="alertdialog" aria-labelledby="confirm-title">
+        <p id="confirm-title">
+          <strong>Emin misiniz?</strong>
+          Mesajlar
+          <strong>{{ campaign.segment?.audience?.sms_reachable ?? 0 }} SMS</strong> ve
+          <strong>{{ campaign.segment?.audience?.email_reachable ?? 0 }} e-posta</strong> olarak gönderilecek.
+          Onaydan sonra metin ve kitle değiştirilemez.
+        </p>
+        <p v-for="w in warnings" :key="w.field + w.code + w.message" class="notice warn">⚠ {{ w.message }}</p>
+        <div class="actions">
+          <button class="primary" :disabled="approving" data-testid="confirm-approve" @click="approve">
+            {{ approving ? 'Onaylanıyor…' : 'Evet, gönder' }}
+          </button>
+          <button class="link" :disabled="approving" @click="confirming = false">Vazgeç</button>
+        </div>
+      </div>
+      <p v-if="approveError" class="notice error" role="alert">{{ approveError }}</p>
+    </section>
+
+    <section v-if="campaign?.delivery" class="card" data-testid="delivery">
+      <h2>4 · Gönderim</h2>
+      <p v-if="approved" class="muted small" data-testid="queued">
+        Kuyruğa alınan: {{ approved.queued.sms }} SMS, {{ approved.queued.email }} e-posta.
+        <template v-if="approved.already_approved">(Bu kampanya zaten onaylanmıştı.)</template>
+      </p>
+      <p v-if="difference" class="notice info" role="status">{{ difference }}</p>
+      <DeliveryProgress :delivery="campaign.delivery" :status="campaign.status" />
     </section>
   </div>
 </template>
@@ -261,6 +365,12 @@ onMounted(async () => {
 }
 .block {
   display: block;
+}
+.confirm {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 12px 14px;
 }
 details {
   margin-top: 6px;

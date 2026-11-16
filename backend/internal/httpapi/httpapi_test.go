@@ -381,4 +381,62 @@ func TestPutContentValidatesLikeTheModelOutput(t *testing.T) {
 	}
 }
 
+func TestApproveOverHTTP(t *testing.T) {
+	srv := newServer(t, mock.New(0))
+	id := createCampaign(t, srv)
+	approve := fmt.Sprintf("%s/api/campaigns/%d/approve", srv.URL, id)
+
+	// No content yet: a plain conflict, nothing queued.
+	resp, body := do(t, "POST", approve, nil)
+	if resp.StatusCode != 409 || !strings.Contains(string(body), `"invalid_state"`) {
+		t.Fatalf("before content: %d %s", resp.StatusCode, body)
+	}
+
+	resp, body = do(t, "PUT", fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id),
+		map[string]string{"sms_body": "{{first_name}}, %30 indirim seni bekliyor!", "email_subject": "%30 indirim", "email_body": "Merhaba {{first_name}}, %30 indirim var."})
+	if resp.StatusCode != 200 {
+		t.Fatalf("put: %d %s", resp.StatusCode, body)
+	}
+
+	type approved struct {
+		Status          string `json:"status"`
+		AlreadyApproved bool   `json:"already_approved"`
+		Queued          struct{ SMS, Email int }
+		Audience        *struct{ Matched int }
+		Warnings        []any `json:"warnings"`
+	}
+	var first approved
+	resp, body = do(t, "POST", approve, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("approve: %d %s", resp.StatusCode, body)
+	}
+	if err := json.Unmarshal(body, &first); err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != "approved" || first.AlreadyApproved || first.Queued.SMS == 0 || first.Queued.Email == 0 || first.Audience == nil || first.Warnings == nil {
+		t.Fatalf("approve body: %s", body)
+	}
+
+	var again approved
+	resp, body = do(t, "POST", approve, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("repeat: %d %s", resp.StatusCode, body)
+	}
+	_ = json.Unmarshal(body, &again)
+	if !again.AlreadyApproved || again.Queued != first.Queued {
+		t.Fatalf("repeat body: %s", body)
+	}
+
+	// Frozen after approval.
+	resp, body = do(t, "PUT", fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id),
+		map[string]string{"sms_body": "x", "email_subject": "y", "email_body": "z"})
+	if resp.StatusCode != 409 {
+		t.Fatalf("edit after approval: %d %s", resp.StatusCode, body)
+	}
+
+	if resp, _ := do(t, "POST", srv.URL+"/api/campaigns/999999/approve", nil); resp.StatusCode != 404 {
+		t.Fatalf("unknown campaign: %d", resp.StatusCode)
+	}
+}
+
 var _ = context.Background

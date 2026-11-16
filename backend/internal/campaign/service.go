@@ -86,12 +86,14 @@ type ContentView struct {
 }
 
 type View struct {
-	ID        int64        `json:"id"`
-	Brief     string       `json:"brief"`
-	Status    string       `json:"status"`
-	Segment   *SegmentView `json:"segment,omitempty"`
-	Content   *ContentView `json:"content,omitempty"`
-	CreatedAt time.Time    `json:"created_at"`
+	ID      int64        `json:"id"`
+	Brief   string       `json:"brief"`
+	Status  string       `json:"status"`
+	Segment *SegmentView `json:"segment,omitempty"`
+	Content *ContentView `json:"content,omitempty"`
+	// Delivery is present once the campaign has been approved.
+	Delivery  *DeliveryView `json:"delivery,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
 }
 
 // ---- create (brief -> segment -> audience) --------------------------------
@@ -222,7 +224,52 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 	default:
 		return nil, fmt.Errorf("load content: %w", err)
 	}
+	switch r.status {
+	case StatusApproved, StatusSending, StatusCompleted:
+		d, err := s.deliveryProgress(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		v.Delivery = d
+	}
 	return v, nil
+}
+
+// deliveryProgress counts the campaign's deliveries per channel and state.
+func (s *Service) deliveryProgress(ctx context.Context, id int64) (*DeliveryView, error) {
+	rows, err := s.pool.Query(ctx, `SELECT channel, status, count(*) FROM deliveries WHERE campaign_id=$1 GROUP BY 1, 2`, id)
+	if err != nil {
+		return nil, fmt.Errorf("delivery progress: %w", err)
+	}
+	defer rows.Close()
+	d := &DeliveryView{}
+	for rows.Next() {
+		var channel, status string
+		var n int
+		if err := rows.Scan(&channel, &status, &n); err != nil {
+			return nil, fmt.Errorf("delivery progress: %w", err)
+		}
+		p := &d.SMS
+		if channel == "email" {
+			p = &d.Email
+		}
+		p.Total += n
+		switch status {
+		case "sent":
+			p.Sent += n
+		case "failed":
+			p.Failed += n
+		case "skipped":
+			p.Skipped += n
+		default: // pending, sending
+			p.Pending += n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("delivery progress: %w", err)
+	}
+	d.Done = d.SMS.Pending == 0 && d.Email.Pending == 0
+	return d, nil
 }
 
 // ---- message generation (streaming) ---------------------------------------

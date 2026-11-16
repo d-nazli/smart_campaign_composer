@@ -94,6 +94,11 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/${POSTGRES_DB:-campaign}?sslmode=disable
       PROVIDER_URL: http://mock-provider:8090
+      # Empty value = built-in default (see backend/internal/worker/config.go).
+      WORKER_RATE_PER_SEC: ${WORKER_RATE_PER_SEC:-}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
+      WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-}
+      WORKER_REQUEST_TIMEOUT_MS: ${WORKER_REQUEST_TIMEOUT_MS:-}
     networks: [app]
     depends_on:
       migrate: { condition: service_completed_successfully }

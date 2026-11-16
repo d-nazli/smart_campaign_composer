@@ -47,6 +47,24 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 - Not: gerçek SMS ağlarında Türkçe karakterli (ş, ğ, ı …) bir mesaj 70 karakterle sınırlıdır; case 160 dediği için burada
   karakter sayılır.
 
+## Onay ve gönderim
+
+1. Kitleyi çıkarın, mesajları üretin (gerekirse düzenleyip kaydedin), **Onayla ve gönder**'e basın. Onay iki adımlıdır ve
+   uyarıları (ör. düzenlemede silinen teklif) tekrar gösterir. Onaydan sonra kitle ve metin değiştirilemez.
+2. Onay, izin vermiş ve telefon/e-postası kayıtlı herkesi kanal başına bir kez kuyruğa alır (`deliveries`). Aynı onayı iki
+   kez (hatta aynı anda) göndermek çift kayıt üretmez.
+3. `worker` kuyruğu kanal başına **90 mesaj/sn** (`WORKER_RATE_PER_SEC`) hızla boşaltır. Provider'ın 429/5xx/zaman aşımı
+   cevaplarında yeniden dener (429'da `Retry-After`'e uyar ve kanalı bekletir; 5xx'te üstel bekleme + jitter, en fazla 5
+   deneme). Aynı mesaj aynı `Idempotency-Key` ile gittiği için provider "kabul ettim ama hata döndüm" durumunda bile
+   tek teslimat yapar. Geçersiz telefon/e-posta (`invalid_recipient`) yeniden denenmez, `failed` olur.
+4. Sayfa her saniye ilerlemeyi günceller (gönderildi / başarısız / atlandı / bekliyor); onaydan sonra izni çeken kişi `atlandı`.
+
+Varsayılan provider kaosu %3 rastgele 429 enjekte eder ve her 429 kanalı 1–3 sn durdurur; bu yüzden bir kampanya
+yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=0` yapıp `docker compose up -d mock-provider` deyin.
+
+**Kapsam dışı:** worker tek replica (hız sınırı süreç içi); e-posta gövdesi düz metin; "delivered" bildirimi yok
+(`sent` = provider kabul etti).
+
 ## Bilinen sınırlamalar
 
 - **Yazım hatası "satın almama" koşulunu düşürebilir.** Brief'teki kitle ifadeleri (ör. "sipariş oluşturmamış") bilinen

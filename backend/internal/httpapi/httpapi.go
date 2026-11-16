@@ -34,6 +34,7 @@ func New(svc *campaign.Service, info Info, ready func(context.Context) error, lo
 	mux.HandleFunc("GET /api/campaigns/{id}", a.getCampaign)
 	mux.HandleFunc("POST /api/campaigns/{id}/messages/stream", a.streamMessages)
 	mux.HandleFunc("PUT /api/campaigns/{id}/content", a.putContent)
+	mux.HandleFunc("POST /api/campaigns/{id}/approve", a.approve)
 	return mux
 }
 
@@ -102,6 +103,19 @@ func (a *api) putContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+func (a *api) approve(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	res, err := a.svc.Approve(r.Context(), id)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func (a *api) streamMessages(w http.ResponseWriter, r *http.Request) {

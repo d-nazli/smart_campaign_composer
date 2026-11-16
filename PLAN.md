@@ -1,7 +1,7 @@
 # PLAN.md — Smart Campaign Composer
 
 > Durum: **ONAYLANDI.** Kullanıcı kararları: Postgres kuyruğu (`queue.Queue` arayüzü arkasında), `docker compose watch`, varsayılan mock LLM (`LLM_MODE=auto`), **kanal seçimi yok (SMS+email her zaman birlikte)**, **Aşama 7 (bonus) yapılmayacak**, kapsam dışı özellik gerekirse önce kullanıcıya sorulacak.
-> İlerleme: **Aşama 0, 1 ve birleşik Aşama 2+3 (segment + mesaj üretimi) tamamlandı** (birleşik aşama kullanıcı onayı bekleniyor). Aşama 4 (onay + kuyruk + gönderim), 5 (dashboard/metrics), 6 (cilalama) bekliyor.
+> İlerleme: **Aşama 0, 1, birleşik Aşama 2+3 (segment + mesaj üretimi) ve Aşama 4 (onay + kuyruk + gönderim) tamamlandı.** Aşama 5 (dashboard/metrics/health; yalnız CASE'in 3 zorunlu maddesi) ve 6 (cilalama) bekliyor.
 > Aşama 1 sapmaları: `language` kolonu yok (D29), mock provider'da `/admin/*` yok (D28), türev kolonlar seed'de Go'da hesaplanıp SQL ile doğrulanıyor (D26), Postgres healthcheck TCP (D32).
 > Aşama 2+3 sapmaları (nedenleri DECISIONS.md D33–D43): Sonnet 5.5 zorunlu `tool_choice`'u reddettiği için **structured outputs**; DSL **düz** (iç içe `all/any/not` yok); değişkenler yalnız `first_name` ve `city` ve **sabit karakter payıyla** sayılır; kuyruk tablosunun adı `deliveries`; Go 1.25.
 > Aşama 2+3 düzeltmesi (D44–D49): brief'teki hiçbir koşul sessizce atlanmaz (`internal/brief`: unsupported/needs_clarification kodla belirlenir, model kuralı brief'e karşı doğrulanır); segment adımı **teklifi** (`offer`) çıkarır, mesaj doğrulaması teklifi ve kelime tekrarını denetler.
@@ -336,7 +336,18 @@ insider_one_case/
 - **Çalışması gereken:** Örnek brief → İstanbul / son 30 gün / satın almamış → 300 kişi (SMS 203, e-posta 227); mesajlar akar; limit aşan metin otomatik düzeltilir veya fallback gelir; elle düzenleme aynı kuralla doğrulanır.
 - **Test:** `make test` (key'siz, mock LLM); `make test-live` yalnız key ile.
 
-### Aşama 4 — Onay, kuyruk, worker, gönderim ⭐ (sıradaki; ayrıntılı tasarım aşağıda)
+### Aşama 4 — Onay, kuyruk, worker, gönderim ⭐ ✅ tamamlandı (kararlar: DECISIONS D52–D56)
+**Uygulandı:** 1 onay · 2 `internal/queue` (+ migration 00003/00004) · 3 retry politikası · 4 pacer · 5 sender + worker (+ `WORKER_*` ayarları, `cmd/worker`) · 6 `GET` ilerleme sayaçları + onay kutusu + 1 sn polling · 7 belgeler. Canlı denemede (docker compose, mock LLM): 801 SMS + 896 e-posta kuyruğa alındı → 797 + 892 gönderildi, 4 + 4 `invalid_recipient` (retry yok), kampanya `completed`.
+
+**Onaylanan uygulama sırası (her adım: önce test, kırmızıyı gör, sonra kod; adım sonunda testler çalıştırılıp gösterilir):**
+1. Onay: `POST /api/campaigns/{id}/approve` (CAS + tek TX enqueue; onaydan sonra `PUT content` 409).
+2. `queue` paketi: Claim (`SKIP LOCKED`, lease), MarkSent, Retry, Fail, Skip; zaman parametre.
+3. Retry politikası (saf fonksiyon): 429 → `Retry-After`, deneme harcanmaz, yaş sınırı 10 dk; 5xx/timeout → ≤5 deneme, full jitter; diğer 4xx → kalıcı `failed`.
+4. Pacer: kanal başına strict, `Clock`'lu, **varsayılan 90/s** (ayarlanabilir; provider tam 100/s kayan pencere uyguluyor, kenarda gereksiz 429 yememek için), 429'da kanal duraklar.
+5. Worker: kanal başına claimer + N gönderici; izin yeniden kontrol (`skipped`), `Render`, provider çağrısı (`Idempotency-Key = delivery.id`, 5 sn istemci zaman aşımı), tamamlanma tespiti.
+6. API/UI minimum: `GET /api/campaigns/{id}` kanal bazlı sayaçlar; onay butonu; polling ile yenileme.
+7. Belgeler (DECISIONS D52+, README kapsam dışı notları).
+- **Onaylanan kararlar:** (a) pacer 90/s; (b) elle düzenlemeden gelen *uyarılar* onayı engellemez (D46), yalnız sert limitler engeller, onay ekranı uyarıları tekrar gösterir; (c) kitle onay anında yeniden hesaplanır, gerçek kuyruğa alınan sayı yanıtta döner; (d) worker tek replica, e-posta düz metin, "delivered" bildirimi yok.
 - Approve (CAS + tek TX enqueue), `queue.Queue` arayüzü + Postgres uygulaması, worker, kanal başına strict pacer (`Clock`'lu), retry politikası, idempotency, izin yeniden kontrolü, tamamlanma tespiti.
 - **Çalışması gereken:** Onaylanan kampanya gönderilir; provider 429/5xx verse de gönderimler sonunda `sent`/`failed`; çift onay çift gönderim üretmez; 100/s aşılmaz; kalıcı 4xx (bozuk telefon/email) retry edilmeden `failed`.
 - **Test:** entegrasyon testleri (gerçek PG + kod içinde kurulu provider, sahte saat): aynı approve 2× ve eşzamanlı → satır sayısı değişmez; worker çöküşü (MarkSent atlanır) → yeniden alınır, provider'da tek kayıt; 429 → `Retry-After`'a uyulur; hiçbir 1 sn penceresinde >100 yok; seed'deki 30 uzun isimli kullanıcıya giden SMS ≤160; `make test`.
@@ -361,10 +372,10 @@ insider_one_case/
 
 **Kapsam dışı (README'de not):** worker tek replica (limiter süreç içi, D13); e-posta gövdesi düz metin olarak gönderilir (HTML şablonu yok); teslim bildirimi ("delivered") yok, `sent` = provider kabul etti.
 
-### Aşama 5 — Dashboard, metrics, health ⭐
-- Snapshot SSE, dashboard UI (kanal bazlı progress, sent/failed/retrying, son hatalar, throughput), `/metrics` (Prometheus), `/readyz` (DB), worker metrics.
-- **Çalışması gereken:** Gönderim sırasında sayaçlar canlı akar; tarayıcı yenilenince devam eder.
-- **Test:** `curl -N .../events`; `curl localhost:8081/metrics` (kuyruk derinliği, sent/failed sayaçları); DB'yi durdur → `/readyz` 503.
+### Aşama 5 — Dashboard, metrics, health ⭐ (KÜÇÜK TUTULACAK: yalnız CASE'in zorunlu 3 maddesi)
+- **Zorunlu (CASE):** (1) Dashboard'da gönderim durumu canlı akar (SSE ya da polling; Aşama 4'teki durum sayaçları üzerine kurulur). (2) `/metrics`: kanal bazlı **gönderilen, başarısız, tekrar denenen, 429 sayısı, kuyruk uzunluğu**. (3) API'de de `/healthz` olsun ve **veritabanı bağlantısını kontrol etsin**.
+- **Yapılmayacak (kullanıcı kararı):** throughput grafiği, "son hatalar" listesi, ek metrikler, süs. Yalnız bu üç madde.
+- **Test:** sayaçlar gönderim sırasında canlı değişir; `curl .../metrics` dört sayaç + kuyruk uzunluğu; DB'yi durdur → api `/healthz` hata döner.
 
 ### Aşama 6 — Cilalama ve teslim
 - Frontend testleri (vitest: composable + kritik bileşenler), hata/boş durum UI'ları, README (kurulum, mimari, yapılmayanlar), DECISIONS son hali, `make test` Windows notları, ai-sessions export + temizlik, repo'yu GitHub'a push.
