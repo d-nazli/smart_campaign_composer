@@ -266,6 +266,20 @@ input[type='text'] {
   resize: vertical;
   transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 }
+/* A field that cannot be edited (an approved campaign's brief, text while it is written) looks like it:
+   grey, no resize handle, no text cursor. */
+textarea[readonly],
+input[readonly] {
+  background: var(--surface-2);
+  color: var(--muted);
+  resize: none;
+  cursor: default;
+}
+textarea[readonly]:focus,
+input[readonly]:focus {
+  border-color: var(--border);
+  box-shadow: none;
+}
 textarea:focus,
 input[type='text']:focus {
   border-color: var(--accent);

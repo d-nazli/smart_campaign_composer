@@ -428,6 +428,13 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Teslimatlar başlangıçta oluştuğu ve dil gönderim anında okunduğu (D71) için iki durum da doğru çalışır ve testlidir: (a) kişi **zamanlamadan sonra, başlamadan önce** dilini değiştirirse kitle zaten yeni haliyle çıkar; (b) **başladıktan sonra, gönderilmeden önce** değiştirirse mesaj yine yeni dilde gider. Her iki durumda sağlayıcıya o kişiye bir SMS ve bir e-posta gider, yeni dilde, iki kez değil.
 - Dil dağılımı (`language_counts`) kampanya başlarken yeniden sayılır; onay ve kampanya ekranları o anki gerçek sayıyı gösterir.
 
+## D77 — Elle denemeden gelen düzeltmeler · `Kesin (kullanıcı kararı)`
+- **"Yeni kampanya" temiz açılır.** Sekme tıklaması adresten `?c=` parametresini siler ve `ComposeView`'ı yeni anahtarla yeniden kurar (state sıfırlanır); dashboard'dan `#/` ile dönüş de aynı yolu izler. Sebep: aynı bileşen yeniden kullanılıyordu ve açılışta adresteki `?c=` eski kampanyayı yüklüyordu (`utils/route.ts`, testli).
+- **Kampanya yüklenemezse adres korunur.** Yalnız 404 (kampanya yok) adresi temizler; sunucuya geçici ulaşılamama bir hata gösterir ve yenilemeyle kampanya yine açılabilir. Önceden her hata sessizce boş bir Brief açıp adresi siliyordu.
+- **Dil kırılımı.** `deliveries` satırında dil tutulmaz; gönderim ekranı ve kartlar `users.language` ile birleştirip sayar (`DeliveryView.languages`: toplam ve gönderilen, SMS+e-posta birlikte). Sınırı: gönderildikten sonra dilini değiştiren kişi yeni dilinde sayılır. Gönderilirken gerçek dil satıra yazılsaydı bu da çözülürdü; şimdilik gereksiz görüldü. Gönderim sürerken "TR 120/171", bitince "TR 171"; başlamadan önce kitle dilleri "tahmini" etiketiyle.
+- **Kart özeti.** Liste her kampanya için kitle cümlesini (`explanation`), kişi sayısını, kitle dillerini ve varsa planlanan zamanı verir. Zamanlanmış kampanya başladıktan sonra da zamanını korur ("Zamanlanan gönderim").
+- **Görünüm.** Salt okunur alan gri, yeniden boyutlanamaz, metin imleçsiz; aktif adım dolu nokta + kalın etiket + renkli hap; dashboard bloğu ve kartları ortalı. Bu kurallar stil dosyasından okunup testle sabitlenir (görsel doğrulama yerine kuralın varlığı).
+
 ---
 
 ## Açık / onay bekleyenler

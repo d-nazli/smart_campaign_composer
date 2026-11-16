@@ -88,3 +88,91 @@ func TestListOfNothingIsAnEmptyListNotNull(t *testing.T) {
 		t.Fatalf("%#v %v", list, err)
 	}
 }
+
+// Per language: how many messages go to each language and how many were sent.
+// The numbers add up to the campaign's own totals and agree with the queue.
+func TestDeliveryProgressCountsEachLanguage(t *testing.T) {
+	svc, pool := newService(t, mock.New(0))
+	ctx := context.Background()
+	id := approvableCampaign(t, svc)
+	if _, err := svc.Approve(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	// Some of every language are sent, the rest still wait.
+	if _, err := pool.Exec(ctx, `
+		UPDATE deliveries SET status='sent' WHERE id IN (
+			SELECT d.id FROM deliveries d JOIN users u ON u.id=d.user_id WHERE d.campaign_id=$1 AND d.id % 3 = 0)`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := svc.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	langs := v.Delivery.Languages
+	if len(langs) != 3 {
+		t.Fatalf("every language of the seeded audience is present: %+v", langs)
+	}
+	total, sent := 0, 0
+	for code, p := range langs {
+		var wantTotal, wantSent int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*), count(*) FILTER (WHERE d.status='sent')
+			FROM deliveries d JOIN users u ON u.id=d.user_id WHERE d.campaign_id=$1 AND u.language=$2`, id, code).Scan(&wantTotal, &wantSent); err != nil {
+			t.Fatal(err)
+		}
+		if p.Total != wantTotal || p.Sent != wantSent || p.Sent == 0 || p.Sent >= p.Total {
+			t.Errorf("%s: %+v, want total %d sent %d (some but not all sent)", code, p, wantTotal, wantSent)
+		}
+		total, sent = total+p.Total, sent+p.Sent
+	}
+	if total != v.Delivery.SMS.Total+v.Delivery.Email.Total || sent != v.Delivery.SMS.Sent+v.Delivery.Email.Sent {
+		t.Fatalf("languages add up to %d/%d, channels say %d/%d", sent, total,
+			v.Delivery.SMS.Sent+v.Delivery.Email.Sent, v.Delivery.SMS.Total+v.Delivery.Email.Total)
+	}
+
+	list, err := svc.List(ctx, 10)
+	if err != nil || len(list) != 1 || list[0].Delivery.Languages["tr"] != langs["tr"] {
+		t.Fatalf("the list carries the same numbers: %v %+v", err, list)
+	}
+}
+
+// A card shows who the campaign is for (in words) and how many people speak each language.
+func TestListSummaryNamesTheAudience(t *testing.T) {
+	svc, _ := newService(t, mock.New(0))
+	ctx := context.Background()
+	id := offerCampaign(t, svc)
+	list, err := svc.List(ctx, 10)
+	if err != nil || len(list) != 1 || list[0].ID != id {
+		t.Fatalf("%v %+v", err, list)
+	}
+	if list[0].Explanation == "" {
+		t.Fatal("the summary must say who the audience is")
+	}
+	sum := 0
+	for _, n := range list[0].AudienceLanguages {
+		sum += n
+	}
+	if len(list[0].AudienceLanguages) != 3 || sum == 0 {
+		t.Fatalf("audience languages: %v", list[0].AudienceLanguages)
+	}
+}
+
+// A scheduled campaign keeps its time in the list, also after it has started.
+func TestListKeepsTheScheduledTimeAfterTheStart(t *testing.T) {
+	svc, pool := newService(t, mock.New(0))
+	ctx := context.Background()
+	at := inTwoHours()
+	id := scheduled(t, svc, at)
+	list, _ := svc.List(ctx, 10)
+	if list[0].Status != "scheduled" || list[0].ScheduledAt == nil || !list[0].ScheduledAt.Equal(at) {
+		t.Fatalf("%+v", list[0])
+	}
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status='approved' WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = svc.List(ctx, 10)
+	if list[0].ScheduledAt == nil || !list[0].ScheduledAt.Equal(at) {
+		t.Fatalf("the planned time must stay on the card: %+v", list[0])
+	}
+}

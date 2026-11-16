@@ -104,15 +104,21 @@ button:disabled {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+/* The step being worked on stands out: filled dot with a halo, bold label on a tinted pill. */
 .current .dot {
+  background: var(--accent);
   border-color: var(--accent);
+  color: var(--accent-fg);
   box-shadow: 0 0 0 4px var(--accent-soft);
-}
-.current:not(.done) .dot {
-  color: var(--accent);
 }
 .current button {
   color: var(--fg);
+  font-weight: 700;
+  background: var(--accent-soft);
+  padding-right: 14px;
+}
+.current .label {
+  color: var(--accent);
 }
 /* steps that cannot be opened yet fade back */
 .future {

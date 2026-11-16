@@ -9,7 +9,9 @@ import type { ApproveResult, Campaign, Issue, LanguageCode, MessageContent } fro
 import { approvalDifference, shouldPoll } from '../utils/delivery'
 import { DEFAULT_LANGUAGE, FALLBACK_LANGUAGES, changedLanguages, draftsFrom, emptyMessage, hasAllLanguages, storedByLanguage } from '../utils/languages'
 import { checkContent } from '../utils/limits'
+import { campaignIdFromUrl, urlForCampaign, urlWithoutCampaign } from '../utils/route'
 import { checkSchedule, formatWhen, fromLocalInput, toLocalInput, untilText } from '../utils/schedule'
+import { countsLine } from '../utils/languages'
 import { attemptLabel } from '../utils/preview'
 import { withAllCustomers } from '../utils/sendToAll'
 import { currentStep, type StepKey } from '../utils/steps'
@@ -121,7 +123,8 @@ const anyLocalIssues = computed(() => Object.values(localChecks.value).some((c) 
 // ---- wizard -----------------------------------------------------------------------
 const view = ref<StepKey>('brief')
 // A campaign named in the address is fetched first; until then no panel shows, so the page never flashes the wrong step.
-const ready = ref(!new URL(window.location.href).searchParams.get('c'))
+const ready = ref(campaignIdFromUrl(window.location.href) === null)
+const loadError = ref<string | null>(null)
 const slide = ref<'forward' | 'back'>('forward')
 
 // How far the campaign has come decides which steps can be opened; `view` is only what is on screen.
@@ -356,10 +359,8 @@ const fallbackText = computed(() => {
 })
 
 function setUrl(id: number | null) {
-  const url = new URL(window.location.href)
-  if (id === null) url.searchParams.delete('c')
-  else url.searchParams.set('c', String(id))
-  window.history.replaceState(null, '', url)
+  const href = window.location.href
+  window.history.replaceState(null, '', id === null ? urlWithoutCampaign(href, window.location.hash) : urlForCampaign(href, id, window.location.hash))
 }
 
 function adopt(c: Campaign) {
@@ -433,8 +434,8 @@ async function save() {
 }
 
 onMounted(async () => {
-  const id = Number(new URL(window.location.href).searchParams.get('c'))
-  if (!Number.isInteger(id) || id < 1) {
+  const id = campaignIdFromUrl(window.location.href)
+  if (id === null) {
     ready.value = true
     return
   }
@@ -443,8 +444,11 @@ onMounted(async () => {
     brief.value = c.brief
     adopt(c)
     view.value = progress.value.current // open where the campaign stands
-  } catch {
-    setUrl(null)
+  } catch (e) {
+    // Only a campaign that does not exist loses its place in the address. A failed
+    // request (server briefly away) keeps it, so a reload can still open the campaign.
+    if (e instanceof ApiError && e.status === 404) setUrl(null)
+    else loadError.value = e instanceof ApiError ? e.message : 'Kampanya yüklenemedi. Sayfayı yenileyin.'
   } finally {
     ready.value = true
   }
@@ -453,6 +457,7 @@ onMounted(async () => {
 
 <template>
   <div class="wizard">
+    <p v-if="loadError" class="notice error" role="alert" data-testid="load-error">{{ loadError }}</p>
     <StepBar :current="view" :done="progress.done" :reachable="reachable" @go="onStepBar" />
 
     <div class="stage">
@@ -590,6 +595,9 @@ onMounted(async () => {
                   Şu anki tahmin: {{ campaign.segment.audience.sms_reachable }} SMS, {{ campaign.segment.audience.email_reachable }} e-posta.
                 </template>
               </p>
+              <p v-if="countsLine(campaign.segment?.languages, languages)" class="muted small" data-testid="scheduled-languages">
+                Dil dağılımı (tahmini): <strong>{{ countsLine(campaign.segment?.languages, languages) }}</strong>
+              </p>
               <div class="actions">
                 <button v-if="!confirmCancel" class="link danger" :disabled="cancelling" data-testid="cancel" @click="confirmCancel = true">İptal et</button>
                 <template v-else>
@@ -613,7 +621,7 @@ onMounted(async () => {
                 <template v-if="approved.already_approved">(Bu kampanya zaten onaylanmıştı.)</template>
               </p>
               <p v-if="difference" class="notice info" role="status">{{ difference }}</p>
-              <DeliveryProgress :delivery="campaign.delivery" :status="campaign.status" />
+              <DeliveryProgress :delivery="campaign.delivery" :status="campaign.status" :languages="languages" />
             </template>
             <p v-else class="muted">Kampanya henüz onaylanmadı.</p>
           </section>

@@ -112,7 +112,7 @@ const shownRate = computed(() => (totals.value.pending > 0 ? rate.value : 0))
     </div>
 
     <div v-if="campaigns && campaigns.length > 0" class="list" data-testid="campaign-table">
-      <CampaignCard v-for="c in campaigns" :key="c.id" :campaign="c" @cancel="cancel" />
+      <CampaignCard v-for="c in campaigns" :key="c.id" :campaign="c" :languages="info?.languages" @cancel="cancel" />
     </div>
 
     <p class="muted small foot">
@@ -123,6 +123,11 @@ const shownRate = computed(() => (totals.value.pending > 0 ? rate.value : 0))
 </template>
 
 <style scoped>
+.dash {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+}
 .top {
   display: flex;
   align-items: center;
@@ -186,9 +191,11 @@ const shownRate = computed(() => (totals.value.pending > 0 ? rate.value : 0))
 .stat.failed .sub {
   color: var(--muted);
 }
+/* Cards keep a comfortable width and the block sits in the middle, also with one or two cards. */
 .list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 560px));
+  justify-content: center;
   gap: 16px;
   align-items: start;
 }

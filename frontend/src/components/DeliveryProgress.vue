@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CampaignStatus, DeliveryProgress } from '../types'
+import type { CampaignStatus, DeliveryProgress, LanguageInfo } from '../types'
 import { deliveryTotals } from '../utils/dashboard'
 import { describeChannel } from '../utils/delivery'
 import { failureText, mergeFailures } from '../utils/failures'
+import { FALLBACK_LANGUAGES, sentLine } from '../utils/languages'
 import AnimatedNumber from './AnimatedNumber.vue'
 import ChannelBar from './ChannelBar.vue'
 
 // The sending step: big bars and numbers that follow the queue.
-const props = defineProps<{ delivery: DeliveryProgress; status: CampaignStatus }>()
+const props = defineProps<{ delivery: DeliveryProgress; status: CampaignStatus; languages?: LanguageInfo[] }>()
 
 const finished = computed(() => props.status === 'completed')
 const totals = computed(() => deliveryTotals(props.delivery))
 const reasons = computed(() => mergeFailures(props.delivery.failures))
+// "TR 171 · EN 72 · DE 42": the messages sent to each language ("TR 120/171" while some still wait).
+const byLanguage = computed(() => sentLine(props.delivery.languages, props.languages ?? FALLBACK_LANGUAGES, props.delivery.done))
 </script>
 
 <template>
@@ -43,6 +46,11 @@ const reasons = computed(() => mergeFailures(props.delivery.failures))
       </div>
     </div>
 
+    <p v-if="byLanguage" class="bylang" data-testid="delivery-languages">
+      <span class="cap">Dile göre gönderilen</span>
+      <strong class="num">{{ byLanguage }}</strong>
+    </p>
+
     <ul v-if="reasons.length" class="reasons" aria-label="Başarısızlık nedenleri">
       <li v-for="r in reasons" :key="r.reason">
         <strong class="num">{{ r.count }}</strong> {{ failureText(r.reason) }}
@@ -55,6 +63,19 @@ const reasons = computed(() => mergeFailures(props.delivery.failures))
 </template>
 
 <style scoped>
+.bylang {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 16px 0 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+.bylang strong {
+  letter-spacing: 0.02em;
+}
 .totals {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

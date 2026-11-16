@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -28,6 +29,15 @@ type DeliveryView struct {
 	Done bool `json:"done"`
 	// Failures groups the failed deliveries by why they failed (largest first).
 	Failures []FailureReason `json:"failures,omitempty"`
+	// Languages is how many messages (SMS and email together) go to each language
+	// and how many of them were sent. A person counts in the language they have now.
+	Languages map[string]LanguageProgress `json:"languages,omitempty"`
+}
+
+// LanguageProgress is one language's share of a campaign's deliveries.
+type LanguageProgress struct {
+	Total int `json:"total"`
+	Sent  int `json:"sent"`
 }
 
 // FailureReason is one group of failed deliveries. Reason is a stable code, not
@@ -42,12 +52,17 @@ type FailureReason struct {
 
 // Summary is one line of the campaign list (the dashboard).
 type Summary struct {
-	ID            int64         `json:"id"`
-	Brief         string        `json:"brief"`
-	Status        string        `json:"status"`
-	SegmentStatus string        `json:"segment_status,omitempty"`
-	Matched       *int          `json:"matched,omitempty"`
-	Delivery      *DeliveryView `json:"delivery,omitempty"`
+	ID            int64  `json:"id"`
+	Brief         string `json:"brief"`
+	Status        string `json:"status"`
+	SegmentStatus string `json:"segment_status,omitempty"`
+	Matched       *int   `json:"matched,omitempty"`
+	// Explanation is the audience in words ("İstanbul'daki, son 30 günde …").
+	Explanation string `json:"explanation,omitempty"`
+	// AudienceLanguages is how many reachable people speak each language (an
+	// estimate until the campaign starts).
+	AudienceLanguages map[string]int `json:"audience_languages,omitempty"`
+	Delivery          *DeliveryView  `json:"delivery,omitempty"`
 	// ScheduledAt is when a scheduled campaign starts; ScheduleError why it could not.
 	ScheduledAt   *time.Time `json:"scheduled_at,omitempty"`
 	ScheduleError string     `json:"schedule_error,omitempty"`
@@ -116,7 +131,35 @@ func (s *Service) deliveryProgressFor(ctx context.Context, ids []int64) (map[int
 		return nil, fmt.Errorf("delivery progress: %w", err)
 	}
 	rows.Close()
+	if err := s.addLanguages(ctx, ids, out); err != nil {
+		return nil, err
+	}
 	return out, s.addFailures(ctx, ids, out)
+}
+
+// addLanguages fills DeliveryView.Languages.
+func (s *Service) addLanguages(ctx context.Context, ids []int64, out map[int64]*DeliveryView) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.campaign_id, u.language, count(*), count(*) FILTER (WHERE d.status = 'sent')
+		FROM deliveries d JOIN users u ON u.id = d.user_id
+		WHERE d.campaign_id = ANY($1) GROUP BY 1, 2`, ids)
+	if err != nil {
+		return fmt.Errorf("delivery languages: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var lang string
+		var p LanguageProgress
+		if err := rows.Scan(&id, &lang, &p.Total, &p.Sent); err != nil {
+			return fmt.Errorf("delivery languages: %w", err)
+		}
+		if out[id].Languages == nil {
+			out[id].Languages = map[string]LanguageProgress{}
+		}
+		out[id].Languages[lang] = p
+	}
+	return rows.Err()
 }
 
 // addFailures fills DeliveryView.Failures. The worker stores the last provider
@@ -162,7 +205,7 @@ func (s *Service) List(ctx context.Context, limit int) ([]Summary, error) {
 		limit = maxListLimit
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, brief, status, coalesce(segment_status, ''), matched, scheduled_at, schedule_error, created_at
+		SELECT id, brief, status, coalesce(segment_status, ''), matched, explanation, language_counts, scheduled_at, schedule_error, created_at
 		FROM campaigns ORDER BY id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list campaigns: %w", err)
@@ -172,8 +215,12 @@ func (s *Service) List(ctx context.Context, limit int) ([]Summary, error) {
 	var sending []int64
 	for rows.Next() {
 		var c Summary
-		if err := rows.Scan(&c.ID, &c.Brief, &c.Status, &c.SegmentStatus, &c.Matched, &c.ScheduledAt, &c.ScheduleError, &c.CreatedAt); err != nil {
+		var langs []byte
+		if err := rows.Scan(&c.ID, &c.Brief, &c.Status, &c.SegmentStatus, &c.Matched, &c.Explanation, &langs, &c.ScheduledAt, &c.ScheduleError, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("list campaigns: %w", err)
+		}
+		if len(langs) > 0 {
+			_ = json.Unmarshal(langs, &c.AudienceLanguages)
 		}
 		switch c.Status {
 		case StatusApproved, StatusSending, StatusCompleted:

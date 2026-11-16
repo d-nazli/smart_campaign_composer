@@ -54,3 +54,31 @@ export function languageSummary(
   if (!counts) return []
   return languages.filter((l) => (counts[l.code] ?? 0) > 0).map((l) => ({ code: l.code, display: l.display, count: counts[l.code] }))
 }
+
+/** "TR 171 · EN 72 · DE 42": a number per language, in language order, languages without any left out. */
+export function countsLine(counts: Record<LanguageCode, number> | undefined, languages: LanguageInfo[]): string {
+  if (!counts) return ''
+  return languages
+    .filter((l) => (counts[l.code] ?? 0) > 0)
+    .map((l) => `${l.code.toUpperCase()} ${counts[l.code]}`)
+    .join(' · ')
+}
+
+/**
+ * The same for sending: what was sent to each language. While messages are still
+ * waiting it reads "TR 120/171", once everything has been handled "TR 171".
+ */
+export function sentLine(
+  langs: Record<LanguageCode, { total: number; sent: number }> | undefined,
+  languages: LanguageInfo[],
+  done: boolean,
+): string {
+  if (!langs) return ''
+  return languages
+    .filter((l) => (langs[l.code]?.total ?? 0) > 0)
+    .map((l) => {
+      const p = langs[l.code]
+      return `${l.code.toUpperCase()} ${done ? p.sent : `${p.sent}/${p.total}`}`
+    })
+    .join(' · ')
+}

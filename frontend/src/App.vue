@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchInfo, llmLabel, type AppInfo } from './api/info'
 import { pageFromHash, type Page } from './utils/dashboard'
+import { urlWithoutCampaign } from './utils/route'
 import ComposeView from './views/ComposeView.vue'
 import DashboardView from './views/DashboardView.vue'
 
@@ -13,7 +14,22 @@ const isMock = computed(() => info.value?.llm_mode === 'mock')
 // In Claude mode a quiet badge names the model; in mock mode the badge says so plainly.
 const badge = computed(() => (info.value ? (isMock.value ? 'Mock modu' : llmLabel(info.value)) : null))
 
-const onHash = () => (page.value = pageFromHash(window.location.hash))
+// ComposeView is rebuilt (new key) every time a NEW campaign starts, so nothing of the old one survives.
+const composeKey = ref(0)
+
+// "Yeni kampanya": a clean brief. The address loses ?c= first, otherwise the page would open the old campaign again.
+function newCampaign() {
+  window.history.pushState(null, '', urlWithoutCampaign(window.location.href, '#/'))
+  page.value = 'compose'
+  composeKey.value++
+}
+
+const onHash = () => {
+  const next = pageFromHash(window.location.hash)
+  // Coming back from the dashboard through a "#/" link also means a new campaign.
+  if (next === 'compose' && page.value === 'dashboard') return newCampaign()
+  page.value = next
+}
 
 onMounted(async () => {
   window.addEventListener('hashchange', onHash)
@@ -36,7 +52,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', onHash))
       <span>Smart Campaign Composer</span>
     </h1>
     <nav class="tabs" aria-label="Sayfalar">
-      <a href="#/" :aria-current="page === 'compose' ? 'page' : undefined" data-testid="tab-compose">Yeni kampanya</a>
+      <a href="#/" :aria-current="page === 'compose' ? 'page' : undefined" data-testid="tab-compose" @click.prevent="newCampaign">Yeni kampanya</a>
       <a href="#/dashboard" :aria-current="page === 'dashboard' ? 'page' : undefined" data-testid="tab-dashboard">Dashboard</a>
     </nav>
     <span
@@ -52,6 +68,6 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', onHash))
   </header>
   <main class="content" :class="{ wide: page === 'dashboard' }">
     <DashboardView v-if="page === 'dashboard'" :info="info" />
-    <ComposeView v-else :info="info" />
+    <ComposeView v-else :key="composeKey" :info="info" />
   </main>
 </template>

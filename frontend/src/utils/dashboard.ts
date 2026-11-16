@@ -32,6 +32,24 @@ export function statusLabel(c: Pick<CampaignSummary, 'status' | 'segment_status'
   return 'Taslak'
 }
 
+/**
+ * What the planned time of a campaign is called on its card (null when it was never scheduled).
+ * A campaign that has started keeps its time: it says when it was meant to start.
+ */
+export function scheduleCaption(c: Pick<CampaignSummary, 'status' | 'scheduled_at'>): string | null {
+  if (!c.scheduled_at) return null
+  switch (c.status) {
+    case 'scheduled':
+      return 'Zamanlandı'
+    case 'cancelled':
+      return 'İptal edilen zaman'
+    case 'failed':
+      return 'Planlanan zaman'
+    default:
+      return 'Zamanlanan gönderim'
+  }
+}
+
 /** One line of the brief: whitespace collapsed, cut at a word with an ellipsis. */
 export function briefPreview(brief: string, max: number): string {
   const text = brief.replace(/\s+/g, ' ').trim()

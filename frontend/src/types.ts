@@ -132,6 +132,8 @@ export interface DeliveryProgress {
   done: boolean
   /** Failed deliveries grouped by reason, largest first (absent when none failed). */
   failures?: FailureReason[]
+  /** Messages (SMS and email together) per language: how many go there and how many were sent. */
+  languages?: Record<LanguageCode, { total: number; sent: number }>
 }
 
 export interface ApproveResult {
@@ -187,6 +189,10 @@ export interface CampaignSummary {
   status: CampaignStatus
   segment_status?: SegmentStatus
   matched?: number
+  /** The audience in words. */
+  explanation?: string
+  /** How many reachable people speak each language (an estimate until the campaign starts). */
+  audience_languages?: Record<LanguageCode, number>
   delivery?: DeliveryProgress
   scheduled_at?: string
   schedule_error?: string

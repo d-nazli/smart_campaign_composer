@@ -1,20 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ref } from 'vue'
-import type { CampaignSummary } from '../types'
-import { briefPreview, deliveryTotals, statusLabel, statusTone } from '../utils/dashboard'
+import type { CampaignSummary, LanguageInfo } from '../types'
+import { briefPreview, deliveryTotals, scheduleCaption, statusLabel, statusTone } from '../utils/dashboard'
+import { FALLBACK_LANGUAGES, countsLine, sentLine } from '../utils/languages'
 import { failureText, mergeFailures } from '../utils/failures'
 import { formatWhen, untilText } from '../utils/schedule'
 import AnimatedNumber from './AnimatedNumber.vue'
 import ChannelBar from './ChannelBar.vue'
 
-const props = defineProps<{ campaign: CampaignSummary }>()
+const props = defineProps<{ campaign: CampaignSummary; languages?: LanguageInfo[] }>()
 const emit = defineEmits<{ cancel: [id: number] }>()
 const confirming = ref(false)
 const now = ref(new Date())
 
 const when = (iso: string) => new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })
 const totals = computed(() => deliveryTotals(props.campaign.delivery))
+const langs = computed(() => props.languages ?? FALLBACK_LANGUAGES)
+// Messages sent per language once sending has begun; before that the (estimated) speakers of each language.
+const sentByLanguage = computed(() => sentLine(props.campaign.delivery?.languages, langs.value, props.campaign.delivery?.done ?? false))
+const audienceByLanguage = computed(() => countsLine(props.campaign.audience_languages, langs.value))
+const planned = computed(() => scheduleCaption(props.campaign))
 const tone = computed(() => statusTone(props.campaign))
 const reasons = computed(() => mergeFailures(props.campaign.delivery?.failures))
 // The word on the badge: "Taslak", "Gönderiliyor", "Tamamlandı"; a stuck draft keeps its reason.
@@ -35,6 +41,25 @@ const badge = computed(() => {
     </header>
 
     <p class="brief" :title="campaign.brief">{{ briefPreview(campaign.brief, 140) }}</p>
+
+    <dl v-if="campaign.explanation || planned || sentByLanguage || audienceByLanguage" class="facts">
+      <div v-if="campaign.explanation" data-testid="card-audience">
+        <dt>Kitle</dt>
+        <dd>{{ campaign.explanation }}<template v-if="campaign.matched != null"> · <strong class="num">{{ campaign.matched }}</strong> kişi</template></dd>
+      </div>
+      <div v-if="planned && campaign.scheduled_at" data-testid="card-planned">
+        <dt>{{ planned }}</dt>
+        <dd><strong>{{ formatWhen(campaign.scheduled_at) }}</strong></dd>
+      </div>
+      <div v-if="sentByLanguage" data-testid="card-languages">
+        <dt>Dile göre gönderilen</dt>
+        <dd class="num">{{ sentByLanguage }}</dd>
+      </div>
+      <div v-else-if="audienceByLanguage" data-testid="card-languages">
+        <dt>Dil dağılımı (tahmini)</dt>
+        <dd class="num">{{ audienceByLanguage }}</dd>
+      </div>
+    </dl>
 
     <div v-if="campaign.status === 'scheduled'" class="sched" data-testid="scheduled">
       <p class="when-line">
@@ -188,6 +213,25 @@ header {
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+.facts div {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr);
+  gap: 10px;
+}
+.facts dt {
+  font-size: inherit;
+}
+.facts dd {
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1.4;
 }
 .bars {
   display: grid;
