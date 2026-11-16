@@ -54,7 +54,8 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", httpx.Healthz)
+	// Includes the database: a worker that cannot reach it cannot send anything.
+	mux.HandleFunc("GET /healthz", httpx.HealthzWith(pool.Ping))
 	srv := &http.Server{
 		Addr:              config.Env("WORKER_HTTP_ADDR", ":9091"),
 		Handler:           mux,

@@ -86,7 +86,7 @@ yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=
     `smartcampaign_llm_tokens_total{direction=input|output}`, `smartcampaign_segment_outcomes_total{status=ok|needs_clarification|unsupported}`.
   - Mock LLM token harcamaz, token sayaçları yalnız gerçek Claude ile artar.
 - **`GET :8081/healthz`**: api ve veritabanı bağlantısı (200 `{"status":"ok"}` / 503). docker-compose healthcheck'i bunu kullanır.
-  Worker'ın `:9091/healthz`'ı yalnız süreç canlılığıdır.
+  Worker'ın `:9091/healthz`'ı da aynı veritabanı kontrolünü yapar.
 
 **Gönderim kapsamı dışında:** worker tek replica (hız sınırı süreç içi); e-posta gövdesi düz metin; "delivered" bildirimi
 yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız toplam ve adet (ortalama hesaplanır).

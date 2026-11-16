@@ -323,7 +323,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Bedeli: gönderim başına bir ek `UPDATE` (180/sn civarı; bu ölçekte sorun değil).
 
 ## D59 — api `/healthz` veritabanını kontrol eder · `Kesin (kullanıcı kararı)`
-- Api'de `/healthz` artık DB ping'i yapar (2 sn zaman aşımı; 200 `ok` / 503 `unavailable`); `/readyz` aynı kontrolle duruyor. docker-compose'daki api healthcheck'i `/healthz`'a geçti. Worker'ın `/healthz`'ı yalnız süreç canlılığıdır (DB kaybı orada kuyruğun akmaması ve loglanan hatalarla görünür); istenirse aynı kontrol eklenebilir.
+- Api'de `/healthz` artık DB ping'i yapar (2 sn zaman aşımı; 200 `ok` / 503 `unavailable`); `/readyz` aynı kontrolle duruyor. docker-compose'daki api healthcheck'i `/healthz`'a geçti. Worker'ın `:9091/healthz`'ı da aynı `httpx.HealthzWith(pool.Ping)` ile DB'yi kontrol eder (kullanıcı kararı); canlı denemede DB açıkken 200, DB durdurulunca 503 döndü.
 
 ## D60 — Dashboard: sade, polling, hash ile sekme · `Kesin (kullanıcı kararı)`
 - `GET /api/campaigns?limit=` (varsayılan 50, en çok 200; sınır dışı değer kıstırılır, sayı olmayan 400). Her satır: durum, kitle, onaylıysa kanal bazlı ilerleme + `retries`/`rate_limited`. Tek sorguyla tüm onaylı kampanyaların sayımı gelir (kampanya başına sorgu yok).
