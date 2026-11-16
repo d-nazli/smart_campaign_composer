@@ -134,6 +134,38 @@ func TestInfoExposesLimitsAndVariables(t *testing.T) {
 	}
 }
 
+// The screen reads the language list with exactly these lowercase keys; with
+// other keys every language code is undefined and the generated messages never
+// show up ("henüz mesaj yok", approval stays disabled).
+func TestInfoListsTheLanguagesWithTheKeysTheScreenReads(t *testing.T) {
+	srv := newServer(t, mock.New(0))
+	_, body := do(t, "GET", srv.URL+"/api/info", nil)
+	var info struct {
+		Languages       []map[string]string `json:"languages"`
+		DefaultLanguage string              `json:"default_language"`
+		Variables       []struct {
+			Fallbacks map[string]string `json:"fallbacks"`
+		} `json:"variables"`
+	}
+	if err := json.Unmarshal(body, &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.DefaultLanguage != "tr" || len(info.Languages) != 3 {
+		t.Fatalf("info: %s", body)
+	}
+	for i, want := range []string{"tr", "en", "de"} {
+		l := info.Languages[i]
+		if l["code"] != want || l["name"] == "" || l["display"] == "" || len(l) != 3 {
+			t.Fatalf("language %d: %v (want lowercase keys code, name, display)", i, l)
+		}
+	}
+	for _, v := range info.Variables {
+		if len(v.Fallbacks) != 3 {
+			t.Fatalf("fallbacks: %v", v.Fallbacks)
+		}
+	}
+}
+
 func TestCreateAndGetCampaign(t *testing.T) {
 	srv := newServer(t, mock.New(0))
 	resp, body := do(t, "POST", srv.URL+"/api/campaigns", map[string]string{"brief": exampleBrief})

@@ -4,9 +4,9 @@ import "strings"
 
 // Language is one language a campaign is written in.
 type Language struct {
-	Code    string // stored in users.language and campaign_contents.language
-	Name    string // English name, used in the LLM prompt
-	Display string // the language's own name, shown in the UI
+	Code    string `json:"code"`    // stored in users.language and campaign_contents.language
+	Name    string `json:"name"`    // English name, used in the LLM prompt
+	Display string `json:"display"` // the language's own name, shown in the UI
 }
 
 // Languages is the ONE place the supported languages are defined, in display
