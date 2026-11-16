@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Inbox, Plus } from 'lucide-vue-next'
 import type { AppInfo } from '../api/info'
 import { cancelCampaign, listCampaigns } from '../api/campaigns'
 import { fetchSystem, type SystemHealth as SystemState } from '../api/system'
 import type { CampaignSummary } from '../types'
-import { overallTotals } from '../utils/dashboard'
+import { briefTitle, overallTotals } from '../utils/dashboard'
 import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
-import AnimatedNumber from '../components/AnimatedNumber.vue'
-import CampaignCard from '../components/CampaignCard.vue'
+import { formatWhen } from '../utils/schedule'
+import CampaignTable from '../components/CampaignTable.vue'
 import SystemHealth from '../components/SystemHealth.vue'
+import Button from '../components/ui/Button.vue'
+import Modal from '../components/ui/Modal.vue'
+import StatTile from '../components/ui/StatTile.vue'
 
 defineProps<{ info: AppInfo | null }>()
 
@@ -35,17 +39,6 @@ async function refresh() {
   }
 }
 
-async function cancel(id: number) {
-  try {
-    await cancelCampaign(id)
-    error.value = null
-  } catch (e) {
-    // The server refuses when the campaign has already started; the refreshed list shows where it stands.
-    error.value = e instanceof Error ? e.message : String(e)
-  }
-  await refresh()
-}
-
 async function refreshHealth() {
   try {
     system.value = await fetchSystem()
@@ -54,6 +47,40 @@ async function refreshHealth() {
     apiUnreachable.value = true
   }
 }
+
+// Cancelling asks first, in a dialog. The server refuses once a campaign has started;
+// the refreshed list then shows where it stands.
+const toCancel = ref<CampaignSummary | null>(null)
+const cancelling = ref(false)
+// Kept apart from the list error: the next refresh clears that one, and this one must stay readable.
+const cancelError = ref<string | null>(null)
+const askCancel = computed({
+  get: () => toCancel.value !== null,
+  set: (open: boolean) => {
+    if (!open) toCancel.value = null
+  },
+})
+async function confirmCancel() {
+  const c = toCancel.value
+  if (!c || cancelling.value) return
+  cancelling.value = true
+  cancelError.value = null
+  try {
+    await cancelCampaign(c.id)
+  } catch (e) {
+    cancelError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    cancelling.value = false
+    toCancel.value = null
+  }
+  await refresh()
+}
+const cancelText = computed(() => {
+  const c = toCancel.value
+  if (!c) return ''
+  const when = c.scheduled_at ? ` ${formatWhen(c.scheduled_at)} için` : ''
+  return `“${briefTitle(c.brief, 60)}”${when} zamanlanmıştı. İptal edersen hiçbir mesaj gönderilmez.`
+})
 
 onMounted(() => {
   void refresh()
@@ -70,159 +97,112 @@ const totals = computed(() => overallTotals(campaigns.value ?? []))
 const rate = computed(() => ratePerSecond(samples.value))
 // Rate is only meaningful while something is being sent.
 const shownRate = computed(() => (totals.value.pending > 0 ? rate.value : 0))
+
+const newCampaign = () => (window.location.hash = '#/')
 </script>
 
 <template>
   <section class="dash">
-    <div class="top">
+    <div class="head">
       <h2>Kampanyalar</h2>
-      <SystemHealth :system="system" :unreachable="apiUnreachable" :info="info" />
+      <Button variant="primary" :icon="Plus" data-testid="new-campaign" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
     <p v-if="error" class="notice error" role="alert">Liste güncellenemedi ({{ error }}). Gösterilen bilgi eski olabilir.</p>
+    <p v-if="cancelError" class="notice error" role="alert" data-testid="cancel-error">Gönderim iptal edilemedi: {{ cancelError }}</p>
 
-    <div class="summary" data-testid="summary">
-      <div class="stat sent">
-        <span class="label">Toplam gönderilen</span>
-        <strong class="value num" data-testid="total-sent"><AnimatedNumber :value="totals.sent" /></strong>
-        <span class="sub muted small">SMS ve e-posta birlikte</span>
-      </div>
-      <div class="stat failed" :class="{ bad: totals.failed > 0 }">
-        <span class="label">Başarısız</span>
-        <strong class="value num" data-testid="total-failed"><AnimatedNumber :value="totals.failed" /></strong>
-        <span class="sub small">{{ totals.failed > 0 ? 'Nedenleri kartlarda' : 'Sorun yok' }}</span>
-      </div>
-      <div class="stat queued">
-        <span class="label">Kuyrukta</span>
-        <strong class="value num" data-testid="total-pending"><AnimatedNumber :value="totals.pending" /></strong>
-        <span class="sub muted small">gönderilmeyi bekliyor</span>
-      </div>
-      <div class="stat rate">
-        <span class="label">Hız</span>
-        <strong class="value num" data-testid="rate"><AnimatedNumber :value="shownRate" :decimals="1" /><small>/sn</small></strong>
-        <span class="sub muted small">son 10 saniyede</span>
-      </div>
+    <div class="stats" data-testid="summary">
+      <StatTile label="Gönderilen" :value="totals.sent" tone="ok" hint="SMS ve e-posta birlikte" data-testid="total-sent" />
+      <StatTile label="Başarısız" :value="totals.failed" :tone="totals.failed > 0 ? 'danger' : 'default'" :hint="totals.failed > 0 ? 'Nedenleri satırlarda' : 'Sorun yok'" data-testid="total-failed" />
+      <StatTile label="Kuyrukta" :value="totals.pending" hint="Gönderilmeyi bekliyor" data-testid="total-pending" />
+      <StatTile label="Hız" :value="shownRate" :decimals="1" suffix="/sn" hint="Son 10 saniye" data-testid="rate" />
     </div>
 
     <p v-if="campaigns === null && !error" class="muted">Yükleniyor…</p>
-    <div v-else-if="campaigns && campaigns.length === 0" class="empty card" data-testid="empty">
+    <div v-else-if="campaigns && campaigns.length === 0" class="empty" data-testid="empty">
+      <Inbox :size="22" aria-hidden="true" />
       <strong>Henüz kampanya yok</strong>
-      <p class="muted">“Yeni kampanya” sekmesinden bir brief yazarak ilk kampanyanı oluştur.</p>
-      <a href="#/">Yeni kampanya başlat</a>
+      <p class="muted">Bir brief yazarak ilk kampanyayı oluşturun.</p>
+      <Button variant="primary" :icon="Plus" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
-    <div v-if="campaigns && campaigns.length > 0" class="list" data-testid="campaign-table">
-      <CampaignCard v-for="c in campaigns" :key="c.id" :campaign="c" :languages="info?.languages" @cancel="cancel" />
+    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :languages="info?.languages" @cancel="toCancel = $event" />
+
+    <div class="foot">
+      <SystemHealth :system="system" :unreachable="apiUnreachable" :info="info" />
+      <p class="muted small">Sayfa her {{ POLL_MS / 1000 }} saniyede güncellenir.</p>
     </div>
 
-    <p class="muted small foot">
-      Sayfa her {{ POLL_MS / 1000 }} saniyede güncellenir. “Tekrar” yeniden denemeleri, “429” bunların kaçının sağlayıcının hız
-      sınırından geldiğini gösterir.
-    </p>
+    <Modal v-model="askCancel" title="Zamanlanmış gönderim iptal edilsin mi?" :description="cancelText">
+      <template #footer>
+        <Button variant="ghost" :disabled="cancelling" @click="toCancel = null">Vazgeç</Button>
+        <Button variant="danger" :loading="cancelling" data-testid="confirm-cancel" @click="confirmCancel">Gönderimi iptal et</Button>
+      </template>
+    </Modal>
   </section>
 </template>
 
 <style scoped>
 .dash {
-  width: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
+  display: grid;
+  gap: var(--s-5);
 }
-.top {
+.head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px 24px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
+  gap: var(--s-3);
 }
-.top h2 {
+.head h2 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: var(--text-lg);
 }
-.summary {
+/* four figures in one bordered strip, divided by lines */
+.stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 22px;
-}
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--r-md);
   background: var(--surface);
-  min-height: 118px;
-  transition: background var(--t-med) var(--ease), border-color var(--t-med) var(--ease);
 }
-.label {
-  color: var(--muted);
-  font-size: 0.88rem;
-  font-weight: 550;
-}
-.value {
-  font-size: 2.2rem;
-  font-weight: 650;
-  line-height: 1.15;
-  /* a fixed height and tabular digits keep the card from changing size as the number grows */
-  min-height: 1.15em;
-}
-.value small {
-  font-size: 0.95rem;
-  font-weight: 550;
-  color: var(--muted);
-  margin-left: 3px;
-  letter-spacing: 0;
-}
-.stat.sent .value {
-  color: var(--ok);
-}
-.stat.bad {
-  background: var(--error-bg);
-  border-color: var(--error-line);
-}
-.stat.bad .value,
-.stat.bad .label,
-.stat.bad .sub {
-  color: var(--error);
-}
-.stat.failed .sub {
-  color: var(--muted);
-}
-/* Cards keep a comfortable width and the block sits in the middle, also with one or two cards. */
-.list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 560px));
-  justify-content: center;
-  gap: 16px;
-  align-items: start;
+.stats > * + * {
+  border-left: 1px solid var(--border);
 }
 .empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--s-2);
+  padding: var(--s-10) var(--s-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-md);
   text-align: center;
-  padding: 40px 20px;
+  color: var(--muted);
 }
 .empty p {
-  margin: 6px 0 14px;
+  margin: 0 0 var(--s-2);
+}
+.empty strong {
+  color: var(--fg);
 }
 .foot {
-  margin-top: 22px;
-  max-width: 80ch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s-3);
 }
-
+.foot p {
+  margin: 0;
+}
 @media (max-width: 860px) {
-  .summary {
+  .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-@media (max-width: 420px) {
-  .value {
-    font-size: 1.8rem;
+  .stats > :nth-child(3) {
+    border-left: none;
   }
-  .stat {
-    padding: 12px 14px;
-    min-height: 104px;
+  .stats > :nth-child(n + 3) {
+    border-top: 1px solid var(--border);
   }
 }
 </style>

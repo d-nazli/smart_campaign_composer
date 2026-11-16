@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 // @ts-expect-error the project has no Node typings; the test runner runs on Node
 import { readFileSync } from 'node:fs'
 import stepBar from '../components/StepBar.vue?raw'
-import dashboardView from '../views/DashboardView.vue?raw'
 import { scheduleCaption } from './dashboard'
 import { FALLBACK_LANGUAGES, countsLine, sentLine } from './languages'
 import { currentStep } from './steps'
@@ -101,12 +100,5 @@ describe('the active step stands out', () => {
     expect(dot).toMatch(/background:\s*var\(--accent\)/)
     expect(button).toMatch(/font-weight:\s*700/)
     expect(button).toMatch(/background:\s*var\(--accent-soft\)/)
-  })
-})
-
-describe('the dashboard is centred', () => {
-  it('centres its block and its cards', () => {
-    expect(dashboardView).toMatch(/\.dash\s*\{[^}]*margin:\s*0 auto/)
-    expect(dashboardView).toMatch(/\.list\s*\{[^}]*justify-content:\s*center/)
   })
 })

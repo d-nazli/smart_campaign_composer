@@ -435,6 +435,15 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Kart özeti.** Liste her kampanya için kitle cümlesini (`explanation`), kişi sayısını, kitle dillerini ve varsa planlanan zamanı verir. Zamanlanmış kampanya başladıktan sonra da zamanını korur ("Zamanlanan gönderim").
 - **Görünüm.** Salt okunur alan gri, yeniden boyutlanamaz, metin imleçsiz; aktif adım dolu nokta + kalın etiket + renkli hap; dashboard bloğu ve kartları ortalı. Bu kurallar stil dosyasından okunup testle sabitlenir (görsel doğrulama yerine kuralın varlığı).
 
+## D78 — Ortak tasarım sistemi ve yeniden düzenlenen ekranlar · `Kesin (kullanıcı kararı)`
+- **Yön:** Linear/Stripe gibi sade ve ciddi: soğuk gri yapı, tek vurgu rengi (koyu mavi `#2457D6`), durum için yeşil/kehribar/kırmızı, gölge yok (kenar 1 px çizgi), iki köşe yarıçapı (kontrol 6, panel 10), tek yazı ailesi **Geist** (paketlenmiş, CDN yok), sayılar tablo hizalı. Açık ve koyu tema aynı token'lardan (`src/styles/tokens.css`).
+- **Bileşenler** (`components/ui/`): Button, Card, StatTile, Badge, SegmentedControl, DateTimeField, ProgressBar, Modal; ikonlar `lucide-vue-next`. **Tarayıcının çıplak radio, tarih ve açılır kutuları hiçbir yerde kullanılmaz**; bunu `designSystem.test.ts` tüm `.vue` dosyalarını tarayarak korur. DateTimeField kendi takvimi ve saat sütunlarıdır (teklifin son günü sonrası seçilemez, "1 saat sonra / Bu akşam / Yarın" kısayolları var); tarih mantığı `utils/calendar.ts`'te saf fonksiyonlardır.
+- **Tek sütun:** başlık, sihirbaz ve dashboard aynı `.container` (1040 px, `--page` token'ı) içindedir; hiçbir ekran kendi genişliğini koymaz.
+- **Ekranlar:** Onay = Hemen/Zamanla anahtarı + defter satırları (teklif, kitle, alıcılar, diller) ve tek cümlelik not. Gönderim = tek ilerleme çubuğu, tek kanal tablosu, tek dil satırı (aynı sayı bir kez). Dashboard = istatistik şeridi + kampanya **tablosu** (başlık brief'in tek satıra kısaltılmış, baş harfi büyük hâli; tam metin üzerine gelince), iptal onayı **modalda**; dar ekranda satırlar bloklara döner.
+- **Kampanya adı yok** (kullanıcı kararı): tablo başlığı brief'ten türetilir, ayrı bir ad alanı veya türetme kuralı yoktur.
+- **Bileşen testleri:** `@vue/test-utils` + `jsdom` eklendi; her bileşen dosya başına `// @vitest-environment jsdom` ile test edilir, saf mantık Node'da kalır. Backend'e dokunulmadı.
+- **Yan düzeltme:** dashboard'da reddedilen iptalin hata mesajı, hemen ardından gelen liste yenilemesi tarafından siliniyordu; artık ayrı bir alanda kalır.
+
 ---
 
 ## Açık / onay bekleyenler

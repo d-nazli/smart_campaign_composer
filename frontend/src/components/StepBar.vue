@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check } from 'lucide-vue-next'
 import { STEPS, type StepKey } from '../utils/steps'
 
 defineProps<{ current: StepKey; done: StepKey[]; reachable: StepKey[] }>()
@@ -16,9 +17,7 @@ const emit = defineEmits<{ go: [StepKey] }>()
       >
         <button type="button" :disabled="!reachable.includes(s.key) || s.key === current" @click="emit('go', s.key)">
           <span class="dot" aria-hidden="true">
-            <svg v-if="done.includes(s.key)" viewBox="0 0 16 16" width="12" height="12">
-              <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
+            <Check v-if="done.includes(s.key)" :size="12" :stroke-width="3" />
             <template v-else>{{ i + 1 }}</template>
           </span>
           <span class="label">{{ s.label }}</span>
@@ -31,7 +30,7 @@ const emit = defineEmits<{ go: [StepKey] }>()
 
 <style scoped>
 .steps {
-  margin-bottom: 20px;
+  margin-bottom: var(--s-6);
 }
 ol {
   list-style: none;
@@ -53,10 +52,9 @@ li:last-child {
 li:not(:last-child)::after {
   content: '';
   flex: 1;
-  height: 2px;
-  margin: 0 10px;
-  border-radius: 2px;
-  background: linear-gradient(var(--accent), var(--accent)) left / 0% 100% no-repeat, var(--border);
+  height: 1px;
+  margin: 0 var(--s-3);
+  background: linear-gradient(var(--accent), var(--accent)) left / 0% 100% no-repeat, var(--border-strong);
   transition: background-size var(--t-med) var(--ease);
 }
 li.done:not(:last-child)::after {
@@ -65,14 +63,17 @@ li.done:not(:last-child)::after {
 button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px 4px 4px;
-  border: none;
+  gap: var(--s-2);
+  padding: 4px var(--s-2) 4px 4px;
+  border: 1px solid transparent;
   background: none;
   border-radius: 999px;
   color: var(--muted);
-  font-weight: 550;
+  font-weight: 500;
   white-space: nowrap;
+}
+button:hover:not(:disabled) {
+  background: none;
 }
 button:disabled {
   opacity: 1;
@@ -81,14 +82,14 @@ button:disabled {
 .dot {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  border: 2px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--surface);
-  font-family: var(--font-num);
-  font-size: 0.78rem;
-  font-weight: 650;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
 .done .dot {
@@ -109,23 +110,20 @@ button:disabled {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .current button {
   color: var(--fg);
   font-weight: 700;
   background: var(--accent-soft);
-  padding-right: 14px;
+  padding-right: var(--s-3);
 }
 .current .label {
   color: var(--accent);
 }
 /* steps that cannot be opened yet fade back */
 .future {
-  opacity: 0.45;
-}
-.done:not(.current) button:hover .dot {
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  opacity: 0.5;
 }
 
 @media (max-width: 560px) {
@@ -134,7 +132,7 @@ button:disabled {
     display: none;
   }
   li:not(:last-child)::after {
-    margin: 0 6px;
+    margin: 0 var(--s-2);
   }
 }
 </style>

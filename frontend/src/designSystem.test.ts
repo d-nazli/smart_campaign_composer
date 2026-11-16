@@ -1,0 +1,99 @@
+import { describe, expect, it } from 'vitest'
+// @ts-expect-error the project has no Node typings; the test runner runs on Node
+import { readFileSync } from 'node:fs'
+
+// These tests guard the design system itself, not one screen: they read the sources.
+const sources = import.meta.glob('./**/*.vue', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+const read = (file: string): string => readFileSync(new URL(file, import.meta.url), 'utf-8')
+const tokens = read('./styles/tokens.css')
+const styles = read('./style.css')
+
+describe('no browser-styled controls', () => {
+  // The browser's own radio buttons, date boxes and drop-downs are the part of a page that looks unfinished.
+  const raw = /<input[^>]*type=["']?(radio|checkbox|date|datetime-local|time|month|week|range|color)\b/i
+  const select = /<select[\s>]/i
+
+  it('none of the screens uses one', () => {
+    const offenders = Object.entries(sources)
+      .filter(([, src]) => raw.test(src) || select.test(src))
+      .map(([file]) => file)
+    expect(offenders).toEqual([])
+  })
+
+  it('looked at the components and the screens (not an empty list)', () => {
+    const files = Object.keys(sources)
+    expect(files.length).toBeGreaterThan(20)
+    expect(files).toEqual(expect.arrayContaining(['./components/ui/DateTimeField.vue', './views/DashboardView.vue', './App.vue']))
+  })
+})
+
+describe('the shared building blocks exist', () => {
+  it('has all eight', () => {
+    for (const name of ['Button', 'Card', 'StatTile', 'Badge', 'SegmentedControl', 'DateTimeField', 'ProgressBar', 'Modal']) {
+      expect(Object.keys(sources), name).toContain(`./components/ui/${name}.vue`)
+    }
+  })
+})
+
+describe('the screens are built from them', () => {
+  it('Dashboard uses the table, stat tiles, a button and a modal', () => {
+    const dash = sources['./views/DashboardView.vue']
+    for (const part of ['CampaignTable', 'StatTile', 'ui/Button.vue', 'ui/Modal.vue']) expect(dash, part).toContain(part)
+  })
+  it('Approval uses the toggle and the date-time field', () => {
+    const a = sources['./components/ApprovalCard.vue']
+    for (const part of ['SegmentedControl', 'DateTimeField', 'ui/Card.vue']) expect(a, part).toContain(part)
+  })
+  it('the wizard uses Card, Button, Badge and Modal', () => {
+    const c = sources['./views/ComposeView.vue']
+    for (const part of ['ui/Card.vue', 'ui/Button.vue', 'ui/Badge.vue', 'ui/Modal.vue']) expect(c, part).toContain(part)
+  })
+})
+
+describe('one column for every page', () => {
+  it('the header and the page content share the same container', () => {
+    const app = sources['./App.vue']
+    expect(app).toMatch(/class="container topbar-in"/)
+    expect(app).toMatch(/<main class="container content"/)
+  })
+  it('the container takes its width from one token', () => {
+    expect(tokens).toMatch(/--page:\s*1040px/)
+    expect(styles).toMatch(/\.container\s*\{[^}]*max-width:\s*var\(--page\)[^}]*margin:\s*0 auto/s)
+  })
+  it('no screen sets a width of its own', () => {
+    for (const file of ['./views/DashboardView.vue', './views/ComposeView.vue']) {
+      expect(sources[file], file).not.toMatch(/^\s*max-width:\s*\d+px/m) // a media query is fine, a width rule is not
+    }
+  })
+})
+
+describe('tokens', () => {
+  it('has a light and a dark palette with one accent', () => {
+    expect(tokens).toMatch(/--accent:\s*#2457d6/i)
+    expect(tokens).toMatch(/prefers-color-scheme:\s*dark/)
+    expect(tokens).toMatch(/--bg:[^;]+;[\s\S]*prefers-color-scheme:\s*dark[\s\S]*--bg:/)
+  })
+  it('sets the type scale and the space scale', () => {
+    for (const t of ['--text-xs', '--text-sm', '--text-base', '--text-md', '--text-lg', '--text-xl', '--s-1', '--s-4', '--s-8', '--r-sm', '--r-md']) {
+      expect(tokens, t).toContain(t + ':')
+    }
+  })
+  it('uses Geist for all text', () => {
+    expect(tokens).toMatch(/--font:\s*'Geist Variable'/)
+    expect(styles).toMatch(/font-family:\s*var\(--font\)/)
+  })
+  it('does not use shadows on panels (lines are the edge)', () => {
+    expect(styles).not.toMatch(/\.card\s*\{[^}]*box-shadow/)
+    const card = sources['./components/ui/Card.vue']
+    expect(card).not.toMatch(/box-shadow/)
+  })
+})
+
+describe('motion and accessibility floor', () => {
+  it('respects reduced motion', () => {
+    expect(styles).toMatch(/prefers-reduced-motion:\s*reduce/)
+  })
+  it('keeps a visible keyboard focus', () => {
+    expect(styles).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\)/)
+  })
+})

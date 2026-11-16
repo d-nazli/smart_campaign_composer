@@ -55,7 +55,7 @@ const emit = defineEmits<{ 'update:modelValue': [LanguageCode] }>()
   align-items: center;
   gap: 8px;
   padding: 7px 14px;
-  border-radius: 999px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--muted);

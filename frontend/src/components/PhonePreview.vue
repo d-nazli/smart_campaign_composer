@@ -32,14 +32,14 @@ const shown = computed(() => fillSample(props.text))
   max-width: 270px;
   padding: 9px;
   border-radius: 34px;
-  background: #1a1830;
+  background: #15181e;
   box-shadow: var(--shadow-device);
 }
 .screen {
   min-height: 300px;
   border-radius: 26px;
-  background: #f3f2f7;
-  color: #1a1830;
+  background: #f1f2f4;
+  color: #15181e;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -56,7 +56,7 @@ const shown = computed(() => fillSample(props.text))
   width: 64px;
   height: 14px;
   border-radius: 14px;
-  background: #1a1830;
+  background: #15181e;
 }
 .thread {
   padding: 18px 12px;
@@ -64,7 +64,7 @@ const shown = computed(() => fillSample(props.text))
 .who {
   text-align: center;
   font-size: 0.7rem;
-  color: #65637a;
+  color: #5e6573;
   margin-bottom: 12px;
   font-weight: 600;
 }
@@ -73,7 +73,7 @@ const shown = computed(() => fillSample(props.text))
   max-width: 92%;
   padding: 9px 13px;
   border-radius: 18px 18px 18px 5px;
-  background: #e1dfeb;
+  background: #dcdfe4;
   font-size: 0.88rem;
   line-height: 1.4;
   white-space: pre-wrap;
@@ -81,13 +81,13 @@ const shown = computed(() => fillSample(props.text))
 }
 .bubble.empty {
   background: transparent;
-  border: 1px dashed #b3b0c8;
-  color: #65637a;
+  border: 1px dashed #aeb4be;
+  color: #5e6573;
 }
 .time {
   margin: 4px 0 0 6px;
   font-size: 0.68rem;
-  color: #65637a;
+  color: #5e6573;
 }
 .cursor {
   display: inline-block;

@@ -112,3 +112,98 @@ export function deliveryTotals(d: DeliveryProgress | undefined): Totals {
   }
   return t
 }
+
+/**
+ * The brief as a table title: one line, first letter capital (Turkish rules: "i" becomes "İ"),
+ * cut at a word and ended with "…" when it is longer than `max`. The full text goes in the tooltip.
+ */
+export function briefTitle(brief: string, max: number): string {
+  const short = briefPreview(brief, max)
+  if (short === '') return short
+  return short.charAt(0).toLocaleUpperCase('tr-TR') + short.slice(1)
+}
+
+export type BadgeTone = 'neutral' | 'accent' | 'ok' | 'warn' | 'danger'
+
+/** The badge of a table row: a short word and its colour. Unfinished campaigns are all just "Taslak". */
+export function statusBadge(c: Pick<CampaignSummary, 'status' | 'segment_status'>): { text: string; tone: BadgeTone } {
+  switch (c.status) {
+    case 'completed':
+      return { text: 'Tamamlandı', tone: 'ok' }
+    case 'sending':
+      return { text: 'Gönderiliyor', tone: 'accent' }
+    case 'approved':
+      return { text: 'Onaylandı', tone: 'accent' }
+    case 'scheduled':
+      return { text: 'Zamanlandı', tone: 'accent' }
+    case 'cancelled':
+      return { text: 'İptal edildi', tone: 'neutral' }
+    case 'failed':
+      return { text: 'Başlatılamadı', tone: 'danger' }
+    case 'segment_ready':
+    case 'content_ready':
+      return { text: 'Taslak', tone: 'neutral' }
+  }
+  if (c.segment_status === 'unsupported') return { text: 'Desteklenmiyor', tone: 'warn' }
+  if (c.segment_status === 'needs_clarification') return { text: 'Soru bekliyor', tone: 'warn' }
+  return { text: 'Taslak', tone: 'neutral' }
+}
+
+export interface RowProgress {
+  total: number
+  sent: number
+  failed: number
+  /** Skipped (consent withdrawn) counts as handled but not as sent. */
+  skipped: number
+  pending: number
+  handled: number
+}
+
+/** Both channels of a campaign added up, for the bar of its row (all zero before sending). */
+export function rowProgress(d: DeliveryProgress | undefined): RowProgress {
+  const t = deliveryTotals(d)
+  return { total: t.total, sent: t.sent, failed: t.failed, skipped: t.skipped, pending: t.pending, handled: t.sent + t.failed + t.skipped }
+}
+
+/** The tooltip of a row's progress: the details the table has no column for. */
+export function progressTitle(d: DeliveryProgress | undefined): string {
+  const t = deliveryTotals(d)
+  if (t.total === 0) return ''
+  const parts = [`${t.sent} gönderildi`, `${t.failed} başarısız`, `${t.skipped} atlandı`, `${t.pending} bekliyor`]
+  if (t.retries > 0) parts.push(`${t.retries} tekrar`, `${t.rateLimited} adet 429`)
+  return parts.join(', ')
+}
+
+export interface LanguageCell {
+  code: string
+  /** "171", or "120/171" while some still wait; the audience size before sending. */
+  text: string
+}
+
+/**
+ * What the languages column shows: sent per language once sending has begun ("120/171" until it is
+ * done), the audience per language before that. Languages nobody gets are left out.
+ */
+export function languageCells(
+  c: Pick<CampaignSummary, 'delivery' | 'audience_languages'>,
+  order: { code: string }[],
+): LanguageCell[] {
+  const sent = c.delivery?.languages
+  if (sent) {
+    return order
+      .filter((l) => (sent[l.code]?.total ?? 0) > 0)
+      .map((l) => {
+        const p = sent[l.code]
+        return { code: l.code.toUpperCase(), text: c.delivery!.done || p.sent === p.total ? String(p.sent) : `${p.sent}/${p.total}` }
+      })
+  }
+  const audience = c.audience_languages
+  if (!audience) return []
+  return order.filter((l) => (audience[l.code] ?? 0) > 0).map((l) => ({ code: l.code.toUpperCase(), text: String(audience[l.code]) }))
+}
+
+/** A sentence that starts with a capital letter (Turkish rules: "i" becomes "İ"). Everything else stays as written. */
+export function sentenceCase(text: string): string {
+  const t = text.trim()
+  return t === '' ? t : t.charAt(0).toLocaleUpperCase('tr-TR') + t.slice(1)
+}

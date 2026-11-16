@@ -44,29 +44,29 @@ const body = computed(() => fillSample(props.body))
   width: 100%;
   border-radius: 14px;
   background: #ffffff;
-  color: #1a1830;
+  color: #15181e;
   box-shadow: var(--shadow-device);
   overflow: hidden;
-  border: 1px solid #e1dfeb;
+  border: 1px solid #dcdfe4;
 }
 .chrome {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 9px 12px;
-  background: #eceaf3;
-  border-bottom: 1px solid #e1dfeb;
+  background: #eceef1;
+  border-bottom: 1px solid #dcdfe4;
 }
 .d {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #b3b0c8;
+  background: #aeb4be;
 }
 .title {
   margin-left: 8px;
   font-size: 0.74rem;
-  color: #65637a;
+  color: #5e6573;
   font-weight: 600;
 }
 .msg {
@@ -86,7 +86,7 @@ const body = computed(() => fillSample(props.body))
   align-items: center;
   padding-bottom: 12px;
   margin-bottom: 12px;
-  border-bottom: 1px solid #e1dfeb;
+  border-bottom: 1px solid #dcdfe4;
   font-size: 0.84rem;
 }
 .avatar {
@@ -96,13 +96,13 @@ const body = computed(() => fillSample(props.body))
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  background: #a8307f;
+  background: #7b4aa5;
   color: #fff;
   font-weight: 650;
 }
 .addr,
 .to {
-  color: #65637a;
+  color: #5e6573;
 }
 .to {
   font-size: 0.78rem;
@@ -116,7 +116,7 @@ const body = computed(() => fillSample(props.body))
   overflow: auto;
 }
 .empty {
-  color: #8a88a0;
+  color: #8b919c;
   font-weight: 400;
 }
 .cursor {

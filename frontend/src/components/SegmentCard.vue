@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed } from 'vue'
+import { AlertCircle, HelpCircle } from 'lucide-vue-next'
 import type { LanguageInfo, Segment } from '../types'
-import { funnel, share } from '../utils/funnel'
+import { funnel } from '../utils/funnel'
 import { describeOffer } from '../utils/formatOffer'
+import { sentenceCase } from '../utils/dashboard'
 import { describeCondition } from '../utils/formatRule'
 import { FALLBACK_LANGUAGES, languageSummary } from '../utils/languages'
-import AnimatedNumber from './AnimatedNumber.vue'
+import Badge from './ui/Badge.vue'
+import Button from './ui/Button.vue'
+import Card from './ui/Card.vue'
+import ProgressBar from './ui/ProgressBar.vue'
+import StatTile from './ui/StatTile.vue'
 
 const props = defineProps<{ segment: Segment; busy?: boolean; languages?: LanguageInfo[] }>()
 const emit = defineEmits<{ (e: 'send-to-all'): void }>()
@@ -15,256 +21,219 @@ const joiner = computed(() => (props.segment.match === 'any' ? 'veya' : 've'))
 const offerText = computed(() => describeOffer(props.segment.offer))
 const f = computed(() => (props.segment.audience ? funnel(props.segment.audience) : null))
 const spoken = computed(() => languageSummary(props.segment.languages, props.languages ?? FALLBACK_LANGUAGES))
-
-// Bars start empty and grow to their share once the card is on screen.
-const grown = ref(false)
-onMounted(() => requestAnimationFrame(() => (grown.value = true)))
-const w = (n: number) => (grown.value && f.value ? `${share(n, f.value.matched)}%` : '0%')
+const hasOffer = computed(() => !!props.segment.offer && props.segment.offer.kind !== 'none')
 </script>
 
 <template>
-  <section id="step-audience" class="card segment" :class="segment.status" aria-live="polite">
-    <h2>Kitle</h2>
-
+  <Card id="step-audience" title="Kitle" aria-live="polite">
     <template v-if="segment.status === 'ok' && segment.audience && f">
-      <p class="explanation">{{ segment.explanation }}</p>
+      <p class="explanation">{{ sentenceCase(segment.explanation) }}</p>
 
-      <ul class="chips" aria-label="Kural koşulları">
+      <ul class="conds" aria-label="Kural koşulları">
         <template v-for="(c, i) in chips" :key="c">
           <li v-if="i > 0" class="joiner" aria-hidden="true">{{ joiner }}</li>
-          <li class="chip">{{ c }}</li>
+          <li><Badge>{{ c }}</Badge></li>
         </template>
       </ul>
-      <p class="offer" data-testid="offer"><span class="chip offer-chip">Teklif</span> {{ offerText }}</p>
 
-      <div class="funnel">
-        <div class="row matched">
-          <div class="meta">
-            <span class="label">Eşleşen kişi</span>
-            <strong class="value num" data-testid="matched"><AnimatedNumber :value="f.matched" from-zero /></strong>
-          </div>
-          <div class="track"><span class="bar" :style="{ width: grown ? '100%' : '0%' }" /></div>
-        </div>
-
-        <div class="split">
-          <div class="row sms">
-            <div class="meta">
-              <span class="label">SMS ile ulaşılabilir</span>
-              <strong class="value num" data-testid="sms-reachable"><AnimatedNumber :value="f.sms" from-zero /></strong>
-            </div>
-            <div class="track"><span class="bar" :style="{ width: w(f.sms) }" /></div>
-          </div>
-          <div class="row email">
-            <div class="meta">
-              <span class="label">E-posta ile ulaşılabilir</span>
-              <strong class="value num" data-testid="email-reachable"><AnimatedNumber :value="f.email" from-zero /></strong>
-            </div>
-            <div class="track"><span class="bar" :style="{ width: w(f.email) }" /></div>
-          </div>
-          <div class="row none" :class="{ zero: f.unreachable === 0 }">
-            <div class="meta">
-              <span class="label">Hiçbir kanaldan ulaşılamayan</span>
-              <strong class="value num" data-testid="unreachable"><AnimatedNumber :value="f.unreachable" from-zero /></strong>
-            </div>
-            <div class="track"><span class="bar" :style="{ width: w(f.unreachable) }" /></div>
-          </div>
-        </div>
+      <div class="stats">
+        <StatTile label="Eşleşen kişi" :value="f.matched" :hint="f.unreachable > 0 ? `${f.unreachable} kişiye ulaşılamıyor` : 'Hepsine ulaşılabiliyor'" data-testid="matched-tile" />
+        <StatTile label="SMS ile ulaşılabilir" :value="f.sms" />
+        <StatTile label="E-posta ile ulaşılabilir" :value="f.email" />
       </div>
+      <!-- the same three numbers for tests and screen readers; the tiles above are the visual copy -->
+      <p class="sr-only">
+        Eşleşen <span data-testid="matched">{{ f.matched }}</span>, SMS <span data-testid="sms-reachable">{{ f.sms }}</span>, e-posta
+        <span data-testid="email-reachable">{{ f.email }}</span>, ulaşılamayan <span data-testid="unreachable">{{ f.unreachable }}</span>.
+      </p>
 
-      <p class="why muted small">
-        <template v-if="f.unreachable > 0">
-          Ulaşılamayanlar o kanallar için iletişim izni vermemiş ya da kayıtlı telefonu / e-postası yok; onlara mesaj gönderilmez.
-        </template>
-        <template v-else>Eşleşen herkese en az bir kanaldan ulaşılabiliyor.</template>
-        <template v-if="f.smsOnly > 0 || f.emailOnly > 0">
-          {{ f.both }} kişiye iki kanaldan, {{ f.smsOnly }} kişiye yalnız SMS, {{ f.emailOnly }} kişiye yalnız e-posta ile ulaşılır.
-        </template>
+      <ProgressBar
+        :segments="[
+          { value: f.both, tone: 'accent' },
+          { value: f.smsOnly, tone: 'sms' },
+          { value: f.emailOnly, tone: 'email' },
+        ]"
+        :max="f.matched"
+        label="Kanallara göre ulaşılabilirlik"
+        size="sm"
+      />
+      <p class="legend small muted">
+        <span><i class="mark both" aria-hidden="true" />İki kanaldan {{ f.both }}</span>
+        <span><i class="mark sms" aria-hidden="true" />Yalnız SMS {{ f.smsOnly }}</span>
+        <span><i class="mark email" aria-hidden="true" />Yalnız e-posta {{ f.emailOnly }}</span>
+        <span v-if="f.unreachable > 0"><i class="mark none" aria-hidden="true" />Ulaşılamayan {{ f.unreachable }}</span>
       </p>
-      <p v-if="spoken.length" class="langs" data-testid="audience-languages">
-        <span class="label">Mesaj dili</span>
-        <span v-for="l in spoken" :key="l.code" class="chip lang-chip">{{ l.display }} <strong class="num">{{ l.count }}</strong></span>
-      </p>
+
+      <dl class="ledger">
+        <div v-if="hasOffer" class="ledger__row" data-testid="offer">
+          <dt>Teklif</dt>
+          <dd>{{ offerText }}</dd>
+        </div>
+        <div v-if="spoken.length" class="ledger__row" data-testid="audience-languages">
+          <dt>Mesaj dili</dt>
+          <dd class="langs"><Badge v-for="l in spoken" :key="l.code">{{ l.display }} <b class="num">{{ l.count }}</b></Badge></dd>
+        </div>
+      </dl>
+
+      <p v-if="f.unreachable > 0" class="hint">İzin vermeyen ya da telefonu / e-postası olmayan kişilere mesaj gönderilmez.</p>
       <p v-if="segment.audience.matched === 0" class="notice warn">Bu kurala uyan kimse yok. Brief'i değiştirmeyi deneyin.</p>
     </template>
 
     <template v-else-if="segment.status === 'needs_clarification'">
-      <div class="box clarify" role="status">
-        <strong>Biraz daha bilgi lazım</strong>
-        <p>{{ segment.question }}</p>
-        <p v-if="segment.offer && segment.offer.kind !== 'none'" class="offer" data-testid="offer">
-          <span class="chip offer-chip">Anladığım teklif</span> {{ offerText }}
-        </p>
+      <div class="box" role="status">
+        <p class="box__title"><HelpCircle :size="16" aria-hidden="true" />Biraz daha bilgi lazım</p>
+        <p class="box__text">{{ segment.question }}</p>
+        <p v-if="hasOffer" class="understood" data-testid="offer"><Badge tone="warn">Anladığım teklif</Badge> {{ offerText }}</p>
         <div v-if="segment.suggestion === 'all_customers'" class="actions">
-          <button class="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</button>
-          <span class="small">İzin vermemiş olanlara yine de gönderilmez.</span>
+          <Button variant="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</Button>
+          <span class="hint">İzin vermemiş olanlara yine de gönderilmez.</span>
         </div>
-        <p class="small">Ya da brief'i kime göndereceğinizi yazarak güncelleyip tekrar deneyin.</p>
+        <p class="hint">Ya da brief'i kime göndereceğinizi yazarak güncelleyip tekrar deneyin.</p>
       </div>
     </template>
 
     <template v-else-if="segment.status === 'unsupported'">
-      <div class="box unsupported" role="alert">
-        <strong>Bu brief desteklenmiyor</strong>
-        <p>{{ segment.explanation }}</p>
+      <div class="box box--bad" role="alert">
+        <p class="box__title"><AlertCircle :size="16" aria-hidden="true" />Bu brief desteklenmiyor</p>
+        <p class="box__text">{{ segment.explanation }}</p>
       </div>
     </template>
-  </section>
+  </Card>
 </template>
 
 <style scoped>
 .explanation {
-  margin: 0 0 12px;
-  font-size: 1.02rem;
-  font-weight: 600;
+  margin: 0 0 var(--s-3);
+  font-size: var(--text-md);
+  font-weight: 500;
   max-width: 70ch;
 }
-.chips {
+.conds {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-2);
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0 0 var(--s-5);
   padding: 0;
-}
-.chip {
-  display: inline-block;
-  padding: 3px 12px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--info);
-  font-size: 0.86rem;
-  font-weight: 550;
 }
 .joiner {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
-.offer {
-  margin: 0 0 20px;
-}
-.offer-chip {
-  background: var(--warn-bg);
-  color: var(--warn);
-  margin-right: 4px;
-}
-
-.funnel {
+/* three figures in one bordered strip, divided by lines */
+.stats {
   display: grid;
-  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--s-4);
 }
-.row .meta {
+.stats > * + * {
+  border-left: 1px solid var(--border);
+}
+.legend {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 5px;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-5);
+  margin: var(--s-2) 0 var(--s-5);
 }
-.label {
-  font-size: 0.9rem;
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+.mark.both {
+  background: var(--accent);
+}
+.mark.sms {
+  background: var(--sms);
+}
+.mark.email {
+  background: var(--email);
+}
+.ledger {
+  margin: 0;
+}
+.ledger__row {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--border);
+}
+dt {
   color: var(--muted);
+}
+dd {
+  margin: 0;
 }
 .langs {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 14px 0 0;
+  gap: var(--s-2);
 }
-.lang-chip {
-  background: var(--accent-soft);
+.langs b {
+  color: var(--fg);
+  font-weight: 600;
 }
-.value {
-  font-size: 1.6rem;
-  font-weight: 650;
-  line-height: 1.1;
-  min-width: 4ch;
-  text-align: right;
-}
-.track {
-  height: 12px;
-  border-radius: 12px;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.bar {
-  display: block;
-  height: 100%;
-  border-radius: 12px;
-  background: var(--fg);
-  transition: width 300ms var(--ease);
-}
-.matched .value {
-  font-size: 2.3rem;
-}
-.sms .bar {
-  background: var(--sms);
-}
-.sms .value {
-  color: var(--sms);
-}
-.email .bar {
-  background: var(--email);
-}
-.email .value {
-  color: var(--email);
-}
-.none .bar {
-  background: repeating-linear-gradient(135deg, var(--muted) 0 4px, transparent 4px 8px);
-  opacity: 0.55;
-}
-.none .value {
+.hint {
+  margin: var(--s-3) 0 0;
   color: var(--muted);
+  font-size: var(--text-sm);
 }
-/* the split rows hang off the matched bar like branches */
-.split {
-  display: grid;
-  gap: 14px;
-  margin-left: 14px;
-  padding-left: 18px;
-  border-left: 2px solid var(--border);
-}
-.why {
-  margin: 14px 0 0;
-  max-width: 75ch;
-}
-
 .box {
-  border-radius: 12px;
-  padding: 14px 16px;
-  border: 1px solid;
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
 }
-.box p {
-  margin: 6px 0 0;
-}
-.box .actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-.clarify {
-  background: var(--warn-bg);
-  border-color: var(--warn-line);
-  color: var(--warn);
-}
-.unsupported {
-  background: var(--error-bg);
+.box--bad {
   border-color: var(--error-line);
+  background: var(--error-bg);
   color: var(--error);
 }
-
-@media (max-width: 560px) {
-  .value {
-    font-size: 1.35rem;
+.box__title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  font-weight: 600;
+}
+.box__text {
+  margin: var(--s-2) 0 0;
+}
+.understood {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: var(--s-3) 0 0;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+}
+@media (max-width: 640px) {
+  .stats {
+    grid-template-columns: 1fr;
   }
-  .matched .value {
-    font-size: 1.9rem;
+  .stats > * + * {
+    border-left: none;
+    border-top: 1px solid var(--border);
   }
-  .split {
-    margin-left: 6px;
-    padding-left: 12px;
+  .ledger__row {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }
 </style>

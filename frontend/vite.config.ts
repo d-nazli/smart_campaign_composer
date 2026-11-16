@@ -18,6 +18,8 @@ export default defineConfig({
     },
   },
   test: {
+    // Plain logic runs in Node; a component test opts in with `// @vitest-environment jsdom`.
     environment: 'node',
+    setupFiles: ['./src/test/setup.ts'],
   },
 })

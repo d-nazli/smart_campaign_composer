@@ -1,0 +1,123 @@
+/*
+ * Design tokens. Everything the interface looks like comes from here.
+ *
+ * Palette: cool greys for structure, ONE accent (cobalt) for what can be acted on,
+ * and meaning colours (green / amber / red) used only for state. SMS and e-mail keep
+ * a muted hue of their own, but only as small marks (a dot, a bar), never as fills.
+ * Type: one family (Geist), numbers always tabular.
+ * Shape: 1px lines instead of shadows; two radii (controls, panels).
+ */
+:root {
+  /* surfaces */
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --fg: #15181e;
+  --muted: #5e6573;
+  --border: #e3e6eb;
+  --border-strong: #cbd0d8;
+
+  /* accent */
+  --accent: #2457d6;
+  --accent-hover: #1c47b4;
+  --accent-fg: #ffffff;
+  --accent-soft: #e8eefc;
+
+  /* channels */
+  --sms: #0e7c70;
+  --sms-soft: #e3f3f0;
+  --email: #7b4aa5;
+  --email-soft: #f0e9f6;
+
+  /* state */
+  --ok: #1b7f4b;
+  --ok-bg: #e4f4eb;
+  --ok-line: #a9d9bf;
+  --warn: #8f5a00;
+  --warn-bg: #fff4db;
+  --warn-line: #e8c46a;
+  --error: #b3261e;
+  --error-bg: #fdecea;
+  --error-line: #f0a9a3;
+  --info: var(--accent);
+  --info-bg: var(--accent-soft);
+
+  /* the model badge */
+  --mock: var(--warn);
+  --mock-bg: var(--warn-bg);
+  --claude: var(--ok);
+  --claude-bg: var(--ok-bg);
+
+  /* type */
+  --font: 'Geist Variable', 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-num: var(--font);
+  --text-xs: 0.75rem; /* 12 */
+  --text-sm: 0.8125rem; /* 13 */
+  --text-base: 0.875rem; /* 14 */
+  --text-md: 1rem; /* 16 */
+  --text-lg: 1.25rem; /* 20 */
+  --text-xl: 1.75rem; /* 28 */
+  --leading: 1.5;
+
+  /* space: a 4px scale */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  /* shape */
+  --r-sm: 6px; /* controls, badges */
+  --r-md: 10px; /* panels, modal */
+  --shadow-pop: 0 10px 30px -8px rgba(21, 24, 30, 0.22), 0 2px 6px rgba(21, 24, 30, 0.08);
+  --shadow-device: 0 10px 30px -14px rgba(21, 24, 30, 0.3);
+
+  /* layout: every page uses this one column */
+  --page: 1040px;
+  --header-h: 56px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --t-fast: 140ms;
+  --t-med: 220ms;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1015;
+    --surface: #151820;
+    --surface-2: #1c2029;
+    --fg: #e8eaee;
+    --muted: #98a0ae;
+    --border: #262b36;
+    --border-strong: #363c4a;
+
+    --accent: #6f95f5;
+    --accent-hover: #8aa9f7;
+    --accent-fg: #0b1020;
+    --accent-soft: #1b2340;
+
+    --sms: #4fc9ba;
+    --sms-soft: #11302c;
+    --email: #c39be6;
+    --email-soft: #2b2038;
+
+    --ok: #6fd69a;
+    --ok-bg: #12301f;
+    --ok-line: #2f6a4a;
+    --warn: #f0c25a;
+    --warn-bg: #33270c;
+    --warn-line: #8a6a1c;
+    --error: #ff9a8f;
+    --error-bg: #3a1613;
+    --error-line: #8d3f38;
+
+    --shadow-pop: 0 14px 34px -8px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.4);
+    --shadow-device: 0 10px 30px -14px rgba(0, 0, 0, 0.7);
+  }
+}

@@ -1,85 +1,11 @@
-/* Design tokens. Channel colours carry meaning everywhere: SMS is teal, e-mail is plum. */
-:root {
-  --bg: #f4f3f8;
-  --surface: #ffffff;
-  --surface-2: #eceaf3;
-  --fg: #1a1830;
-  --muted: #65637a;
-  --border: #e1dfeb;
-  --accent: #4435c8;
-  --accent-fg: #ffffff;
-  --accent-soft: #e9e6fb;
-
-  --sms: #0f8f83;
-  --sms-soft: #dcf3f0;
-  --email: #a8307f;
-  --email-soft: #f8e1f0;
-
-  --ok: #17784a;
-  --ok-bg: #ddf3e7;
-  --warn: #8c5a00;
-  --warn-bg: #fff1cc;
-  --warn-line: #e8b93c;
-  --error: #b02a1f;
-  --error-bg: #fde6e3;
-  --error-line: #e5877e;
-  --info: #3a2fa8;
-  --info-bg: #e9e6fb;
-
-  --mock: #8c5a00;
-  --mock-bg: #fff1cc;
-  --claude: #17784a;
-  --claude-bg: #ddf3e7;
-
-  --shadow-device: 0 18px 40px -18px rgba(26, 24, 48, 0.35), 0 2px 6px rgba(26, 24, 48, 0.08);
-  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --t-fast: 200ms;
-  --t-med: 300ms;
-
-  --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Roboto, sans-serif;
-  --font-num: 'Segoe UI Variable Display', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Roboto, sans-serif;
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12111c;
-    --surface: #1b1a28;
-    --surface-2: #25243a;
-    --fg: #ecebf5;
-    --muted: #a09eb8;
-    --border: #2f2d45;
-    --accent: #8f84ff;
-    --accent-fg: #0f0c26;
-    --accent-soft: #272352;
-
-    --sms: #4fd1c1;
-    --sms-soft: #11332f;
-    --email: #f08acb;
-    --email-soft: #3a1a31;
-
-    --ok: #74dca1;
-    --ok-bg: #12301f;
-    --warn: #f2c35c;
-    --warn-bg: #36290d;
-    --warn-line: #8a6a1c;
-    --error: #ff9a8f;
-    --error-bg: #3a1613;
-    --error-line: #8d3f38;
-    --info: #b3abff;
-    --info-bg: #25214f;
-
-    --mock: #f2c35c;
-    --mock-bg: #36290d;
-    --claude: #74dca1;
-    --claude-bg: #12301f;
-
-    --shadow-device: 0 18px 40px -18px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.4);
-  }
-}
+@import './styles/tokens.css';
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -87,95 +13,118 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font);
-  line-height: 1.5;
+  font-size: var(--text-base);
+  line-height: var(--leading);
+  font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- shell ------------------------------------------------------------ */
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+h2 {
+  font-size: var(--text-md);
+  margin: 0 0 var(--s-3);
+}
+
+a {
+  color: var(--accent);
+}
+
+/* ---- the one column ------------------------------------------------------- */
+/* Header, wizard and dashboard all sit in this column: same width on every page. */
+.container {
+  width: 100%;
+  max-width: var(--page);
+  margin: 0 auto;
+  padding-inline: var(--s-6);
+}
+.content {
+  padding-block: var(--s-8) 80px;
+}
+
+/* ---- header ------------------------------------------------------------------ */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 24px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
+}
+.topbar-in {
+  height: var(--header-h);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--s-4);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-family: var(--font-num);
-  font-weight: 650;
-  font-size: 1.05rem;
-  letter-spacing: -0.01em;
+  gap: var(--s-2);
+  font-size: var(--text-base);
+  font-weight: 600;
   margin: 0;
-  flex: 1;
   min-width: 0;
 }
 .brand-mark {
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
 }
 .brand span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tabs {
+.nav {
   display: flex;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface-2);
-  border-radius: 999px;
+  gap: var(--s-1);
+  height: 100%;
 }
-.tabs a {
-  padding: 5px 14px;
-  border-radius: 999px;
+.nav a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--s-3);
   color: var(--muted);
   text-decoration: none;
-  font-size: 0.92rem;
-  font-weight: 550;
-  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  font-weight: 500;
+  transition: color var(--t-fast) var(--ease);
 }
-.tabs a:hover {
+.nav a:hover {
   color: var(--fg);
 }
-.tabs a[aria-current='page'] {
-  background: var(--surface);
+.nav a[aria-current='page'] {
   color: var(--fg);
-  box-shadow: 0 1px 2px rgba(26, 24, 48, 0.12);
 }
-.tabs a:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.nav a[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  left: var(--s-3);
+  right: var(--s-3);
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
 }
-.content {
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: 28px 24px 80px;
-}
-.content.wide {
-  max-width: 1180px;
-}
-
-h2 {
-  font-family: var(--font-num);
-  font-size: 1.15rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  margin: 0 0 12px;
+.topbar-end {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
-/* ---- surfaces --------------------------------------------------------- */
+/* ---- surfaces -------------------------------------------------------------- */
+/* A panel is a bordered surface. No shadow: the line is the edge. */
 .card {
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 22px 24px;
+  border-radius: var(--r-md);
+  padding: var(--s-6);
   background: var(--surface);
 }
 
@@ -183,12 +132,10 @@ h2 {
   color: var(--muted);
 }
 .small {
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
 }
 .num {
-  font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
 }
 .sr-only {
   position: absolute;
@@ -201,28 +148,27 @@ h2 {
 
 code {
   background: var(--surface-2);
-  border-radius: 6px;
+  border-radius: 4px;
   padding: 1px 6px;
-  font-size: 0.85em;
+  font-size: 0.9em;
 }
 
-/* ---- controls --------------------------------------------------------- */
+/* ---- controls ---------------------------------------------------------------- */
+/* Plain <button> is the secondary button; <Button> from components/ui is the same look
+   with variants. Keeping one rule means nothing on screen is ever an unstyled browser button. */
 button {
   font: inherit;
-  font-weight: 550;
+  font-weight: 500;
   cursor: pointer;
-  border-radius: 10px;
-  padding: 9px 16px;
-  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 7px 14px;
+  border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--fg);
-  transition: background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
 button:hover:not(:disabled) {
-  border-color: var(--muted);
-}
-button:active:not(:disabled) {
-  transform: translateY(1px);
+  background: var(--surface-2);
 }
 button.primary {
   background: var(--accent);
@@ -230,26 +176,38 @@ button.primary {
   color: var(--accent-fg);
 }
 button.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-  border-color: var(--accent);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 button.link {
   background: none;
   border: none;
   color: var(--accent);
-  padding: 9px 6px;
+  padding: 7px 4px;
+}
+button.link:hover:not(:disabled) {
+  background: none;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+button.danger {
+  color: var(--error);
+}
+button.primary.danger {
+  color: #fff;
+  background: var(--error);
+  border-color: var(--error);
+}
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 button:focus-visible,
 textarea:focus-visible,
 input:focus-visible,
 a:focus-visible,
-summary:focus-visible {
+summary:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -258,13 +216,18 @@ textarea,
 input[type='text'] {
   width: 100%;
   font: inherit;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--fg);
   resize: vertical;
   transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+textarea::placeholder,
+input::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
 }
 /* A field that cannot be edited (an approved campaign's brief, text while it is written) looks like it:
    grey, no resize handle, no text cursor. */
@@ -277,7 +240,7 @@ input[readonly] {
 }
 textarea[readonly]:focus,
 input[readonly]:focus {
-  border-color: var(--border);
+  border-color: var(--border-strong);
   box-shadow: none;
 }
 textarea:focus,
@@ -286,13 +249,17 @@ input[type='text']:focus {
   box-shadow: 0 0 0 3px var(--accent-soft);
   outline: none;
 }
+label {
+  font-weight: 500;
+}
 
-/* ---- notices ---------------------------------------------------------- */
+/* ---- notices ---------------------------------------------------------------- */
 .notice {
-  border-radius: 10px;
-  padding: 10px 14px;
-  margin: 12px 0;
-  font-size: 0.92rem;
+  display: block;
+  border-radius: var(--r-sm);
+  padding: var(--s-2) var(--s-3);
+  margin: var(--s-3) 0;
+  font-size: var(--text-sm);
   border: 1px solid transparent;
 }
 .notice.error {
@@ -306,39 +273,17 @@ input[type='text']:focus {
   border-color: var(--warn-line);
 }
 .notice.info {
-  color: var(--info);
-  background: var(--info-bg);
+  color: var(--fg);
+  background: var(--surface-2);
+  border-color: var(--border);
 }
 .notice.ok {
   color: var(--ok);
   background: var(--ok-bg);
+  border-color: var(--ok-line);
 }
 
-/* ---- badges ----------------------------------------------------------- */
-.badge {
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 3px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  white-space: nowrap;
-}
-.badge.mock {
-  color: var(--mock);
-  background: var(--mock-bg);
-  border-color: var(--warn-line);
-}
-.badge.claude {
-  color: var(--claude);
-  background: var(--claude-bg);
-}
-.badge.error {
-  color: var(--error);
-  background: var(--error-bg);
-  border-color: var(--error-line);
-}
-
-/* ---- motion: short, and gone when the user asks ----------------------- */
+/* ---- motion: short, and gone when the user asks ----------------------------- */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity var(--t-fast) var(--ease);
@@ -349,24 +294,24 @@ input[type='text']:focus {
 }
 
 @media (max-width: 640px) {
-  .topbar {
-    padding: 8px 12px;
-    gap: 8px;
-    flex-wrap: wrap;
+  .container {
+    padding-inline: var(--s-3);
   }
-  .brand {
-    flex-basis: 100%;
-    order: 1;
+  .topbar-in {
+    grid-template-columns: 1fr auto;
+    height: auto;
+    padding-block: var(--s-2);
   }
-  .tabs {
-    order: 2;
+  .nav {
+    grid-column: 1 / -1;
+    order: 3;
+    height: 40px;
   }
   .content {
-    padding: 16px 12px 64px;
+    padding-block: var(--s-4) 64px;
   }
   .card {
-    padding: 16px;
-    border-radius: 12px;
+    padding: var(--s-4);
   }
 }
 

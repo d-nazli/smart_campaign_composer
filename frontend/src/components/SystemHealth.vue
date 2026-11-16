@@ -56,15 +56,15 @@ const allOk = computed(() => items.value.every((i) => i.state === 'ok'))
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 18px;
-  padding: 8px 14px;
+  gap: var(--s-1) var(--s-5);
+  padding: var(--s-2) var(--s-4);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-sm);
   background: var(--surface);
+  font-size: var(--text-sm);
 }
 .summary {
-  font-weight: 650;
-  font-size: 0.9rem;
+  font-weight: 600;
   color: var(--warn);
 }
 .summary.ok {
@@ -73,7 +73,7 @@ const allOk = computed(() => items.value.every((i) => i.state === 'ok'))
 ul {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: var(--s-1) var(--s-4);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -84,13 +84,12 @@ li {
   gap: 6px;
 }
 .label {
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-weight: 500;
 }
 .dot {
   align-self: center;
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--muted);
   transition: background var(--t-med) var(--ease);
@@ -105,6 +104,6 @@ li {
   background: var(--warn-line);
 }
 .dot.checking {
-  background: var(--border);
+  background: var(--border-strong);
 }
 </style>

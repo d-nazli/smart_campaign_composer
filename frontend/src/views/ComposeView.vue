@@ -12,6 +12,8 @@ import { checkContent } from '../utils/limits'
 import { campaignIdFromUrl, urlForCampaign, urlWithoutCampaign } from '../utils/route'
 import { checkSchedule, formatWhen, fromLocalInput, toLocalInput, untilText } from '../utils/schedule'
 import { countsLine } from '../utils/languages'
+import { ArrowLeft, FileText, RefreshCw, XCircle } from 'lucide-vue-next'
+import { statusLabel } from '../utils/dashboard'
 import { attemptLabel } from '../utils/preview'
 import { withAllCustomers } from '../utils/sendToAll'
 import { currentStep, type StepKey } from '../utils/steps'
@@ -22,6 +24,10 @@ import LanguageTabs, { type TabStatus } from '../components/LanguageTabs.vue'
 import MessageEditor from '../components/MessageEditor.vue'
 import SegmentCard from '../components/SegmentCard.vue'
 import StepBar from '../components/StepBar.vue'
+import Badge from '../components/ui/Badge.vue'
+import Button from '../components/ui/Button.vue'
+import Card from '../components/ui/Card.vue'
+import Modal from '../components/ui/Modal.vue'
 
 const props = defineProps<{ info: AppInfo | null }>()
 
@@ -464,9 +470,11 @@ onMounted(async () => {
       <Transition :name="slide === 'forward' ? 'slide-left' : 'slide-right'" mode="out-in">
         <div v-if="ready" :key="view" class="panel">
           <!-- 1 · Brief -->
-          <section v-if="view === 'brief'" class="card">
-            <h2>Brief</h2>
-            <p v-if="frozen" class="notice info" role="status">Kampanya onaylandı; brief artık değiştirilemez.</p>
+          <Card v-if="view === 'brief'" title="Brief">
+            <template #actions>
+              <Badge v-if="frozen" tone="ok" dot>Onaylandı</Badge>
+              <Button v-else variant="ghost" size="sm" :icon="FileText" :disabled="creating" @click="brief = EXAMPLE_BRIEF">Örnek brief</Button>
+            </template>
             <label for="brief" class="sr-only">Kampanya brief'i</label>
             <textarea
               id="brief"
@@ -478,12 +486,8 @@ onMounted(async () => {
               :readonly="frozen"
               @keydown.ctrl.enter="!barDisabled && bar.action === 'create' && onPrimary()"
             />
-            <div class="actions">
-              <button v-if="!frozen" class="link" :disabled="creating" @click="brief = EXAMPLE_BRIEF">Örnek brief</button>
-              <span v-if="campaign && !frozen && briefChanged" class="muted small">
-                Brief değişti: kitle ve mesajlar yeniden oluşturulacak.
-              </span>
-            </div>
+            <p v-if="frozen" class="hint">Onaylanan kampanyanın brief'i değiştirilemez.</p>
+            <p v-else-if="campaign && briefChanged" class="hint">Brief değişti: kitle ve mesajlar yeniden oluşturulacak.</p>
 
             <p v-if="createError" class="notice error" role="alert">
               {{ createError.message }}
@@ -496,28 +500,25 @@ onMounted(async () => {
                 </details>
               </template>
             </p>
-          </section>
+          </Card>
 
           <!-- 2 · Kitle -->
           <template v-else-if="view === 'audience'">
             <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" :languages="languages" :busy="creating || frozen" @send-to-all="sendToAll" />
-            <section v-else class="card" role="status">
-              <h2>Kitle</h2>
+            <Card v-else title="Kitle" role="status">
               <p class="muted">Kitle çıkarılıyor…</p>
-            </section>
+            </Card>
           </template>
 
           <!-- 3 · Mesajlar -->
-          <section v-else-if="view === 'messages'" class="card">
-            <div class="head">
-              <h2>Mesajlar</h2>
-              <span v-if="streaming" class="working" :class="{ fixing: (activeAttempt?.n ?? 1) > 1 }" role="status" data-testid="attempt">
-                <span class="pulse" aria-hidden="true" />{{ langName(activeLang) }}: {{ attemptLabel(activeAttempt) }}
-              </span>
-              <button v-if="!frozen && !streaming && hasContent && segmentReady" class="regen" @click="generate">Yeniden üret</button>
-            </div>
-
-            <p v-if="frozen" class="notice info" role="status">Kampanya onaylandı; metin artık değiştirilemez.</p>
+          <Card v-else-if="view === 'messages'" title="Mesajlar">
+            <template #actions>
+              <Badge v-if="streaming" :tone="(activeAttempt?.n ?? 1) > 1 ? 'warn' : 'accent'" dot role="status" data-testid="attempt">
+                {{ langName(activeLang) }}: {{ attemptLabel(activeAttempt) }}
+              </Badge>
+              <Badge v-else-if="frozen" tone="ok" dot>Onaylandı</Badge>
+              <Button v-if="!frozen && !streaming && hasContent && segmentReady" variant="ghost" size="sm" :icon="RefreshCw" @click="generate">Yeniden üret</Button>
+            </template>
 
             <p v-if="streaming && notes.length" class="notice warn" role="status">
               Önceki deneme sınırlara uymadığı için model düzeltiyor:
@@ -549,15 +550,15 @@ onMounted(async () => {
             </template>
             <div v-else-if="!streaming" class="empty">
               <p class="muted">Henüz mesaj yok.</p>
-              <button v-if="segmentReady" class="primary" @click="generate">Mesajları üret</button>
+              <Button v-if="segmentReady" variant="primary" @click="generate">Mesajları üret</Button>
             </div>
 
-            <p v-if="source && hasContent && !streaming" class="muted small src">
-              Kaynak: {{ source === 'llm' ? 'model' : source === 'fallback' ? 'hazır şablon' : 'elle düzenlendi' }}
-              <template v-if="unsaved && !frozen"> · kaydedilmemiş düzenleme var, “Onayla” kaydeder</template>
+            <p v-if="source && hasContent && !streaming" class="hint">
+              Kaynak: {{ source === 'llm' ? 'model' : source === 'fallback' ? 'hazır şablon' : 'elle düzenlendi' }}.
+              <template v-if="unsaved && !frozen">Kaydedilmemiş düzenleme var; “Onayla” kaydeder.</template>
             </p>
             <p v-if="saveError" class="notice error" role="alert">{{ saveError }}</p>
-          </section>
+          </Card>
 
           <!-- 4 · Onay -->
           <template v-else-if="view === 'approve'">
@@ -575,39 +576,42 @@ onMounted(async () => {
               @update:mode="sendMode = $event"
               @update:when="sendWhen = $event"
             />
-            <section v-else class="card">
-              <h2>Onay</h2>
+            <Card v-else title="Onay">
               <p class="muted">Onaya geçmek için önce mesajları üretip kaydedin.</p>
-            </section>
+            </Card>
           </template>
 
           <!-- 5 · Gönderim -->
-          <section v-else class="card" data-testid="delivery">
-            <h2>Gönderim</h2>
+          <Card v-else title="Gönderim" data-testid="delivery">
+            <template #actions>
+              <Badge v-if="campaign" :tone="campaign.status === 'completed' ? 'ok' : campaign.status === 'failed' ? 'danger' : campaign.status === 'cancelled' ? 'neutral' : 'accent'" dot>
+                {{ statusLabel(campaign) }}
+              </Badge>
+            </template>
+
             <template v-if="campaign?.status === 'scheduled'">
-              <p class="notice info" role="status" data-testid="scheduled">
-                <strong>Zamanlandı: {{ campaign.scheduled_at ? formatWhen(campaign.scheduled_at) : '' }}</strong>
-                <template v-if="campaign.scheduled_at"> ({{ untilText(campaign.scheduled_at, clockNow) }})</template>
-              </p>
-              <p class="muted small">
-                Kitle şimdi değil, gönderim zamanı geldiğinde o andaki verilerle belirlenir; kişi sayısı değişebilir. Kimsenin burada olması gerekmez.
-                <template v-if="campaign.segment?.audience">
-                  Şu anki tahmin: {{ campaign.segment.audience.sms_reachable }} SMS, {{ campaign.segment.audience.email_reachable }} e-posta.
-                </template>
-              </p>
-              <p v-if="countsLine(campaign.segment?.languages, languages)" class="muted small" data-testid="scheduled-languages">
-                Dil dağılımı (tahmini): <strong>{{ countsLine(campaign.segment?.languages, languages) }}</strong>
-              </p>
-              <div class="actions">
-                <button v-if="!confirmCancel" class="link danger" :disabled="cancelling" data-testid="cancel" @click="confirmCancel = true">İptal et</button>
-                <template v-else>
-                  <button class="primary danger" :disabled="cancelling" data-testid="confirm-cancel" @click="cancelScheduled">
-                    {{ cancelling ? 'İptal ediliyor…' : 'Evet, iptal et' }}
-                  </button>
-                  <button class="link" :disabled="cancelling" @click="confirmCancel = false">Vazgeç</button>
-                </template>
-              </div>
+              <dl class="facts" data-testid="scheduled">
+                <div>
+                  <dt>Gönderim zamanı</dt>
+                  <dd>
+                    <strong>{{ campaign.scheduled_at ? formatWhen(campaign.scheduled_at) : '' }}</strong>
+                    <span v-if="campaign.scheduled_at" class="muted"> ({{ untilText(campaign.scheduled_at, clockNow) }})</span>
+                  </dd>
+                </div>
+                <div v-if="campaign.segment?.audience">
+                  <dt>Tahmini alıcı</dt>
+                  <dd class="num">{{ campaign.segment.audience.sms_reachable }} SMS, {{ campaign.segment.audience.email_reachable }} e-posta</dd>
+                </div>
+                <div v-if="countsLine(campaign.segment?.languages, languages)" data-testid="scheduled-languages">
+                  <dt>Tahmini diller</dt>
+                  <dd class="num">{{ countsLine(campaign.segment?.languages, languages) }}</dd>
+                </div>
+              </dl>
+              <p class="hint">Kitle gönderim anında belirlenir; kimsenin burada olması gerekmez.</p>
               <p v-if="cancelError" class="notice error" role="alert">{{ cancelError }}</p>
+              <div class="row-end">
+                <Button variant="secondary" :icon="XCircle" data-testid="cancel" @click="confirmCancel = true">Gönderimi iptal et</Button>
+              </div>
             </template>
             <p v-else-if="campaign?.status === 'cancelled'" class="notice info" role="status" data-testid="cancelled">
               Zamanlanmış gönderim iptal edildi; hiçbir mesaj gönderilmedi.
@@ -616,29 +620,34 @@ onMounted(async () => {
               Zamanlanmış gönderim başlatılamadı: {{ campaign.schedule_error || 'bilinmeyen neden' }}. Hiçbir mesaj gönderilmedi.
             </p>
             <template v-else-if="campaign?.delivery">
-              <p v-if="approved" class="muted small" data-testid="queued">
-                Kuyruğa alınan: {{ approved.queued.sms }} SMS, {{ approved.queued.email }} e-posta.
-                <template v-if="approved.already_approved">(Bu kampanya zaten onaylanmıştı.)</template>
-              </p>
               <p v-if="difference" class="notice info" role="status">{{ difference }}</p>
               <DeliveryProgress :delivery="campaign.delivery" :status="campaign.status" :languages="languages" />
             </template>
             <p v-else class="muted">Kampanya henüz onaylanmadı.</p>
-          </section>
+          </Card>
         </div>
       </Transition>
     </div>
 
     <footer class="bar">
-      <div class="bar-in">
-        <button v-if="view !== 'brief'" class="back" :disabled="busy" data-testid="back" @click="onBack">
-          ← {{ confirming ? 'Vazgeç' : 'Geri' }}
-        </button>
-        <button class="primary main" :disabled="barDisabled" :data-testid="barTestId" data-action="primary" @click="onPrimary">
-          {{ barLabel }}
-        </button>
-      </div>
+      <Button v-if="view !== 'brief'" variant="ghost" :icon="ArrowLeft" :disabled="busy" data-testid="back" @click="onBack">
+        {{ confirming ? 'Vazgeç' : 'Geri' }}
+      </Button>
+      <Button class="main" variant="primary" :disabled="barDisabled" :data-testid="barTestId" data-action="primary" @click="onPrimary">
+        {{ barLabel }}
+      </Button>
     </footer>
+
+    <Modal
+      v-model="confirmCancel"
+      title="Zamanlanmış gönderim iptal edilsin mi?"
+      :description="`Kampanya${campaign?.scheduled_at ? ' ' + formatWhen(campaign.scheduled_at) + ' için' : ''} zamanlanmıştı. İptal edersen hiçbir mesaj gönderilmez.`"
+    >
+      <template #footer>
+        <Button variant="ghost" :disabled="cancelling" @click="confirmCancel = false">Vazgeç</Button>
+        <Button variant="danger" :loading="cancelling" data-testid="confirm-cancel" @click="cancelScheduled">Gönderimi iptal et</Button>
+      </template>
+    </Modal>
   </div>
 </template>
 
@@ -648,14 +657,14 @@ onMounted(async () => {
   flex-direction: column;
 }
 .stage {
-  /* clip (not hidden) keeps the previews' sticky position and shadows working */
+  /* clip (not hidden) keeps the previews' sticky position working */
   overflow-x: clip;
-  padding-bottom: 24px;
+  padding-bottom: var(--s-6);
 }
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--s-4);
 }
 
 /* sliding between steps: forward moves left, back moves right */
@@ -668,103 +677,47 @@ onMounted(async () => {
   transition: transform var(--t-fast) ease-in, opacity var(--t-fast) ease-in;
 }
 .slide-left-leave-to {
-  transform: translateX(-36px);
+  transform: translateX(-20px);
   opacity: 0;
 }
 .slide-left-enter-from {
-  transform: translateX(36px);
+  transform: translateX(20px);
   opacity: 0;
 }
 .slide-right-leave-to {
-  transform: translateX(36px);
+  transform: translateX(20px);
   opacity: 0;
 }
 .slide-right-enter-from {
-  transform: translateX(-36px);
+  transform: translateX(-20px);
   opacity: 0;
 }
 
-/* the buttons sit right under the step content */
+/* The actions sit right under the step content, in the same column. */
 .bar {
-  padding: 4px 0 0;
-}
-.bar-in {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--s-3);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--border);
 }
 .main {
   margin-left: auto;
-  min-width: 160px;
-}
-.back {
-  background: none;
-  border-color: transparent;
-  color: var(--muted);
-}
-.back:hover:not(:disabled) {
-  color: var(--fg);
+  min-width: 140px;
 }
 
-.card textarea {
+textarea {
   min-height: 140px;
 }
-.head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-.head h2 {
-  margin: 0;
-}
-.regen {
-  margin-left: auto;
-}
-.working {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 12px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--info);
-  font-size: 0.82rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
-}
-.working.fixing {
-  background: var(--warn-bg);
-  color: var(--warn);
-}
-.pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: pulse 1s ease-in-out infinite;
-}
-@keyframes pulse {
-  50% {
-    opacity: 0.25;
-  }
-}
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 10px 0 0;
-  flex-wrap: wrap;
+.hint {
+  margin: var(--s-2) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 .empty {
-  padding: 28px 0;
+  padding: var(--s-6) 0;
   text-align: center;
-}
-.src {
-  margin: 4px 0 0;
 }
 .block {
   display: block;
@@ -772,10 +725,39 @@ onMounted(async () => {
 details {
   margin-top: 6px;
 }
+.facts {
+  margin: 0;
+}
+.facts > div {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--border);
+}
+.facts > div:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  margin: 0;
+}
+.row-end {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--s-4);
+}
 
 @media (max-width: 640px) {
   .main {
     flex: 1;
+  }
+  .facts > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }
 </style>

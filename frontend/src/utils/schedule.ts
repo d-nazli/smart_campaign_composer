@@ -86,3 +86,28 @@ export function untilText(at: string | Date, now: Date): string {
   if (hours > 0) return mins > 0 ? `${hours} sa ${mins} dk sonra` : `${hours} sa sonra`
   return `${mins} dk sonra`
 }
+
+export interface QuickTime {
+  label: string
+  /** A datetime-local value in the viewer's zone. */
+  value: string
+}
+
+const roundUpToFive = (d: Date): Date => {
+  const r = new Date(d)
+  r.setSeconds(0, 0)
+  r.setMinutes(Math.ceil(r.getMinutes() / 5) * 5)
+  return r
+}
+
+/** One-click times offered next to the picker: in an hour, this evening (18:00), tomorrow morning (09:00). */
+export function quickTimes(now: Date): QuickTime[] {
+  const inAnHour = roundUpToFive(new Date(now.getTime() + 60 * 60 * 1000))
+  const evening = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0)
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 9, 0)
+  const out: QuickTime[] = [{ label: '1 saat sonra', value: toLocalInput(inAnHour) }]
+  // Only when it is still at least an hour away: "this evening" must not be a time that is almost now.
+  if (evening.getTime() - now.getTime() >= 60 * 60 * 1000) out.push({ label: 'Bu akşam 18:00', value: toLocalInput(evening) })
+  out.push({ label: 'Yarın 09:00', value: toLocalInput(tomorrow) })
+  return out
+}
