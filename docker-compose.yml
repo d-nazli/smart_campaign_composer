@@ -84,7 +84,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -133,6 +133,22 @@ services:
       LLM_MODE: mock
       ANTHROPIC_API_KEY: ""
       # Integration tests create and drop their own throwaway databases here.
+      TEST_DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/postgres?sslmode=disable
+    networks: [app]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+
+  # The same tests under the Go race detector (`make test-race`). Slower: the
+  # binaries are instrumented and the first build compiles with cgo.
+  backend-test-race:
+    profiles: [test]
+    build: { context: ./backend, target: race }
+    command: ["go", "test", "-race", "./..."]
+    environment:
+      LLM_MODE: mock
+      ANTHROPIC_API_KEY: ""
+      CGO_ENABLED: "1"
       TEST_DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/postgres?sslmode=disable
     networks: [app]
     depends_on:

@@ -4,7 +4,7 @@ Insider One AI Developer case study. Pazarlamacının doğal dille yazdığı br
 hedef kitleye ve SMS/email mesajlarına çeviren, onaya sunan, kuyruk üzerinden mock provider'a
 gönderen ve durumu canlı gösteren sistem.
 
-> **Durum:** geliştirme sürüyor (Aşama 2+3 tamam: brief → kitle → akan mesajlar; onay/gönderim/dashboard sırada). Plan: [PLAN.md](PLAN.md), kararlar: [DECISIONS.md](DECISIONS.md).
+> **Durum:** geliştirme sürüyor (Aşama 5 tamam: brief → kitle → mesajlar → onay → gönderim → dashboard/metrics; cilalama sırada). Plan: [PLAN.md](PLAN.md), kararlar: [DECISIONS.md](DECISIONS.md).
 > Bu README son aşamada tamamlanacak (mimari özet, yapılmayanlar).
 
 ## Kurulum
@@ -15,15 +15,23 @@ Gereken: Docker Desktop (host'ta Go/Node gerekmez). `make` için Windows'ta `cho
 docker compose up --build      # veya: make up
 ```
 
-- Uygulama: http://localhost:8080
-- API: http://localhost:8081 (`/healthz`, `/readyz`, `/api/info`)
+- Uygulama: http://localhost:8080 — **Dashboard:** http://localhost:8080/#/dashboard
+- API: http://localhost:8081 — sağlık: **http://localhost:8081/healthz** (veritabanını da kontrol eder, bozuksa 503),
+  metrikler: **http://localhost:8081/metrics** (Prometheus formatı), ayrıca `/readyz`, `/api/info`
 - Mock provider: http://localhost:8090
+
+> ### ⚡ Hızlı demo için
+> Mock provider varsayılan olarak **kasıtlı olarak bozuktur** (%5 5xx, %3 rastgele 429, %1 zaman aşımı, %2 "kabul ettim ama
+> hata döndüm"). Her 429 gönderimi 1–3 sn durdurduğu için bir kampanya **1–2 dakika** sürer. Anında bitmesini istiyorsanız
+> `.env` dosyasına **`PROVIDER_429_RATE=0`** yazıp `docker compose up -d mock-provider` çalıştırın (tüm kaosu kapatmak için
+> `PROVIDER_ERROR_RATE=0 PROVIDER_TIMEOUT_RATE=0 PROVIDER_FAIL_AFTER_ACCEPT_RATE=0` da ekleyin).
 
 `.env` zorunlu değil; ayarlar için `copy .env.example .env`. `ANTHROPIC_API_KEY` boşsa mock LLM,
 doluysa gerçek Claude kullanılır (`LLM_MODE=auto`).
 
 ```powershell
 make test        # tüm testler, Docker içinde, API key/internet gerektirmez (her zaman mock LLM)
+make test-race   # backend testleri Go race detector ile (Docker, CGO); yavaş (~2 dk), `make test`'e dahil değil
 make dev         # geliştirme: compose watch + air + Vite HMR
 make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan yüklenir)
 ```
@@ -62,8 +70,26 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 Varsayılan provider kaosu %3 rastgele 429 enjekte eder ve her 429 kanalı 1–3 sn durdurur; bu yüzden bir kampanya
 yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=0` yapıp `docker compose up -d mock-provider` deyin.
 
-**Kapsam dışı:** worker tek replica (hız sınırı süreç içi); e-posta gövdesi düz metin; "delivered" bildirimi yok
-(`sent` = provider kabul etti).
+## İzleme: dashboard, `/metrics`, `/healthz`
+
+- **Dashboard** (`/#/dashboard`): tüm kampanyalar, kanal bazlı ilerleme çubuğu, gönderildi / başarısız / tekrar / 429 sayıları;
+  her 2 sn'de kendini yeniler. Sade bir ilk sürümdür, arayüz sonra yeniden tasarlanacak.
+- **`GET :8081/metrics`** (Prometheus metin formatı). Hepsi veritabanından (`deliveries`, `llm_generations`, `campaigns`)
+  okunur; api ve worker ayrı süreçlerdir ve sayılar yeniden başlatmada kaybolmaz. Veritabanı okunamazsa scrape 503 döner
+  (sıfırlarla dolu sayfa dönmez).
+  - Gönderim (`channel`: `sms`/`email`): `smartcampaign_deliveries_total{status=sent|failed|skipped}`,
+    `smartcampaign_delivery_queue_length`, `smartcampaign_delivery_retries_total`, `smartcampaign_delivery_rate_limited_total`
+    (retry'ların kaçı 429), `smartcampaign_send_rate_per_second` (son 10 sn ortalaması),
+    `smartcampaign_provider_response_seconds_sum/_count` (ortalama = sum/count).
+  - LLM (`kind`: `segment`/`messages`): `smartcampaign_llm_generations_total`, `…_first_attempt_valid_total`,
+    `…_repair_attempts_total`, `…_fallbacks_total`, `…_refusals_total`, `smartcampaign_llm_attempt_seconds_sum/_count`,
+    `smartcampaign_llm_tokens_total{direction=input|output}`, `smartcampaign_segment_outcomes_total{status=ok|needs_clarification|unsupported}`.
+  - Mock LLM token harcamaz, token sayaçları yalnız gerçek Claude ile artar.
+- **`GET :8081/healthz`**: api ve veritabanı bağlantısı (200 `{"status":"ok"}` / 503). docker-compose healthcheck'i bunu kullanır.
+  Worker'ın `:9091/healthz`'ı yalnız süreç canlılığıdır.
+
+**Gönderim kapsamı dışında:** worker tek replica (hız sınırı süreç içi); e-posta gövdesi düz metin; "delivered" bildirimi
+yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız toplam ve adet (ortalama hesaplanır).
 
 ## Bilinen sınırlamalar
 

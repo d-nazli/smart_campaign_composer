@@ -19,6 +19,7 @@ import (
 	"smartcampaign/internal/httpapi"
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/llm/mock"
+	"smartcampaign/internal/metrics"
 	"smartcampaign/internal/testdb"
 )
 
@@ -33,7 +34,7 @@ func newServer(t *testing.T, client llm.Client) *httptest.Server {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := campaign.NewService(pool, client, policy, log)
-	srv := httptest.NewServer(httpapi.New(svc, httpapi.Info{LLMMode: client.Mode(), Model: client.Model()}, pool.Ping, log))
+	srv := httptest.NewServer(httpapi.New(svc, httpapi.Info{LLMMode: client.Mode(), Model: client.Model()}, pool.Ping, metrics.New(pool).Handler(), log))
 	t.Cleanup(srv.Close)
 	return srv
 }

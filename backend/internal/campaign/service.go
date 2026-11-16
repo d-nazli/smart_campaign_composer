@@ -235,43 +235,6 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 	return v, nil
 }
 
-// deliveryProgress counts the campaign's deliveries per channel and state.
-func (s *Service) deliveryProgress(ctx context.Context, id int64) (*DeliveryView, error) {
-	rows, err := s.pool.Query(ctx, `SELECT channel, status, count(*) FROM deliveries WHERE campaign_id=$1 GROUP BY 1, 2`, id)
-	if err != nil {
-		return nil, fmt.Errorf("delivery progress: %w", err)
-	}
-	defer rows.Close()
-	d := &DeliveryView{}
-	for rows.Next() {
-		var channel, status string
-		var n int
-		if err := rows.Scan(&channel, &status, &n); err != nil {
-			return nil, fmt.Errorf("delivery progress: %w", err)
-		}
-		p := &d.SMS
-		if channel == "email" {
-			p = &d.Email
-		}
-		p.Total += n
-		switch status {
-		case "sent":
-			p.Sent += n
-		case "failed":
-			p.Failed += n
-		case "skipped":
-			p.Skipped += n
-		default: // pending, sending
-			p.Pending += n
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("delivery progress: %w", err)
-	}
-	d.Done = d.SMS.Pending == 0 && d.Email.Pending == 0
-	return d, nil
-}
-
 // ---- message generation (streaming) ---------------------------------------
 
 // Events receives progress while messages are generated. All fields optional.
@@ -365,6 +328,7 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 	if err := s.saveContent(ctx, id, fb, SourceFallback); err != nil {
 		return err
 	}
+	s.markFallback(id)
 	if ev.Fallback != nil {
 		ev.Fallback(reason, fb, rep)
 	}
@@ -480,13 +444,31 @@ func (s *Service) recorder(campaignID int64, kind string) func(llm.AttemptLog) {
 		}
 		_, err := s.pool.Exec(ctx, `
 			INSERT INTO llm_generations (campaign_id, kind, attempt, mode, model, valid, problems, raw_output,
-			                             input_tokens, output_tokens, latency_ms, error)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			                             input_tokens, output_tokens, latency_ms, error, refused)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 			campaignID, kind, a.N, s.llm.Mode(), s.llm.Model(), a.Valid, problems, strings.ToValidUTF8(raw, ""),
-			a.Usage.InputTokens, a.Usage.OutputTokens, a.Latency.Milliseconds(), errText)
+			a.Usage.InputTokens, a.Usage.OutputTokens, a.Latency.Milliseconds(), errText, isRefusal(a.Err))
 		if err != nil {
 			s.log.Error("could not record LLM attempt", "campaign_id", campaignID, "error", err)
 		}
+	}
+}
+
+func isRefusal(err error) bool {
+	var refusal *llm.RefusalError
+	return errors.As(err, &refusal)
+}
+
+// markFallback flags the last recorded attempt of the message run that just
+// ended in the built-in template, so the metrics count it exactly.
+func (s *Service) markFallback(campaignID int64) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), auditWriteBudget)
+	defer cancel()
+	_, err := s.pool.Exec(ctx, `
+		UPDATE llm_generations SET fell_back = true
+		WHERE id = (SELECT max(id) FROM llm_generations WHERE campaign_id = $1 AND kind = 'messages')`, campaignID)
+	if err != nil {
+		s.log.Error("could not mark LLM fallback", "campaign_id", campaignID, "error", err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/llm/anthropic"
 	"smartcampaign/internal/llm/mock"
+	"smartcampaign/internal/metrics"
 )
 
 func main() {
@@ -60,7 +61,7 @@ func main() {
 	defer pool.Close()
 
 	svc := campaign.NewService(pool, client, policy, log)
-	handler := httpapi.New(svc, httpapi.Info{LLMMode: cfg.Mode, Model: cfg.Model}, pool.Ping, log)
+	handler := httpapi.New(svc, httpapi.Info{LLMMode: cfg.Mode, Model: cfg.Model}, pool.Ping, metrics.New(pool).Handler(), log)
 
 	srv := &http.Server{
 		Addr:              config.Env("HTTP_ADDR", ":8080"),

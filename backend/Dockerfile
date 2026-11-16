@@ -41,3 +41,13 @@ ENTRYPOINT ["mockprovider"]
 FROM runtime AS tool
 COPY --from=build /out/tool /usr/local/bin/tool
 ENTRYPOINT ["tool"]
+
+# ---- race: `go test -race` needs cgo and a C toolchain, which the Alpine -----
+# images above do not have; this one is Debian-based (used by `make test-race`).
+FROM golang:1.25 AS race
+WORKDIR /src
+ENV CGO_ENABLED=1
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+CMD ["go", "test", "-race", "./..."]

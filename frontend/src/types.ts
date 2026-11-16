@@ -73,6 +73,9 @@ export type CampaignStatus = 'draft' | 'segment_ready' | 'content_ready' | 'appr
 
 /** How far one channel has come. `pending` includes rows in flight and waiting for a retry. */
 export interface ChannelProgress {
+  /** Times deliveries went back to the queue (429s included) and how many of those were HTTP 429. */
+  retries: number
+  rate_limited: number
   total: number
   pending: number
   sent: number
@@ -119,4 +122,15 @@ export interface Limits {
   sms_max: number
   subject_max: number
   email_body_max: number
+}
+
+/** One line of the campaign list (the dashboard). */
+export interface CampaignSummary {
+  id: number
+  brief: string
+  status: CampaignStatus
+  segment_status?: SegmentStatus
+  matched?: number
+  delivery?: DeliveryProgress
+  created_at: string
 }

@@ -513,3 +513,32 @@ func TestRealPaceNeverTriggersTheProvidersRateLimit(t *testing.T) {
 		t.Fatalf("300 messages in %v: faster than the configured 90/s", elapsed)
 	}
 }
+
+// Every provider call is timed, retries included, so the response-time metric
+// reflects what the provider really did.
+func TestEveryProviderCallIsTimed(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	id := sqlCampaign(t, pool, 20, 0)
+	clk := fakeClock()
+	cfg := quiet()
+	cfg.Latency = 40 * time.Millisecond // the fake clock makes this exact
+	cfg.ErrorRate, cfg.Seed = 0.3, 3
+	tp := newProvider(t, cfg, clk)
+	w := newWorker(t, queue.NewPG(pool), tp.URL, clk, testConfig())
+	drain(t, w, pool, clk)
+
+	var calls int
+	var micros int64
+	if err := pool.QueryRow(ctx, `SELECT sum(provider_calls), sum(provider_micros) FROM deliveries WHERE campaign_id=$1`, id).Scan(&calls, &micros); err != nil {
+		t.Fatal(err)
+	}
+	if want := tp.stats("sms").Received; calls != want {
+		t.Fatalf("recorded %d calls, the provider received %d", calls, want)
+	}
+	if calls <= 20 {
+		t.Fatalf("%d calls for 20 deliveries: the chaos should have forced retries", calls)
+	}
+	if micros != int64(calls)*40_000 {
+		t.Fatalf("total %dµs for %d calls of 40ms each", micros, calls)
+	}
+}

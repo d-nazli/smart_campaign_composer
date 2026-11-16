@@ -5,7 +5,7 @@
 COMPOSE     := docker compose
 COMPOSE_DEV := docker compose -f docker-compose.yml -f docker-compose.dev.yml
 
-.PHONY: up down build dev dev-down ps logs test test-backend test-frontend test-live clean
+.PHONY: up down build dev dev-down ps logs test test-backend test-frontend test-race test-live clean
 
 ## Full stack, production-like images (http://localhost:8080)
 up:
@@ -39,6 +39,10 @@ test-backend:
 
 test-frontend:
 	$(COMPOSE) --profile test run --rm --build frontend-test
+
+## Backend tests under the Go race detector (Docker, CGO). Not part of `make test` (slower).
+test-race:
+	$(COMPOSE) --profile test run --rm --build backend-test-race
 
 ## Opt-in smoke test against real Claude. Requires ANTHROPIC_API_KEY in .env.
 ## Not part of `make test`.

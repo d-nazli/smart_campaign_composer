@@ -24,17 +24,23 @@ type Info struct {
 }
 
 // New builds the router. ready is the database readiness check.
-func New(svc *campaign.Service, info Info, ready func(context.Context) error, log *slog.Logger) http.Handler {
+func New(svc *campaign.Service, info Info, ready func(context.Context) error, metricsHandler http.Handler, log *slog.Logger) http.Handler {
 	a := &api{svc: svc, info: info, log: log}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", httpx.Healthz)
+	// /healthz is what docker-compose asks: it includes the database. A process
+	// that cannot reach its database is not healthy.
+	mux.HandleFunc("GET /healthz", httpx.HealthzWith(ready))
 	mux.HandleFunc("GET /readyz", httpx.Readyz(ready))
 	mux.HandleFunc("GET /api/info", a.getInfo)
 	mux.HandleFunc("POST /api/campaigns", a.createCampaign)
+	mux.HandleFunc("GET /api/campaigns", a.listCampaigns)
 	mux.HandleFunc("GET /api/campaigns/{id}", a.getCampaign)
 	mux.HandleFunc("POST /api/campaigns/{id}/messages/stream", a.streamMessages)
 	mux.HandleFunc("PUT /api/campaigns/{id}/content", a.putContent)
 	mux.HandleFunc("POST /api/campaigns/{id}/approve", a.approve)
+	if metricsHandler != nil {
+		mux.Handle("GET /metrics", metricsHandler)
+	}
 	return mux
 }
 
@@ -236,4 +242,22 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, err error) {
 		a.log.Error("request failed", "path", r.URL.Path, "code", code, "error", err)
 	}
 	writeError(w, status, code, msg, details)
+}
+
+func (a *api) listCampaigns(w http.ResponseWriter, r *http.Request) {
+	limit := 0 // the service applies its default
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_input", "limit bir tam sayı olmalı", nil)
+			return
+		}
+		limit = n
+	}
+	list, err := a.svc.List(r.Context(), limit)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"campaigns": list})
 }

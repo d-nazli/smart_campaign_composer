@@ -45,6 +45,10 @@ type Queue interface {
 	Retry(ctx context.Context, id int64, at time.Time, kind RetryKind, lastError string, now time.Time) error
 	Fail(ctx context.Context, id int64, lastError string, now time.Time) error
 	Skip(ctx context.Context, id int64, reason string, now time.Time) error
+	// Observe adds one provider call and its duration to a delivery (for the
+	// response-time metric). It is separate from the result so a lost result
+	// never loses the measurement.
+	Observe(ctx context.Context, id int64, latency time.Duration) error
 	// Finish marks campaigns with nothing left to send as completed.
 	Finish(ctx context.Context, now time.Time) (int, error)
 	// Content returns the (frozen) message templates of a campaign.
@@ -171,3 +175,9 @@ func (q *PG) Content(ctx context.Context, campaignID int64) (content.Content, er
 }
 
 var _ Queue = (*PG)(nil)
+
+func (q *PG) Observe(ctx context.Context, id int64, latency time.Duration) error {
+	_, err := q.pool.Exec(ctx, `UPDATE deliveries SET provider_calls = provider_calls + 1, provider_micros = provider_micros + $2 WHERE id = $1`,
+		id, latency.Microseconds())
+	return err
+}

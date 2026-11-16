@@ -1,7 +1,7 @@
 # PLAN.md — Smart Campaign Composer
 
 > Durum: **ONAYLANDI.** Kullanıcı kararları: Postgres kuyruğu (`queue.Queue` arayüzü arkasında), `docker compose watch`, varsayılan mock LLM (`LLM_MODE=auto`), **kanal seçimi yok (SMS+email her zaman birlikte)**, **Aşama 7 (bonus) yapılmayacak**, kapsam dışı özellik gerekirse önce kullanıcıya sorulacak.
-> İlerleme: **Aşama 0, 1, birleşik Aşama 2+3 (segment + mesaj üretimi) ve Aşama 4 (onay + kuyruk + gönderim) tamamlandı.** Aşama 5 (dashboard/metrics/health; yalnız CASE'in 3 zorunlu maddesi) ve 6 (cilalama) bekliyor.
+> İlerleme: **Aşama 0, 1, birleşik Aşama 2+3 (segment + mesaj üretimi) Aşama 4 (onay + kuyruk + gönderim) ve Aşama 5 (dashboard, `/metrics`, `/healthz`, `-race`) tamamlandı.** Aşama 6 (cilalama; arayüzün baştan tasarımı dahil) bekliyor.
 > Aşama 1 sapmaları: `language` kolonu yok (D29), mock provider'da `/admin/*` yok (D28), türev kolonlar seed'de Go'da hesaplanıp SQL ile doğrulanıyor (D26), Postgres healthcheck TCP (D32).
 > Aşama 2+3 sapmaları (nedenleri DECISIONS.md D33–D43): Sonnet 5.5 zorunlu `tool_choice`'u reddettiği için **structured outputs**; DSL **düz** (iç içe `all/any/not` yok); değişkenler yalnız `first_name` ve `city` ve **sabit karakter payıyla** sayılır; kuyruk tablosunun adı `deliveries`; Go 1.25.
 > Aşama 2+3 düzeltmesi (D44–D49): brief'teki hiçbir koşul sessizce atlanmaz (`internal/brief`: unsupported/needs_clarification kodla belirlenir, model kuralı brief'e karşı doğrulanır); segment adımı **teklifi** (`offer`) çıkarır, mesaj doğrulaması teklifi ve kelime tekrarını denetler.
@@ -372,13 +372,22 @@ insider_one_case/
 
 **Kapsam dışı (README'de not):** worker tek replica (limiter süreç içi, D13); e-posta gövdesi düz metin olarak gönderilir (HTML şablonu yok); teslim bildirimi ("delivered") yok, `sent` = provider kabul etti.
 
-### Aşama 5 — Dashboard, metrics, health ⭐ (KÜÇÜK TUTULACAK: yalnız CASE'in zorunlu 3 maddesi)
+### Aşama 5 — Dashboard, metrics, health ⭐ ✅ tamamlandı (kararlar: DECISIONS D57–D61)
+**Uygulandı:** migration `00005` · `queue.Observe` · `internal/metrics` (+ api `GET /metrics`) · api `/healthz` DB kontrolü (+ compose healthcheck) · `GET /api/campaigns` + Dashboard sekmesi · `make test-race` (temiz) · README. (Aşağıdaki liste onaylanan plandır.)
+### (Aşama 5 planı) KÜÇÜK TUTULACAK: yalnız CASE'in zorunlu 3 maddesi
 - **Zorunlu (CASE):** (1) Dashboard'da gönderim durumu canlı akar (SSE ya da polling; Aşama 4'teki durum sayaçları üzerine kurulur). (2) `/metrics`: kanal bazlı **gönderilen, başarısız, tekrar denenen, 429 sayısı, kuyruk uzunluğu**. (3) API'de de `/healthz` olsun ve **veritabanı bağlantısını kontrol etsin**.
-- **Yapılmayacak (kullanıcı kararı):** throughput grafiği, "son hatalar" listesi, ek metrikler, süs. Yalnız bu üç madde.
-- **Test:** sayaçlar gönderim sırasında canlı değişir; `curl .../metrics` dört sayaç + kuyruk uzunluğu; DB'yi durdur → api `/healthz` hata döner.
+- **Yapılmayacak (kullanıcı kararı):** throughput grafiği, "son hatalar" listesi, süs. Arayüz sonraki bir aşamada baştan tasarlanacak; dashboard sade ve işlevsel kalır.
+- **Onaylanan uygulama sırası (her adım: önce test, kırmızıyı gör, sonra kod):**
+  1. Migration `00005`: `deliveries.provider_calls/provider_micros` (provider yanıt süresi) ve `llm_generations.refused/fell_back` (refusal ve fallback'i sezgiyle değil açıkça kaydet). `queue.Observe`; servis `refused` ve `fell_back` yazar.
+  2. `internal/metrics`: DB'den (deliveries, llm_generations, campaigns) Prometheus metin formatı üretir; api `GET /metrics`. **Gönderim:** kanal bazlı sent/failed/skipped, retry, 429, kuyruk uzunluğu, saniyedeki gönderim hızı (son 10 sn), provider yanıt süresi (toplam+adet). **LLM:** segment/mesaj üretim sayısı, ilk denemede geçerli, repair denemesi, fallback, refusal, needs_clarification/unsupported, süre (toplam+adet), token.
+  3. api `/healthz` veritabanını kontrol eder (503 aksi halde); compose healthcheck bunu kullanır.
+  4. `GET /api/campaigns` (liste, kanal bazlı sent/failed/retry/429) + Dashboard sayfası (ilerleme çubuklu, 2 sn polling).
+  5. `-race` (CGO_ENABLED=1, Docker) ile kuyruk, worker, eşzamanlı onay testleri; hata çıkarsa systematic-debugging.
+  6. README: hızlı demo notu (`PROVIDER_429_RATE=0`) belirgin, `/metrics` ve `/healthz` adresleri; DECISIONS.
+- **Test:** sayaçlar gönderim sırasında canlı değişir; `curl .../metrics`; DB'yi durdur → api `/healthz` hata döner.
 
 ### Aşama 6 — Cilalama ve teslim
-- Frontend testleri (vitest: composable + kritik bileşenler), hata/boş durum UI'ları, README (kurulum, mimari, yapılmayanlar), DECISIONS son hali, `make test` Windows notları, ai-sessions export + temizlik, repo'yu GitHub'a push.
+- **Arayüzün baştan tasarımı (kullanıcı kararı; Aşama 5 dashboard'u bilerek sade bırakıldı).** Frontend testleri (vitest: composable + kritik bileşenler), hata/boş durum UI'ları, README (kurulum, mimari, yapılmayanlar), DECISIONS son hali, `make test` Windows notları, ai-sessions export + temizlik, repo'yu GitHub'a push.
 - **Test:** temiz klonla `cp .env.example .env && docker compose up` ve `make test` sıfırdan geçer.
 
 ### Açık işler (bilinen eksikler, henüz çözülmedi)

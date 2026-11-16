@@ -1,4 +1,4 @@
-import type { ApproveResult, Campaign, MessageContent } from '../types'
+import type { ApproveResult, Campaign, CampaignSummary, MessageContent } from '../types'
 import { requestJSON } from './http'
 
 export function createCampaign(brief: string): Promise<Campaign> {
@@ -16,4 +16,10 @@ export function saveContent(id: number, content: MessageContent): Promise<Campai
 /** Approves the campaign and queues the sending. Safe to repeat: a second call reports the same queue. */
 export function approveCampaign(id: number): Promise<ApproveResult> {
   return requestJSON<ApproveResult>(`/api/campaigns/${id}/approve`, { method: 'POST' })
+}
+
+/** Newest campaigns first, with sending progress for the approved ones. */
+export async function listCampaigns(limit = 100): Promise<CampaignSummary[]> {
+  const res = await requestJSON<{ campaigns: CampaignSummary[] }>(`/api/campaigns?limit=${limit}`)
+  return res.campaigns
 }

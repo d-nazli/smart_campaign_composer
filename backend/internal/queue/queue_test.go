@@ -323,3 +323,24 @@ func TestContentReturnsTheFrozenTemplates(t *testing.T) {
 }
 
 var _ = ids
+
+func TestObserveAddsCallsAndTimeAcrossAttempts(t *testing.T) {
+	f := setup(t, 2, 0)
+	ds := claim(t, f, "sms", 2, f.now)
+	for _, l := range []time.Duration{120 * time.Millisecond, 80 * time.Millisecond} {
+		if err := f.q.Observe(ctx, ds[0].ID, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var calls int
+	var micros int64
+	if err := f.pool.QueryRow(ctx, `SELECT provider_calls, provider_micros FROM deliveries WHERE id=$1`, ds[0].ID).Scan(&calls, &micros); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || micros != 200_000 {
+		t.Fatalf("calls=%d micros=%d, want 2 and 200000", calls, micros)
+	}
+	if err := f.pool.QueryRow(ctx, `SELECT provider_calls FROM deliveries WHERE id=$1`, ds[1].ID).Scan(&calls); err != nil || calls != 0 {
+		t.Fatalf("another delivery was touched: %d %v", calls, err)
+	}
+}

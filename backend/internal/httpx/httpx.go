@@ -68,3 +68,17 @@ func Serve(ctx context.Context, srv *http.Server, log *slog.Logger) error {
 	}
 	return nil
 }
+
+// HealthzWith is Healthz that also runs a dependency check (the database):
+// 200 {"status":"ok"} while it passes, 503 {"status":"unavailable"} when not.
+func HealthzWith(check func(context.Context) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := check(ctx); err != nil {
+			WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable", "error": err.Error()})
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}

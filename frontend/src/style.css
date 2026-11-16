@@ -199,3 +199,22 @@ input:focus-visible {
   color: var(--error);
   background: var(--error-bg);
 }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+.tabs a {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.tabs a[aria-current='page'] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+.content.wide {
+  max-width: 1100px;
+}

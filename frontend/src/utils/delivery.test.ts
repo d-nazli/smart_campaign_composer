@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Campaign, ChannelProgress } from '../types'
 import { approvalDifference, channelPercent, describeChannel, shouldPoll } from './delivery'
 
-const p = (o: Partial<ChannelProgress> = {}): ChannelProgress => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, ...o })
+const p = (o: Partial<ChannelProgress> = {}): ChannelProgress => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
 
 const campaign = (status: Campaign['status'], delivery?: Campaign['delivery']): Campaign => ({
   id: 1,

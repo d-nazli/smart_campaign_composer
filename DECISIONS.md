@@ -308,6 +308,32 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - "Onayla ve gönder" iki adımlı (sayılar + uyarılar gösterilir, "Evet, gönder"). Kaydedilmemiş düzenleme varken onay kapalı. Onaydan sonra editör salt okunur, kitle/metin kilitli.
 - Gönderim ilerlemesi (kanal başına gönderildi / başarısız / atlandı / bekliyor) her saniye `GET /api/campaigns/{id}` ile güncellenir; `completed` olunca durur. CASE'in Aşama 5 maddesi "canlı akış (SSE ya da polling)" bu polling ile zaten karşılanıyor; Aşama 5'te bu ekran yeniden kullanılır.
 
+## D57 — `/metrics`: veritabanından okunur, el yazımı Prometheus formatı · `Kesin (kullanıcı kararı + uygulama)`
+- Api ve worker ayrı süreçler. Sayaçları worker belleğinde tutup ayrıca bir uç açmak yerine her scrape'te mevcut tablolardan (`deliveries`, `llm_generations`, `campaigns`) hesaplanır: tek doğruluk kaynağı, yeniden başlatmada kaybolmaz, api worker'a bağlanmaz. Bedeli: her scrape 3 toplulaştırma sorgusu (bu ölçekte ms; çok büyürse `deliveries` için özet tablo gerekir).
+- Biçim el yazımı (bağımlılık yok); testte ayrı bir doğrulayıcı HELP/TYPE sırasını, tekrarlı seriyi ve satır sözdizimini denetler. Etiketler: `channel` (sms/email), `kind` (segment/messages), `status`.
+- **Tüm seriler sıfırdan başlar** (hiç olay yokken bile görünür): `rate()` ve panolar ilk scrape'ten çalışsın diye.
+- Veritabanı okunamazsa scrape **503** verir; sıfırlarla dolu bir sayfa "her şey sakin" gibi görünürdü.
+- "Saniyedeki gönderim hızı" = son 10 sn'de `sent_at`'i olan teslimat / 10 (gauge). Sayaçlardan `rate()` ile de hesaplanabilir. Süreler **sum/count** (summary) olarak verilir; histogram/yüzdelik yok (kabul edilen sınır).
+- LLM: "üretim" = bir ilk deneme (`attempt=1`) ve onun düzeltmeleri; "repair denemesi" = `attempt>1` satırları. `needs_clarification`/`unsupported` sayıları `campaigns.segment_status`'tan gelir, çünkü bunların çoğu kodla karara bağlanır ve hiç LLM satırı üretmez (D44).
+- **Fallback ve refusal artık açıkça kaydedilir** (migration `00005`: `llm_generations.refused`, `fell_back`). Sezgiyle ("son deneme geçersizse fallback") saymak zaman aşımı gibi durumlarda yanlış sayardı; test: fallback yalnızca ilgili üretimin son denemesinde işaretlenir, sonraki başarılı üretim işareti taşımaz. Bilinen sınır: eski satırlarda (migration öncesi) bu bayraklar yoktur.
+- Mock LLM token harcamaz; token sayaçları yalnız gerçek Claude ile artar.
+
+## D58 — Provider yanıt süresi satıra yazılır · `Kesin (uygulama)`
+- `deliveries.provider_calls/provider_micros` (migration `00005`); worker her provider çağrısından sonra `queue.Observe` ile ekler. Sonuç yazımından ayrı tutuldu: sonuç kaybolsa (çökme) ölçüm kaybolmaz. Retry'lar dahil her çağrı sayılır (bu yüzden `_count` gönderilen sayısından büyük olabilir). Süre worker'ın `Clock`'uyla ölçülür (testte sahte saatle kesin).
+- Bedeli: gönderim başına bir ek `UPDATE` (180/sn civarı; bu ölçekte sorun değil).
+
+## D59 — api `/healthz` veritabanını kontrol eder · `Kesin (kullanıcı kararı)`
+- Api'de `/healthz` artık DB ping'i yapar (2 sn zaman aşımı; 200 `ok` / 503 `unavailable`); `/readyz` aynı kontrolle duruyor. docker-compose'daki api healthcheck'i `/healthz`'a geçti. Worker'ın `/healthz`'ı yalnız süreç canlılığıdır (DB kaybı orada kuyruğun akmaması ve loglanan hatalarla görünür); istenirse aynı kontrol eklenebilir.
+
+## D60 — Dashboard: sade, polling, hash ile sekme · `Kesin (kullanıcı kararı)`
+- `GET /api/campaigns?limit=` (varsayılan 50, en çok 200; sınır dışı değer kıstırılır, sayı olmayan 400). Her satır: durum, kitle, onaylıysa kanal bazlı ilerleme + `retries`/`rate_limited`. Tek sorguyla tüm onaylı kampanyaların sayımı gelir (kampanya başına sorgu yok).
+- Arayüz: router bağımlılığı yok, `#/dashboard` hash'i ile iki sekme; 2 sn polling; hata olursa son liste "eski olabilir" uyarısıyla kalır. Bilinçli olarak sade: arayüz sonraki bir aşamada baştan tasarlanacak.
+- Taslaklar nedenini söyler ("Desteklenmiyor", "Soru bekliyor"), "Taslak" demekle yetinilmez (D44 ile uyumlu).
+
+## D61 — `-race` ayrı hedef · `Kesin (kullanıcı kararı)`
+- `make test-race` / `backend-test-race`: Debian tabanlı `golang:1.25` aşaması (`CGO_ENABLED=1`); mevcut Alpine imajında C derleyicisi yok. `make test`'e dahil değil (≈2 dk, instrumentation yüzünden yavaş).
+- Sonuç: tüm paketler (kuyruk, worker, eşzamanlı onay, pacer dahil) temiz. Dedektörün bu kurulumda gerçekten çalıştığı, kasıtlı yarışlı bir programın yakalanmasıyla doğrulandı. Kuyruk/worker testleri çoğunlukla `Concurrency=1` ile deterministik; gerçek eşzamanlılığı gerçek saatle çalışan 20 göndericili test ve 8 eşzamanlı onay testi sınar.
+
 ---
 
 ## Açık / onay bekleyenler

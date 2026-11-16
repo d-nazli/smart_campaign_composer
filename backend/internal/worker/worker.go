@@ -194,12 +194,14 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 	if err := pacer.Wait(ctx); err != nil {
 		return // shutting down: the lease expires and the row is picked up again
 	}
+	began := w.clk.Now()
 	res := w.send.Send(ctx, d.Channel, msg, strconv.FormatInt(d.ID, 10))
 	if ctx.Err() != nil {
 		return // interrupted mid-flight: not the provider's fault, do not count it
 	}
 
 	now := w.clk.Now()
+	w.record(func(c context.Context, _ time.Time) error { return w.q.Observe(c, d.ID, now.Sub(began)) })
 	dec := w.cfg.Policy.Decide(res.Outcome, d.Attempts, now.Sub(d.CreatedAt))
 	switch dec.Action {
 	case ActionSent:
