@@ -35,6 +35,12 @@ type Offer struct {
 	Kind  Kind    `json:"kind"`
 	Value float64 `json:"value"`
 	Code  string  `json:"code"`
+	// MinSpend is the smallest basket (TRY) the offer applies to; 0 means no
+	// minimum. It is a TERM OF THE OFFER, never an audience condition.
+	MinSpend float64 `json:"min_spend"`
+	// ExpiresAt is the last day the offer can be used, YYYY-MM-DD; empty means
+	// the brief gives none.
+	ExpiresAt string `json:"expires_at"`
 }
 
 const (
@@ -53,6 +59,7 @@ func (o Offer) Normalize() Offer {
 		return Offer{Kind: KindNone}
 	}
 	o.Code = strings.ToUpper(strings.TrimSpace(o.Code))
+	o.ExpiresAt = strings.TrimSpace(o.ExpiresAt)
 	switch o.Kind {
 	case KindFreeShipping, KindCouponCode:
 		o.Value = 0
@@ -64,8 +71,8 @@ func (o Offer) Normalize() Offer {
 func (o Offer) Validate() error {
 	switch o.Kind {
 	case "", KindNone:
-		if o.Value != 0 || strings.TrimSpace(o.Code) != "" {
-			return fmt.Errorf("offer.kind \"none\" iken value 0 ve code boş olmalı")
+		if o.Value != 0 || strings.TrimSpace(o.Code) != "" || o.MinSpend != 0 || strings.TrimSpace(o.ExpiresAt) != "" {
+			return fmt.Errorf("offer.kind \"none\" iken value 0, code, min_spend ve expires_at boş olmalı")
 		}
 	case KindPercent:
 		if o.Value <= 0 || o.Value > MaxPercent {
@@ -92,13 +99,14 @@ func (o Offer) Validate() error {
 	if c := strings.TrimSpace(o.Code); c != "" && !codeRe.MatchString(c) {
 		return fmt.Errorf("offer.code %q geçersiz; 3-32 karakter, yalnızca harf, rakam, - ve _", c)
 	}
-	return nil
+	return termsError(o)
 }
 
 // Equal compares two offers after normalization.
 func (o Offer) Equal(p Offer) bool {
 	a, b := o.Normalize(), p.Normalize()
-	return a.Kind == b.Kind && math.Abs(a.Value-b.Value) < 1e-9 && a.Code == b.Code
+	return a.Kind == b.Kind && math.Abs(a.Value-b.Value) < 1e-9 && a.Code == b.Code &&
+		math.Abs(a.MinSpend-b.MinSpend) < 1e-9 && a.ExpiresAt == b.ExpiresAt
 }
 
 // Describe renders the offer for people and for repair feedback, in Turkish.
@@ -113,12 +121,22 @@ func (o Offer) Describe() string {
 	case KindFreeShipping:
 		s = "ücretsiz kargo"
 	case KindCouponCode:
-		return "kupon kodu " + o.Code
+		s = "kupon kodu " + o.Code
 	default:
 		return "teklif yok"
 	}
-	if o.Code != "" {
-		s += " (kupon kodu " + o.Code + ")"
+	var terms []string
+	if o.Code != "" && o.Kind != KindCouponCode {
+		terms = append(terms, "kupon kodu "+o.Code)
+	}
+	if p := o.MinSpendPhrase(); p != "" {
+		terms = append(terms, p)
+	}
+	if o.ExpiresAt != "" {
+		terms = append(terms, "son kullanım "+FormatDate(o.ExpiresAt))
+	}
+	if len(terms) > 0 {
+		s += " (" + strings.Join(terms, ", ") + ")"
 	}
 	return s
 }
@@ -213,6 +231,12 @@ func (o Offer) Mentions(text string) bool {
 	}
 	if ok && o.Code != "" {
 		ok = strings.Contains(strings.ToUpper(text), o.Code)
+	}
+	if ok && o.MinSpend > 0 {
+		ok = hasValue(Amounts(text), o.MinSpend)
+	}
+	if ok && o.ExpiresAt != "" {
+		ok = containsString(Dates(text), o.ExpiresAt)
 	}
 	return ok
 }

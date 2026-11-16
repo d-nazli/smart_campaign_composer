@@ -152,7 +152,7 @@ func TestCreateMapsLLMFailures(t *testing.T) {
 func TestCreateClarificationAndUnsupportedStayInDraft(t *testing.T) {
 	svc, _ := newService(t, mock.New(0))
 
-	v, err := svc.Create(context.Background(), "Herkese merhaba de")
+	v, err := svc.Create(context.Background(), "Hoş geldin mesajı gönder")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +454,7 @@ func TestSaveContentAppliesTheSameRulesAsModelOutput(t *testing.T) {
 
 func TestSaveContentNeedsASegmentFirst(t *testing.T) {
 	svc, _ := newService(t, mock.New(0))
-	v, err := svc.Create(context.Background(), "Herkese merhaba de") // needs clarification -> draft
+	v, err := svc.Create(context.Background(), "Hoş geldin mesajı gönder") // needs clarification -> draft
 	if err != nil {
 		t.Fatal(err)
 	}

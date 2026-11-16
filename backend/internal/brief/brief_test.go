@@ -43,12 +43,20 @@ var (
 	none         = offer.Offer{Kind: offer.KindNone}
 	pct          = func(v float64) offer.Offer { return offer.Offer{Kind: offer.KindPercent, Value: v} }
 	freeShipping = offer.Offer{Kind: offer.KindFreeShipping}
+	amountOf     = func(v float64) offer.Offer { return offer.Offer{Kind: offer.KindAmount, Value: v} }
+	// withTerms adds the terms of an offer: a minimum basket and a last day.
+	withTerms = func(o offer.Offer, minSpend float64, expires string) offer.Offer {
+		o.MinSpend, o.ExpiresAt = minSpend, expires
+		return o
+	}
 )
 
 const (
-	cartWindow = "days_since_last_cart_add lte "
-	abandoned  = "purchased_since_last_cart_add eq false"
-	noOrder    = "days_since_last_order_or_never gt "
+	cartWindow  = "days_since_last_cart_add lte "
+	abandoned   = "purchased_since_last_cart_add eq false"
+	noOrder     = "days_since_last_order_or_never gt "
+	everyone    = "all_customers eq true"
+	whoQuestion = "Bu kampanya kime gönderilsin? Tüm müşterilere mi?"
 )
 
 // ---- the table -------------------------------------------------------------
@@ -65,6 +73,10 @@ type row struct {
 	want   []string
 	offer  offer.Offer
 	say    string
+	// question is the exact text a needs_clarification answer must show, and
+	// suggest the one-click answer offered with it (both optional).
+	question string
+	suggest  string
 }
 
 var table = []row{
@@ -164,7 +176,68 @@ var table = []row{
 	{name: "unsupported: birthday", brief: "Doğum günü bu hafta olanlara %10 indirim", status: segment.StatusUnsupported, say: "doğum"},
 
 	// ---- not understood: ask, do not guess -------------------------------
-	{name: "clarify: nothing to select on", brief: "Herkese merhaba de", status: segment.StatusNeedsClarification, say: "kimlere"},
+
+	// ---- offer terms (minimum basket, last day) are NOT audience conditions ---
+	// The brief that was reported: "1000 TL üzeri" is a term of the discount, and the
+	// brief names no audience, so the only open question is who gets the message.
+	{name: "mother's day: terms are read, the audience is asked", brief: mothersDay,
+		status: segment.StatusNeedsClarification, question: whoQuestion, suggest: segment.SuggestAllCustomers,
+		offer: withTerms(amountOf(100), 1000, "2026-12-31")},
+	{name: "mother's day, after 'send to everyone'", brief: mothersDay + "\n\nTüm müşterilere gönder.",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(amountOf(100), 1000, "2026-12-31")},
+	{name: "terms: minimum basket with a percentage", brief: "Tüm müşterilere 1000 TL üzeri alışverişe %10 indirim",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(pct(10), 1000, "")},
+	{name: "terms: 1.500 TL ve üzeri, slash date", brief: "Herkese 1.500 TL ve üzeri alışverişlerde 150 TL indirim, son kullanım 31/12/2026",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(amountOf(150), 1500, "2026-12-31")},
+	{name: "terms: en az ...'lik alışveriş", brief: "Herkese en az 750 TL'lik alışverişe ücretsiz kargo",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(freeShipping, 750, "")},
+	{name: "terms: 'sepete' counts as a shopping word", brief: "Herkese 500 TL üzeri sepete %10 indirim",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(pct(10), 500, "")},
+	{name: "terms: written-out date", brief: "Herkese %10 indirim, son kullanma tarihi 5 Ocak 2027",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(pct(10), 0, "2027-01-05")},
+	{name: "terms: 'kadar geçerli'", brief: "Herkese 31 Aralık 2026'ya kadar geçerli %10 indirim",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(pct(10), 0, "2026-12-31")},
+	{name: "terms with a cart audience", brief: "Son 30 günde sepeti terk edenlere 1000 TL üzeri alışverişe %10 indirim, son kullanım 31.12.2026",
+		status: segment.StatusOK, want: []string{cartWindow + "30", abandoned}, offer: withTerms(pct(10), 1000, "2026-12-31")},
+	{name: "terms: a minimum without an offer", brief: "Herkese 1000 TL üzeri alışverişlerde kampanya", status: segment.StatusNeedsClarification, say: "teklif"},
+	{name: "terms: a date without an offer", brief: "Herkese son kullanım 31.12.2026", status: segment.StatusNeedsClarification, say: "teklif"},
+	{name: "terms: impossible date", brief: "Herkese %10 indirim, son kullanım 31.02.2026", status: segment.StatusNeedsClarification, say: "geçerli bir tarih"},
+	{name: "terms: day and month without a year", brief: "Herkese %10 indirim, 31 Aralık'a kadar", status: segment.StatusNeedsClarification, say: "31 Aralık 20"},
+	{name: "terms: two different dates", brief: "Herkese %10 indirim, son kullanım 31.12.2026 ya da 15.01.2027", status: segment.StatusNeedsClarification, say: "birden fazla tarih"},
+	{name: "terms: a date that is not said to be the last day", brief: "Herkese %10 indirim 31.12.2026", status: segment.StatusNeedsClarification, say: "son kullanım 31.12.2026"},
+	{name: "terms: two different minimums", brief: "Herkese 500 TL üzeri alışverişe %10 indirim, 1000 TL üzeri alışverişe %15 indirim", status: segment.StatusNeedsClarification, say: "birden fazla"},
+
+	// ---- everyone: only when the brief says so, never an empty rule ----------
+	{name: "everyone: herkese %10 indirim", brief: "herkese %10 indirim", status: segment.StatusOK, want: []string{everyone}, offer: pct(10)},
+	{name: "everyone: tüm müşterilere", brief: "Tüm müşterilere %10 indirim gönder", status: segment.StatusOK, want: []string{everyone}, offer: pct(10)},
+	{name: "everyone: bütün kullanıcılara", brief: "Bütün kullanıcılara ücretsiz kargo", status: segment.StatusOK, want: []string{everyone}, offer: freeShipping},
+	{name: "everyone: no offer", brief: "Herkese merhaba de", status: segment.StatusOK, want: []string{everyone}, offer: none},
+	{name: "everyone is ignored when a real audience is named", brief: "İstanbul'daki herkese %10 indirim", status: segment.StatusOK, want: []string{"city eq İstanbul"}, offer: pct(10)},
+	{name: "everyone is ignored next to a cart audience", brief: "Sepeti terk eden herkese %10 indirim", status: segment.StatusOK, want: []string{abandoned}, offer: pct(10)},
+	{name: "nobody named: a discount only", brief: "%10 indirim gönder", status: segment.StatusNeedsClarification,
+		question: whoQuestion, suggest: segment.SuggestAllCustomers, offer: pct(10)},
+	{name: "nobody named: a greeting only", brief: "Hoş geldin mesajı gönder", status: segment.StatusNeedsClarification,
+		question: whoQuestion, suggest: segment.SuggestAllCustomers, offer: none},
+
+	// ---- an amount threshold: ambiguous, and the example uses YOUR number ----
+	{name: "threshold: spending customers, example uses the brief's number", brief: "1500 TL üzeri alışveriş yapan müşterilere %10 indirim",
+		status: segment.StatusNeedsClarification, say: "toplam harcaması 1500 TL'den fazla"},
+	{name: "spend audience: toplam harcaması N TL üzeri", brief: "Toplam harcaması 2500 TL üzeri olan müşterilere %10 indirim",
+		status: segment.StatusOK, want: []string{"total_spent gt 2500"}, offer: pct(10)},
+	{name: "spend audience: 'den fazla harcayan", brief: "1.000 TL'den fazla harcayan müşterilere ücretsiz kargo",
+		status: segment.StatusOK, want: []string{"total_spent gt 1000"}, offer: freeShipping},
+	{name: "spend audience: ve üzeri", brief: "Toplam harcaması 5000 TL ve üzeri olanlara 200 TL indirim",
+		status: segment.StatusOK, want: []string{"total_spent gte 5000"}, offer: amountOf(200)},
+	{name: "spend audience: under a limit", brief: "Toplam harcaması 300 TL altında olan müşterilere %5 indirim",
+		status: segment.StatusOK, want: []string{"total_spent lt 300"}, offer: pct(5)},
+	{name: "spend audience with a city", brief: "Ankara'daki toplam harcaması 2500 TL üzeri müşterilere %10 indirim",
+		status: segment.StatusOK, want: []string{"city eq Ankara", "total_spent gt 2500"}, offer: pct(10)},
+	{name: "spend audience: words but no amount", brief: "Çok harcayan müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "tutar"},
+	{name: "threshold: under a limit", brief: "750 TL altında alışveriş yapanlara %10 indirim", status: segment.StatusNeedsClarification, say: "750"},
+	{name: "hours: the example converts the brief's number", brief: "Son 48 saatte sepete ürün ekleyip almayanlara %10 indirim",
+		status: segment.StatusNeedsClarification, say: "son 2 gün"},
+	{name: "vague window with a number in it", brief: "Son 45+ gün sepete ürün ekleyip almayanlara %10 indirim",
+		status: segment.StatusNeedsClarification, say: "son 45 gün"},
 	{name: "clarify: a negation we have no field for", brief: "Kuponunu kullanmamış müşterilere %10 indirim gönder", status: segment.StatusNeedsClarification, say: "kullanmamış"},
 	{name: "clarify: contradictory purchase wording", brief: "Sipariş veren ama siparişi tamamlamayan müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "sipariş"},
 }
@@ -185,8 +258,19 @@ func TestBriefTable(t *testing.T) {
 					t.Errorf("a %s answer must not carry conditions: %v", tt.status, conds(rule))
 				}
 				shown := trtext.Fold(rule.Question + " " + rule.Explanation)
-				if !strings.Contains(shown, trtext.Fold(tt.say)) {
+				if tt.say != "" && !strings.Contains(shown, trtext.Fold(tt.say)) {
 					t.Errorf("the message shown to the user must name %q, got question=%q explanation=%q", tt.say, rule.Question, rule.Explanation)
+				}
+				if tt.question != "" && rule.Question != tt.question {
+					t.Errorf("question = %q, want exactly %q", rule.Question, tt.question)
+				}
+				if rule.Suggestion != tt.suggest {
+					t.Errorf("suggestion = %q, want %q", rule.Suggestion, tt.suggest)
+				}
+				// When the only open question is "who?", the offer that WAS understood is
+				// carried along, so the screen can show it next to the question.
+				if tt.suggest != "" && !rule.Offer.Equal(tt.offer) {
+					t.Errorf("offer on the clarification = %+v, want %+v", rule.Offer, tt.offer)
 				}
 				return
 			}
@@ -220,6 +304,8 @@ func TestEveryTableRowIsStableAcrossRuns(t *testing.T) {
 }
 
 // ---- the backend catches a model that drops something ----------------------
+
+const mothersDay = "anneler gününe özel 1000 tl üzeri alışverişe 100tl indirim kullandır son kullanım 31.12.2026"
 
 const reportedBrief = "son 30 günde adanada sepete ekleme yapmış ancak sipariş oluşturmamış kişilere yüzde 15 indirim kuponunu tanımla"
 
@@ -355,5 +441,106 @@ func TestUnsupportedAndAmbiguousBriefsNeverReachTheModel(t *testing.T) {
 		if n := len(m.Calls()); n != 0 {
 			t.Errorf("%q: model was called %d times", b, n)
 		}
+	}
+}
+
+// ---- terms and "everyone": what a model must not get wrong ---------------------
+
+func feedback(t *testing.T, m *mock.Client) string {
+	t.Helper()
+	calls := m.Calls()
+	if len(calls) != 2 || len(calls[1].Previous) != 1 {
+		t.Fatalf("expected exactly one repair round, got %d calls", len(calls))
+	}
+	return trtext.Fold(strings.Join(calls[1].Previous[0].Problems, " "))
+}
+
+// The slip seen with a real model: "1000 TL üzeri" became a total_spent audience
+// condition. The threshold belongs to the offer.
+func TestAThresholdIsNeverAcceptedAsAnAudienceCondition(t *testing.T) {
+	const b = "Tüm müşterilere 1000 TL üzeri alışverişe 100 TL indirim, son kullanım 31.12.2026"
+	right := withTerms(amountOf(100), 1000, "2026-12-31")
+	everyoneCond := c("all_customers", "eq", true)
+	tests := []struct {
+		name  string
+		wrong segment.Rule
+		say   []string // words the repair feedback must contain
+	}{
+		{"threshold became total_spent", okRule(right, c("total_spent", "gt", 1000.0)), []string{"min_spend", "total_spent"}},
+		{"threshold became total_spent and the audience is missing", okRule(amountOf(100), c("total_spent", "gt", 1000.0)), []string{"all_customers", "min_spend", "expires_at"}},
+		{"terms left out of the offer", okRule(amountOf(100), everyoneCond), []string{"min_spend", "expires_at"}},
+		{"wrong minimum", okRule(withTerms(amountOf(100), 500, "2026-12-31"), everyoneCond), []string{"min_spend"}},
+		{"wrong last day", okRule(withTerms(amountOf(100), 1000, "2026-12-30"), everyoneCond), []string{"expires_at"}},
+		{"everyone plus a threshold condition", okRule(right, everyoneCond, c("total_spent", "gt", 1000.0)), []string{"all_customers"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := mock.NewScripted([]mock.Step{rawRule(t, tt.wrong), {Kind: mock.Smart}}, nil)
+			rule, err := brief.ResolveSegment(context.Background(), m, b, llm.Hooks{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(conds(rule), "|"); rule.Status != segment.StatusOK || got != everyone || !rule.Offer.Equal(right) {
+				t.Fatalf("repaired rule: %s %v %+v", rule.Status, got, rule.Offer)
+			}
+			fb := feedback(t, m)
+			for _, w := range tt.say {
+				if !strings.Contains(fb, w) {
+					t.Errorf("the repair feedback should mention %q: %s", w, fb)
+				}
+			}
+		})
+	}
+}
+
+func TestTheModelCannotInventOrForgetEveryone(t *testing.T) {
+	invented := okRule(pct(10), c("all_customers", "eq", true))
+	m := mock.NewScripted([]mock.Step{rawRule(t, invented), {Kind: mock.Smart}}, nil)
+	rule, err := brief.ResolveSegment(context.Background(), m, "İstanbul'daki müşterilere %10 indirim", llm.Hooks{})
+	if err != nil || strings.Join(conds(rule), "|") != "city eq İstanbul" {
+		t.Fatalf("%v %v", conds(rule), err)
+	}
+	if fb := feedback(t, m); !strings.Contains(fb, "all_customers") {
+		t.Errorf("feedback: %s", fb)
+	}
+
+	forgot := okRule(pct(10), c("city", "eq", "İstanbul"))
+	m = mock.NewScripted([]mock.Step{rawRule(t, forgot), {Kind: mock.Smart}}, nil)
+	rule, err = brief.ResolveSegment(context.Background(), m, "Herkese %10 indirim", llm.Hooks{})
+	if err != nil || strings.Join(conds(rule), "|") != everyone {
+		t.Fatalf("%v %v", conds(rule), err)
+	}
+	if fb := feedback(t, m); !strings.Contains(fb, "all_customers") {
+		t.Errorf("feedback: %s", fb)
+	}
+}
+
+// When no audience is named at all the model is not asked: it would guess.
+func TestABriefThatNamesNobodyNeverReachesTheModel(t *testing.T) {
+	for _, b := range []string{"%10 indirim gönder", "Hoş geldin mesajı gönder", mothersDay} {
+		m := mock.NewScripted([]mock.Step{rawRule(t, okRule(pct(10), c("all_customers", "eq", true)))}, nil)
+		rule, err := brief.ResolveSegment(context.Background(), m, b, llm.Hooks{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rule.Status != segment.StatusNeedsClarification || rule.Question != whoQuestion || rule.Suggestion != segment.SuggestAllCustomers {
+			t.Errorf("%q: %+v", b, rule)
+		}
+		if n := len(m.Calls()); n != 0 {
+			t.Errorf("%q: the model was called %d times", b, n)
+		}
+	}
+}
+
+// A spending audience the model CAN express keeps working: it is not "nobody".
+func TestASpendingAudienceStillGoesToTheModel(t *testing.T) {
+	ok := okRule(pct(10), c("total_spent", "gt", 5000.0))
+	m := mock.NewScripted([]mock.Step{rawRule(t, ok)}, nil)
+	rule, err := brief.ResolveSegment(context.Background(), m, "Toplam harcaması 5000 TL'den fazla olan müşterilere %10 indirim", llm.Hooks{})
+	if err != nil || rule.Status != segment.StatusOK || strings.Join(conds(rule), "|") != "total_spent gt 5000" {
+		t.Fatalf("%+v %v", rule, err)
+	}
+	if n := len(m.Calls()); n != 1 {
+		t.Fatalf("calls = %d", n)
 	}
 }

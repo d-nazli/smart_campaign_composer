@@ -53,7 +53,8 @@ func TestSmartMockSegmentVariants(t *testing.T) {
 		{"Hiç alışveriş yapmamış müşterilere hoş geldin indirimi", segment.StatusOK, "order_count"},
 		{"Son 14 günde sipariş veren müşterilere teşekkür", segment.StatusOK, "days_since_last_order"},
 		{"35 yaşındaki kadınlara kampanya", segment.StatusUnsupported, ""},
-		{"Herkese merhaba de", segment.StatusNeedsClarification, ""},
+		{"Herkese merhaba de", segment.StatusOK, "all_customers"},
+		{"Hoş geldin mesajı gönder", segment.StatusNeedsClarification, ""},
 	}
 	for _, tt := range tests {
 		out, err := mock.New(0).Segment(context.Background(), llm.SegmentRequest{Brief: tt.brief})

@@ -530,3 +530,10 @@ volumes: { pgdata: {} }
 3. PLAN §9 varsayımları geçerli; #7 değişti (kanal seçimi yok). Değişkenler: yalnız `first_name` ve `city`, sabit paylarla (20 / 15); SMS 160 ve konu 80 asla aşılmaz, konu tek satır. Düz DSL, structured outputs, refusal fallback beta'sı yok, SSE elle yazılmış ayrıştırıcıyla.
 4. LLM: varsayılan mock, `LLM_MODE=auto`; key doluysa Claude; `CLAUDE_MODEL` varsayılan `claude-sonnet-5-5`; `make test` daima mock; `make test-live` ayrı; mod log ve UI'da görünür.
 5. Kapsam: bonuslar yapılmayacak; kapsam dışı özellik için önce sorulacak.
+
+### Aşama 5.1 ✅ tamamlandı (DECISIONS D62–D66) — Teklif şartları ve "herkese" kitlesi (kullanıcı geri bildirimi: "anneler gününe özel 1000 tl üzeri alışverişe 100tl indirim… son kullanım 31.12.2026")
+Sorun: "1000 TL üzeri" kitle koşulu sanıldı; oysa teklifin şartıydı.
+1. `offer.Offer`: `min_spend` (alt limit, TL) ve `expires_at` (YYYY-MM-DD). Brief'ten çıkarılır (`1000 TL üzeri alışverişe`, `son kullanım 31.12.2026`, `31 Aralık 2026'ya kadar`…); mesaj doğrulaması SMS'te ve e-postada ikisinin de geçtiğini ve başka bir tarih yazılmadığını denetler; prompt'lar "alışveriş tutarı şartları teklife aittir, kitleye değil" der.
+2. Kitle koşulu: brief açıkça "herkese / tüm müşterilere" diyorsa açık işaretli koşul `all_customers eq true` (boş kural değil; izin filtresi yine uygulanır). Hiçbir kitle belirtilmemişse `needs_clarification`: "Bu kampanya kime gönderilsin? Tüm müşterilere mi?" + ekranda "Tüm müşterilere gönder" düğmesi.
+3. `needs_clarification` mesajlarındaki örnekler brief'teki sayıyı kullanır.
+4. Test seti (tablo) + `make test-live`'a bu brief ve "herkese %10 indirim" örnekleri.

@@ -34,6 +34,8 @@ export function describeCondition(c: Condition): string {
       const tail = '(hiç sipariş vermemişler dahil)'
       return c.op === 'gte' ? `En az ${n} gündür sipariş vermemiş ${tail}` : `Son ${n} günde sipariş vermemiş ${tail}`
     }
+    case 'all_customers':
+      return 'Tüm müşteriler (iletişim izni olanlar)'
     case 'order_count':
       return `Sipariş sayısı ${SYMBOL[c.op] ?? c.op} ${c.value}`
     case 'total_spent':

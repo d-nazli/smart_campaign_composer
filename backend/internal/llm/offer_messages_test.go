@@ -26,6 +26,12 @@ func TestSmartMockMessagesPassEveryCheckForEveryOffer(t *testing.T) {
 		{Kind: offer.KindFreeShipping},
 		{Kind: offer.KindCouponCode, Code: "HOSGELDIN10"},
 		{Kind: offer.KindPercent, Value: 15, Code: "YAZ25"},
+		// terms of the offer: a minimum basket and a last day
+		{Kind: offer.KindAmount, Value: 100, MinSpend: 1000, ExpiresAt: "2026-12-31"},
+		{Kind: offer.KindPercent, Value: 10, MinSpend: 1500.5},
+		{Kind: offer.KindFreeShipping, ExpiresAt: "2027-01-05"},
+		{Kind: offer.KindCouponCode, Code: "YAZ25", MinSpend: 500, ExpiresAt: "2026-12-31"},
+		{Kind: offer.KindPercent, Value: 15, Code: "YAZ25", MinSpend: 1000, ExpiresAt: "2026-12-31"},
 	}
 	briefs := []string{
 		exampleBrief,
@@ -87,6 +93,38 @@ func TestPromptsCarryTheOffer(t *testing.T) {
 	for _, want := range []string{"offer", "repeat"} {
 		if !strings.Contains(strings.ToLower(msg), want) {
 			t.Errorf("messages system prompt should mention %q", want)
+		}
+	}
+}
+
+// ---- the terms and the audience, as the prompts put them -----------------------
+
+func TestSegmentPromptSaysTermsBelongToTheOfferNotTheAudience(t *testing.T) {
+	seg := llm.SegmentSystemPrompt()
+	for _, want := range []string{
+		"alışveriş tutarı şartları teklife aittir, kitleye değil",
+		"min_spend", "expires_at", "all_customers",
+		"Bu kampanya kime gönderilsin? Tüm müşterilere mi?",
+		"1000 TL üzeri alışverişe 100 TL indirim",
+	} {
+		if !strings.Contains(seg, want) {
+			t.Errorf("segment system prompt should contain %q", want)
+		}
+	}
+}
+
+func TestMessagesPromptCarriesTheTerms(t *testing.T) {
+	o := offer.Offer{Kind: offer.KindAmount, Value: 100, MinSpend: 1000, ExpiresAt: "2026-12-31"}
+	user := llm.MessagesUserPrompt("brief", "Tüm müşteriler", o)
+	for _, want := range []string{"100 TL indirim", "1000 TL ve üzeri alışverişte", "31.12.2026"} {
+		if !strings.Contains(user, want) {
+			t.Errorf("messages user prompt should contain %q:\n%s", want, user)
+		}
+	}
+	msg := llm.MessagesSystemPrompt(policy(t))
+	for _, want := range []string{"minimum", "last day", "dd.mm.yyyy"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("messages system prompt should explain %q", want)
 		}
 	}
 }

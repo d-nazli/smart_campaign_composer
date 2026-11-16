@@ -46,6 +46,11 @@ func (p Policy) Quality(c Content, o offer.Offer) []Issue {
 	for _, bad := range o.Conflicts(c.EmailBody) {
 		add(FieldEmailBody, CodeOfferConflict, conflictMessage("E-posta metni", bad, o))
 	}
+	if !o.IsNone() {
+		dateConflicts(o, "SMS", FieldSMSBody, c.SMSBody, add)
+		dateConflicts(o, "E-posta konusu", FieldEmailSubject, c.EmailSubject, add)
+		dateConflicts(o, "E-posta metni", FieldEmailBody, c.EmailBody, add)
+	}
 
 	for _, f := range []struct{ field, label, text string }{
 		{FieldSMSBody, "SMS", c.SMSBody},
@@ -128,4 +133,17 @@ func sameWord(a, b string) bool {
 		cp++
 	}
 	return cp >= minStemRunes && cp >= short-stemSlackRunes
+}
+
+// dateConflicts flags every date in a text that is not the offer's last day.
+// The brief's last day is the only date a message may state: a different one
+// (or any date when the brief gives none) would promise something nobody agreed.
+func dateConflicts(o offer.Offer, label, field string, text string, add func(field, code, msg string)) {
+	for _, d := range o.DateConflicts(text) {
+		if o.ExpiresAt == "" {
+			add(field, CodeOfferConflict, fmt.Sprintf("%s: metinde %s tarihi yazıyor ama brief'te son kullanma tarihi yok. Tarih uydurma.", label, d))
+		} else {
+			add(field, CodeOfferConflict, fmt.Sprintf("%s: metinde %s tarihi yazıyor ama brief'teki son kullanma tarihi %s. Başka bir tarih yazma.", label, d, offer.FormatDate(o.ExpiresAt)))
+		}
+	}
 }

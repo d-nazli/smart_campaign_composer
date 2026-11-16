@@ -76,6 +76,8 @@ type SegmentView struct {
 	Question    string              `json:"question,omitempty"`
 	Audience    *segment.Audience   `json:"audience,omitempty"`
 	Offer       offer.Offer         `json:"offer"`
+	// Suggestion is a one-click answer to Question (segment.SuggestAllCustomers).
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 type ContentView struct {
@@ -120,8 +122,14 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	}
 
 	if rule.Status != segment.StatusOK {
-		_, err := s.pool.Exec(ctx, `UPDATE campaigns SET segment_status=$2, explanation=$3, question=$4, updated_at=now() WHERE id=$1`,
-			id, rule.Status, rule.Explanation, rule.Question)
+		// The rule is stored too: a clarification can carry a one-click suggestion and
+		// the offer that WAS understood, which the screen shows next to the question.
+		ruleJSON, err := json.Marshal(rule)
+		if err != nil {
+			return nil, err
+		}
+		_, err = s.pool.Exec(ctx, `UPDATE campaigns SET segment_status=$2, explanation=$3, question=$4, segment_rule=$5, updated_at=now() WHERE id=$1`,
+			id, rule.Status, rule.Explanation, rule.Question, ruleJSON)
 		if err != nil {
 			return nil, fmt.Errorf("store segment status: %w", err)
 		}
@@ -203,7 +211,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 			if err := json.Unmarshal(r.segmentRule, &stored); err != nil {
 				return nil, fmt.Errorf("stored rule is corrupt: %w", err)
 			}
-			sv.Match, sv.Conditions, sv.Offer = stored.Match, stored.Conditions, stored.Offer.Normalize()
+			sv.Match, sv.Conditions, sv.Offer, sv.Suggestion = stored.Match, stored.Conditions, stored.Offer.Normalize(), stored.Suggestion
 		}
 		if r.matched != nil {
 			sv.Audience = &segment.Audience{Matched: *r.matched, SMSReachable: *r.smsReachable,

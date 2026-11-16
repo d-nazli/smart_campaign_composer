@@ -14,7 +14,11 @@ import (
 // test double, so it is deterministic; the interesting failure paths (a model
 // that drops a condition or the offer) are scripted in tests with Raw steps.
 func smartSegment(text string) string {
-	raw, _ := json.Marshal(brief.Analyze(text).Rule())
+	rule := brief.Analyze(text).Rule()
+	// The one-click suggestion is decided by code, never by a model, and the
+	// strict parser rejects it in model output; the mock imitates a model.
+	rule.Suggestion = ""
+	raw, _ := json.Marshal(rule)
 	return string(raw)
 }
 
@@ -34,27 +38,38 @@ func smartMessages(text string, o offer.Offer) string {
 	cart := strings.Contains(b, "sepet")
 	o = o.Normalize()
 	what, code := offerWhat(o)
+	minP, expiry := o.MinSpendPhrase(), o.ExpiryPhrase()
+	full := what // the offer with its minimum basket in front: "1000 TL ve üzeri alışverişte 100 TL indirim"
+	switch {
+	case what != "" && minP != "":
+		full = minP + " " + what
+	case what == "" && o.Kind == offer.KindCouponCode && minP != "":
+		full = minP + " " + o.Code + " kodu"
+	}
 
 	var m messagesJSON
 	switch {
 	case cart && informal:
-		m.SMSBody = "{{first_name}}, sepetindeki ürünler seni bekliyor! " + offerSentence(o, what, code, true)
+		m.SMSBody = "{{first_name}}, sepetindeki ürünler seni bekliyor! " + offerSentence(o, full, code, true, minP, expiry)
 		m.EmailSubject = subjectFor("{{first_name}}, sepetindekiler seni bekliyor", "{{first_name}}, sepetindekilerde ", what, o)
-		m.EmailBody = "Merhaba {{first_name}},\n\nSepetine eklediğin ürünler hâlâ seni bekliyor. " + offerSentence(o, what, code, true) +
+		m.EmailBody = "Merhaba {{first_name}},\n\nSepetine eklediğin ürünler hâlâ seni bekliyor. " + offerSentence(o, full, code, true, minP, expiry) +
 			"\n\nAlışverişini tamamlamak için sepetine göz atman yeterli.\n\nGörüşmek üzere!"
 	case cart:
-		m.SMSBody = "Sayın {{first_name}}, sepetinizdeki ürünler sizi bekliyor. " + offerSentence(o, what, code, false)
+		m.SMSBody = "Sayın {{first_name}}, sepetinizdeki ürünler sizi bekliyor. " + offerSentence(o, full, code, false, minP, expiry)
 		m.EmailSubject = subjectFor("Sepetinizdeki ürünler sizi bekliyor", "Sepetinizdekilerde ", what, o)
-		m.EmailBody = "Sayın {{first_name}},\n\nSepetinize eklediğiniz ürünler hâlâ sizi bekliyor. " + offerSentence(o, what, code, false) +
+		m.EmailBody = "Sayın {{first_name}},\n\nSepetinize eklediğiniz ürünler hâlâ sizi bekliyor. " + offerSentence(o, full, code, false, minP, expiry) +
 			"\n\nAlışverişinizi tamamlamak için sepetinize göz atabilirsiniz.\n\nSaygılarımızla"
 	case informal:
 		m.SMSBody = "{{first_name}}, sana özel " + specialLine(o, what, "seni bekliyor!") + codeSuffix(o, code)
 		m.EmailSubject = subjectFor("{{first_name}}, sana özel bir fırsat var", "{{first_name}}, sana özel ", what, o)
-		m.EmailBody = "Merhaba {{first_name}},\n\nSana özel bir kampanyamız var. " + offerSentence(o, what, code, true) + "\n\nGörüşmek üzere!"
+		m.EmailBody = "Merhaba {{first_name}},\n\nSana özel bir kampanyamız var. " + offerSentence(o, full, code, true, minP, expiry) + "\n\nGörüşmek üzere!"
 	default:
 		m.SMSBody = "Sayın {{first_name}}, size özel " + specialLine(o, what, "sizi bekliyor.") + codeSuffix(o, code)
 		m.EmailSubject = subjectFor("Size özel bir fırsat var", "Size özel ", what, o)
-		m.EmailBody = "Sayın {{first_name}},\n\nSize özel bir kampanyamız var. " + offerSentence(o, what, code, false) + "\n\nSaygılarımızla"
+		m.EmailBody = "Sayın {{first_name}},\n\nSize özel bir kampanyamız var. " + offerSentence(o, full, code, false, minP, expiry) + "\n\nSaygılarımızla"
+	}
+	if (minP != "" || expiry != "") && !o.IsNone() {
+		m.SMSBody = termsSMS(informal, cart, o, full, code, expiry)
 	}
 	if short {
 		for _, cut := range []struct{ from, to string }{
@@ -93,16 +108,24 @@ func codeSuffix(o offer.Offer, code string) string {
 }
 
 // offerSentence is the sentence that states the offer in the closing tone.
-func offerSentence(o offer.Offer, what, code string, informal bool) string {
+func offerSentence(o offer.Offer, what, code string, informal bool, minP, expiry string) string {
+	s := offerSentenceCore(o, what, code, informal, minP)
+	if expiry != "" {
+		s += " " + expiry + "."
+	}
+	return s
+}
+
+func offerSentenceCore(o offer.Offer, what, code string, informal bool, minP string) string {
 	switch {
 	case what != "" && informal:
 		return capitalizeFirst(what) + " fırsatını kaçırma." + codeSuffix(o, code)
 	case what != "":
 		return capitalizeFirst(what) + " fırsatından yararlanın." + codeSuffix(o, code)
 	case o.Kind == offer.KindCouponCode && informal:
-		return code + " koduyla fırsatı yakala."
+		return withMin(minP, code+" koduyla fırsatı yakala.")
 	case o.Kind == offer.KindCouponCode:
-		return code + " koduyla fırsatı yakalayın."
+		return withMin(minP, code+" koduyla fırsatı yakalayın.")
 	case informal:
 		return "Fırsatı kaçırma."
 	}
@@ -142,4 +165,34 @@ func capitalizeFirst(s string) string {
 		return s
 	}
 	return strings.ToUpper(string(r[0])) + string(r[1:])
+}
+
+// withMin puts the minimum basket in front of a sentence ("1000 TL ve üzeri
+// alışverişte YAZ25 koduyla fırsatı yakala.").
+func withMin(minP, sentence string) string {
+	if minP == "" {
+		return sentence
+	}
+	return minP + " " + sentence
+}
+
+// termsSMS is the SMS of an offer that has terms. The SMS has the least room,
+// so it is one compact line: the offer with its minimum, the code, the last day.
+func termsSMS(informal, cart bool, o offer.Offer, full, code, expiry string) string {
+	var s string
+	switch {
+	case informal && cart:
+		s = "{{first_name}}, sepetindeki ürünler için " + full + " seni bekliyor!"
+	case informal:
+		s = "{{first_name}}, " + full + " seni bekliyor!"
+	case cart:
+		s = "Sayın {{first_name}}, sepetinizdeki ürünler için " + full + " sizi bekliyor."
+	default:
+		s = "Sayın {{first_name}}, " + full + " sizi bekliyor."
+	}
+	s += codeSuffix(o, code)
+	if expiry != "" {
+		s += " " + expiry + "."
+	}
+	return s
 }

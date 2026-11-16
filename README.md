@@ -92,6 +92,14 @@ yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=
 yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız toplam ve adet (ortalama hesaplanır).
 
 ## Bilinen sınırlamalar
+- **Teklifin şartları kitle değildir.** "1000 TL üzeri alışverişe 100 TL indirim, son kullanım 31.12.2026" brief'inde
+  "1000 TL" ve tarih *teklifin* şartlarıdır (SMS ve e-postada yazılır); kimin mesaj alacağını belirlemez. Bu yüzden
+  kitleyi de yazın: "Tüm müşterilere …" ya da "İstanbul'daki … müşterilere …". Kitle yazılmazsa sistem sorar: "Bu kampanya
+  kime gönderilsin? Tüm müşterilere mi?" ve "Tüm müşterilere gönder" düğmesi sunar (iletişim izni olmayanlara yine de gitmez).
+  Müşterinin *toplam harcamasına* göre kitle için "toplam harcaması 5000 TL'den fazla olan müşteriler" yazın.
+- Son kullanım tarihi bugünle karşılaştırılmaz (geçmiş tarihli bir kupon fark edilmez); yalnız `gün.ay.yıl`, `gün/ay/yıl`,
+  `yıl-ay-gün` ve "31 Aralık 2026" yazımları tanınır, yılsız tarih sorulur. Kodun tanımadığı bir kitle sıfatı ("VIP
+  müşteriler") "kime gönderilsin?" sorusu alır. Ayrıntı: DECISIONS.md D62–D65.
 
 - **Yazım hatası "satın almama" koşulunu düşürebilir.** Brief'teki kitle ifadeleri (ör. "sipariş oluşturmamış") bilinen
   kalıplarla okunur ve model kuralı bunlara karşı doğrulanır. Sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz;

@@ -334,6 +334,39 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - `make test-race` / `backend-test-race`: Debian tabanlı `golang:1.25` aşaması (`CGO_ENABLED=1`); mevcut Alpine imajında C derleyicisi yok. `make test`'e dahil değil (≈2 dk, instrumentation yüzünden yavaş).
 - Sonuç: tüm paketler (kuyruk, worker, eşzamanlı onay, pacer dahil) temiz. Dedektörün bu kurulumda gerçekten çalıştığı, kasıtlı yarışlı bir programın yakalanmasıyla doğrulandı. Kuyruk/worker testleri çoğunlukla `Concurrency=1` ile deterministik; gerçek eşzamanlılığı gerçek saatle çalışan 20 göndericili test ve 8 eşzamanlı onay testi sınar.
 
+## D62 — Teklifin şartları (`min_spend`, `expires_at`) teklife aittir, kitleye değil · `Kesin (kullanıcı kararı)`
+- **Olay:** "anneler gününe özel 1000 tl üzeri alışverişe 100tl indirim kullandır son kullanım 31.12.2026" brief'inde "1000 TL üzeri" kitle koşulu sanılıp soru soruldu (mock'ta bir tutar eşiği engeli, gerçek Claude'da `total_spent` riski: eski doğrulayıcı brief'te " tl" geçmesini `total_spent` için yeterli sayıyordu). Oysa bu indirimin *şartı*: kimin mesaj alacağını değil, indirimin hangi alışverişte geçerli olduğunu söyler.
+- **Model:** `offer.Offer` iki alan kazandı: `min_spend` (TL, 0 = yok) ve `expires_at` (`YYYY-MM-DD`, boş = yok). Aynı `segment_rule` jsonb içinde saklanır (eski kayıtlarda yok = yok). `Equal`, `Describe`, `Mentions`, JSON şeması ve `Validate` buna göre genişledi; `none` teklifte şart olamaz.
+- **Brief'ten okuma (`brief.Analyze`):** `N TL üzeri / ve üzeri / 'den fazla / aşan`, `en az N TL'lik`, `N TL'lik` ifadeleri bir *eşik* sayılır. Eşiğin sınıfı bağlamdan belirlenir: (1) hemen ardından alışveriş sözcüğü (`alışveriş, sepet, sipariş, harcama, ürün…`) gelir ve müşteri sözcüğü gelmezse → **teklif şartı** (`min_spend`); (2) önünde/ardında `toplam`, `harcayan`, `harcaması…` varsa → **kitle** (D64); (3) `alışveriş yapan müşterilere` gibi ikisine de yorulabiliyorsa → **sorulur**. Şartın tükettiği alışveriş sözcüğü ("…üzeri **sepete** %10") ayrıca "sepet kitlesi" diye okunmaz. Eşik metni "ikinci teklif" sayılmasın diye çalışma kopyasından silinir.
+- **Tarih:** `31.12.2026`, `31/12/2026`, `31-12-2026`, `2026-12-31`, `31 Aralık 2026`. D44 gereği hiçbir tarih sessizce düşmez: imkansız tarih (31.02), yılsız "31 Aralık", birden fazla farklı tarih, ve "son kullanım / geçerli / kadar / bitiş…" gibi bir işaret olmadan yazılmış tarih **sorulur**. Teklif yokken şart/tarih de sorulur ("hangi teklif için?").
+- **Mesaj doğrulaması (`content.Quality`):** SMS ve e-posta (konu veya gövde) teklifin yanında alt limiti (`1000 TL`; `1.000 TL` de olur) ve son günü (`31.12.2026`, `31/12/2026`, `31 Aralık 2026`) içermeli; eksikse model repair'e girer, elle düzenlemede uyarı olur (D46). Brief'teki son günden **başka bir tarih** (ya da brief'te tarih yokken herhangi bir tarih) çelişki sayılır. Geri bildirim şartları kelimesi kelimesine yazar. Şablon fallback'i ve mock şartlı teklifler için SMS'i sıkıştırır (yoksa 160 sınırını aşardı) ve testle her teklif türünde `Validate` + `Quality` geçer.
+- **Prompt:** segment prompt'u "alışveriş tutarı şartları teklife aittir, kitleye değil" der, örnekle gösterir, `1000 TL üzeri alışverişe` ifadesini `total_spent` yapmayı yasaklar; mesaj prompt'u alt limit ve `dd.mm.yyyy` biçimli son günün SMS'te ve e-postada yazılmasını ister.
+- **Doğrulayıcı:** model alt limiti `total_spent` yaparsa geri bildirim "Brief'teki 1000 TL alışveriş tutarı şartı teklife aittir: offer.min_spend" der ve düzeltir (testli, 6 senaryo).
+- **Bilinen sınırlar:** son kullanım tarihi *bugünle karşılaştırılmaz* (geçmiş tarihli kupon fark edilmez; testler saate bağımlı olmasın diye); yalnız TL; "bin lira", "bin TL" gibi yazımlar tanınmaz (sözlük sonlu, D44/D51); tek alt limit ve tek tarih.
+
+## D63 — "Herkese": boş kural değil, açık `all_customers` koşulu · `Kesin (kullanıcı kararı)`
+- Brief açıkça "herkese / tüm müşterilere / bütün kullanıcılara…" diyorsa kural `all_customers eq true` içerir. Bu, segment alan beyaz listesinde bir alandır (`WHERE TRUE`); boş kural yine reddedilir. **Tek başına** olmalıdır (başka koşulla birleşemez) ve yalnız `true` olabilir. İzin/iletişim filtresi her zamanki gibi sistem tarafından uygulanır: "tüm müşteri" = iletişim izni olanlar (testte tüm kullanıcı sayılır ama kuyruğa yalnız ulaşılabilirler girer).
+- "Herkese" sözcüğü başka bir kitle koşuluyla (şehir, sepet, harcama…) birlikteyse yok sayılır: daha belirgin olan kazanır.
+- Brief hiçbir kitle söylemiyorsa cevap **kodla** `needs_clarification` olur ve model hiç çağrılmaz: "Bu kampanya kime gönderilsin? Tüm müşterilere mi?". Anlaşılan teklif (şartlarıyla) soruyla birlikte saklanıp ekranda gösterilir.
+- **Düğme:** soru kartında "Tüm müşterilere gönder". Düğme gizli bir bayrak göndermez; brief'e "Tüm müşterilere gönder." cümlesini ekleyip kampanyayı baştan kurar (brief tek doğruluk kaynağı kalır, geçmişte ve dashboard'da görünür). Öneri `Rule.Suggestion` ile (modelin değil kodun kararı) `segment_rule`'a yazılır.
+- **Doğrulayıcı:** model "herkese" denilmediği halde `all_customers` uydurursa ya da "herkese" denildiği halde unutursa geri bildirimle düzeltir.
+- **Bedeli (dürüst):** kodun bilmediği bir kitle sıfatı ("VIP müşterilere %10") artık modele gitmeden "kime gönderilsin?" sorusu alır; eskiden gerçek model bunu `unsupported` diye cevaplayabilirdi. Kullanıcı "Tüm müşterilere gönder"e basarsa bu, VIP'i bırakma kararını kendisinin vermesi demektir. Kısmi çözüm: harcama sözcükleri (`harcayan`, `toplam harcaması…`) bu yola düşmez (D64).
+
+## D64 — Toplam harcama kitlesi artık destekleniyor (`total_spent`) · `Kesin (uygulama gereği)`
+- Eski eşik mesajı "toplam harcaması 500 TL'den fazla" yazmayı öneriyordu, ama bu ifade hiç desteklenmiyordu (tutar "ikinci teklif" sayılıp reddediliyordu): öneri boştu. D62'nin ayrımı (şart mı, kitle mi) çalışsın diye açık toplam-harcama ifadesi gerçek bir kitle koşulu oldu: `toplam harcaması N TL üzeri / 'den fazla` → `total_spent gt N`, `N TL ve üzeri` → `gte`, `N TL altında / 'den az` → `lt`. `harcayan müşteriler` de aynı. Şehir gibi koşullarla birleşir.
+- Doğrulayıcı: bu ifade varken kuralda aynı koşul olmalı; yokken `total_spent` olmamalı.
+- Hâlâ sorulanlar: "1500 TL üzeri alışveriş yapan müşterilere" (tek alışveriş mi toplam mı belli değil) ve tutarsız "çok harcayan müşteriler". Sorunun örneği brief'teki sayıyı kullanır (D65).
+
+## D65 — `needs_clarification` örnekleri brief'in kendi sayısını kullanır · `Kesin (kullanıcı kararı)`
+- Tutar eşiği sorusu: "toplam harcaması **1500** TL'den fazla" (brief 1500 yazdıysa), teklif şartı örneği de aynı sayıyla.
+- Saat/dakika: "son 48 saat" → örnek "son **2** gün" (saat gün'e çevrilir, en az 1); "son 3 saat" → "son 1 gün".
+- Belirsiz süre içinde rakam varsa ("son 45+ gün") örnek "son **45** gün". Rakam yoksa ("son birkaç gün") genel örnek kalır; yılsız tarih sorusu brief'in kendi ifadesini kullanır ("31 Aralık" → "31 Aralık 2026").
+
+## D66 — Test seti ve `make test-live` · `Kesin (kullanıcı kararı)`
+- `brief_test.go` tablosu bu brief'i ("kime?" + anlaşılan teklif; "Tüm müşterilere gönder." eklenince `all_customers` + şartlar), "herkese %10 indirim" ve benzerlerini, şart/tarih hatalarını, tutar eşiği ve harcama kitlesi satırlarını içerir. Model hata yolları: eşiğin `total_spent` yapılması, şartların unutulması/yanlış yazılması, `all_customers` uydurulması/unutulması (scripted mock). Servis düzeyinde: gerçek DB'de "herkese" kitlesi kullanıcı sayısına ve erişilebilir sayılara eşit; onay yalnız erişilebilirleri kuyruğa alır.
+- `make test-live`: `TestLiveBriefsWithTermsAndEveryone` (6 brief, tüm hat: kod okur, gerçek model cevaplar, kod doğrular) ve `TestLiveMessagesStateTheTermsOfTheOffer`.
+- Mock bir modeli taklit eder: kodun kararı olan `suggestion` alanını çıktısından çıkarır (katı ayrıştırıcı model çıktısında bu alanı reddeder; test bunu yakaladı).
+
 ---
 
 ## Açık / onay bekleyenler

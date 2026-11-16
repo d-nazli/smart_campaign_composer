@@ -121,6 +121,17 @@ func numeric(col string) func(op string, v any, now time.Time, a *args) (string,
 // JSON schema and LLM prompt all follow.
 var fields = []fieldDef{
 	{
+		FieldInfo: FieldInfo{Name: "all_customers", Type: "boolean", Ops: []string{OpEq},
+			Description: "Every customer who may be contacted (consent is applied automatically). Value is always true, and it must be the ONLY condition. Use it only when the brief explicitly says everyone: \"herkese\", \"tüm müşterilere\", \"bütün kullanıcılara\". NEVER use it because the brief names no audience: then return needs_clarification instead."},
+		kind: kindBool,
+		sql: func(op string, v any, _ time.Time, _ *args) (string, error) {
+			if op != OpEq || v != true {
+				return "", fmt.Errorf("all_customers only supports eq true")
+			}
+			return "TRUE", nil
+		},
+	},
+	{
 		FieldInfo: FieldInfo{Name: "city", Type: "city", Ops: cityOps,
 			Description: "Customer's city. Value is one of the allowed city names (or a list of them for in / not_in)."},
 		kind: kindCity,

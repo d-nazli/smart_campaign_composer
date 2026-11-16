@@ -4,7 +4,8 @@ import type { Segment } from '../types'
 import { describeOffer } from '../utils/formatOffer'
 import { describeSegment } from '../utils/formatRule'
 
-const props = defineProps<{ segment: Segment }>()
+const props = defineProps<{ segment: Segment; busy?: boolean }>()
+const emit = defineEmits<{ (e: 'send-to-all'): void }>()
 
 const nf = new Intl.NumberFormat('tr-TR')
 const rule = computed(() => describeSegment(props.segment))
@@ -49,8 +50,15 @@ const unreachable = computed(() => {
     </template>
 
     <template v-else-if="segment.status === 'needs_clarification'">
-      <p class="notice info"><strong>Biraz daha bilgi lazım:</strong> {{ segment.question }}</p>
-      <p class="muted small">Brief'i buna göre güncelleyip tekrar deneyin.</p>
+      <p class="notice info" role="status"><strong>Biraz daha bilgi lazım:</strong> {{ segment.question }}</p>
+      <p v-if="segment.offer && segment.offer.kind !== 'none'" class="offer" data-testid="offer">
+        <strong>Anladığım teklif:</strong> {{ offerText }}
+      </p>
+      <div v-if="segment.suggestion === 'all_customers'" class="actions">
+        <button class="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</button>
+        <span class="muted small">İzin vermemiş olanlara yine de gönderilmez.</span>
+      </div>
+      <p class="muted small">Ya da brief'i kime göndereceğinizi yazarak güncelleyip tekrar deneyin.</p>
     </template>
 
     <template v-else-if="segment.status === 'unsupported'">

@@ -42,11 +42,13 @@ func JSONSchema() map[string]any {
 	offerSchema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"kind":  map[string]any{"type": "string", "enum": kinds},
-			"value": map[string]any{"type": "number"},
-			"code":  str,
+			"kind":       map[string]any{"type": "string", "enum": kinds},
+			"value":      map[string]any{"type": "number"},
+			"code":       str,
+			"min_spend":  map[string]any{"type": "number"}, // 0 = no minimum basket
+			"expires_at": str,                              // YYYY-MM-DD or ""
 		},
-		"required":             []any{"kind", "value", "code"},
+		"required":             []any{"kind", "value", "code", "min_spend", "expires_at"},
 		"additionalProperties": false,
 	}
 	return map[string]any{

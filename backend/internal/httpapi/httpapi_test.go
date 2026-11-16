@@ -305,7 +305,7 @@ func TestStreamReportsRetriesAndFallback(t *testing.T) {
 
 func TestStreamBeforeSegmentIsAPlainJSONConflict(t *testing.T) {
 	srv := newServer(t, mock.New(0))
-	_, body := do(t, "POST", srv.URL+"/api/campaigns", map[string]string{"brief": "Herkese merhaba de"})
+	_, body := do(t, "POST", srv.URL+"/api/campaigns", map[string]string{"brief": "Hoş geldin mesajı gönder"})
 	var v struct{ ID int64 }
 	_ = json.Unmarshal(body, &v)
 

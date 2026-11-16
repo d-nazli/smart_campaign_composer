@@ -8,6 +8,7 @@ import { emptyContent } from '../composables/streamState'
 import type { ApproveResult, Campaign, Issue, MessageContent } from '../types'
 import { approvalDifference, shouldPoll } from '../utils/delivery'
 import { checkContent } from '../utils/limits'
+import { withAllCustomers } from '../utils/sendToAll'
 import DeliveryProgress from '../components/DeliveryProgress.vue'
 import MessageEditor from '../components/MessageEditor.vue'
 import SegmentCard from '../components/SegmentCard.vue'
@@ -171,6 +172,13 @@ async function submitBrief() {
   }
 }
 
+// The answer to "Bu kampanya kime gönderilsin? Tüm müşterilere mi?": the sentence is
+// added to the brief and the campaign is built again from it.
+async function sendToAll() {
+  brief.value = withAllCustomers(brief.value)
+  await submitBrief()
+}
+
 async function generate() {
   if (!campaign.value) return
   savedNote.value = false
@@ -253,7 +261,7 @@ onMounted(async () => {
       </p>
     </section>
 
-    <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" />
+    <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" :busy="creating" @send-to-all="sendToAll" />
 
     <section v-if="segmentReady && limits" class="card">
       <h2>2 · Mesajlar</h2>

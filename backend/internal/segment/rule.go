@@ -69,6 +69,10 @@ type Rule struct {
 	// Offer is the incentive the brief promises (kind "none" when it promises
 	// nothing). It is only meaningful for status "ok".
 	Offer offer.Offer `json:"offer"`
+	// Suggestion names the one-click answer the screen can offer with a
+	// needs_clarification question (SuggestAllCustomers). Set by code, never by
+	// the model.
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 // ParseError lists every problem found, so it can be fed back to the LLM.
@@ -140,6 +144,14 @@ func validate(rr rawRule) (Rule, error) {
 				out.Conditions = append(out.Conditions, c)
 			}
 		}
+		if len(out.Conditions) > 1 {
+			for _, c := range out.Conditions {
+				if c.Field == "all_customers" {
+					bad("all_customers tek başına kullanılmalı; başka koşulla birlikte verilemez (herkes + şehir gibi çelişkili bir kitle olur)")
+					break
+				}
+			}
+		}
 	case StatusNeedsClarification:
 		if out.Question == "" {
 			bad("status \"needs_clarification\" için question dolu olmalı")
@@ -176,6 +188,9 @@ func validateCondition(i int, rc rawCondition) (Condition, []string) {
 	v, err := decodeValue(f, rc.Op, rc.Value)
 	if err != nil {
 		return Condition{}, []string{fmt.Sprintf("%s.value (%s %s): %v", path, f.Name, rc.Op, err)}
+	}
+	if f.Name == "all_customers" && v != true {
+		return Condition{}, []string{fmt.Sprintf("%s.value: all_customers yalnızca true olabilir", path)}
 	}
 	return Condition{Field: f.Name, Op: rc.Op, Value: v}, nil
 }
@@ -277,3 +292,7 @@ func truncate(s string, n int) string {
 	r := []rune(s)
 	return string(r[:n]) + "…"
 }
+
+// SuggestAllCustomers: the question is "who should get this?" and the screen
+// offers a "send to all customers" button.
+const SuggestAllCustomers = "all_customers"

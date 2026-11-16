@@ -22,8 +22,10 @@ package brief
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"smartcampaign/internal/offer"
@@ -36,6 +38,8 @@ type Blocker struct {
 	Status  string // segment.StatusUnsupported or segment.StatusNeedsClarification
 	Phrase  string // the words the person wrote
 	Message string // shown on screen (Turkish)
+	// Suggestion is a one-click answer the screen can offer (segment.SuggestAllCustomers).
+	Suggestion string
 }
 
 // Intent is what the brief text asks for.
@@ -48,11 +52,16 @@ type Intent struct {
 	HasWindow          bool
 	WindowDays         int
 	WindowPhrase       string
-	NegationPhrase     string // what the person wrote for "did not buy"
-	Offer              offer.Offer
+	NegationPhrase     string      // what the person wrote for "did not buy"
+	Offer              offer.Offer // including its terms: minimum basket and last day
+	Everyone           bool        // the brief explicitly addresses all customers
+	HasSpend           bool        // an explicit total-spending audience (toplam harcaması N TL'den fazla)
+	SpendOp            string      // gt, gte or lt
+	SpendValue         float64
 	Blockers           []Blocker
 
-	folded string // the folded brief, for checks that need to look at it again
+	folded   string   // the folded brief, for checks that need to look at it again
+	consumed [][2]int // spans (byte offsets in folded) already explained as part of an offer term
 }
 
 // ---- small text helpers ----------------------------------------------------
@@ -108,7 +117,7 @@ var (
 	windowRe      = regexp.MustCompile(`\bson\s+(` + num + `)\s*(` + unit + `)\b`)
 	windowInRe    = regexp.MustCompile(`\b(` + num + `)\s*(` + unit + `)\s+(?:icinde|icerisinde)\b`)
 	vagueWindowRe = regexp.MustCompile(`\bson\s+(\S+)\s+(` + unit + `)\b`)
-	hoursRe       = regexp.MustCompile(`\bson\s+(?:` + num + `\s*)?(?:saat|dakika)\w*`)
+	hoursRe       = regexp.MustCompile(`\bson\s+(?:(` + num + `)\s*)?(saat|dakika)\w*`)
 	calendarRe    = regexp.MustCompile(`\b(?:(?:bu|gecen|onceki|gelecek|gelen)\s+(?:ay|hafta|yil|sezon|donem|pazartesi|sali|carsamba|persembe|cuma|cumartesi|pazar)|bugun|dun|yarin)\b`)
 
 	cartRe = regexp.MustCompile(`\bsepet\w*`)
@@ -131,8 +140,26 @@ var (
 	}
 	unknownNegationRe = regexp.MustCompile(`\b[a-z]+(?:mamis|memis|mayan|meyen)\w*`)
 
-	thresholdRe = regexp.MustCompile(`\d[\d.,]*\s*(?:tl|lira|₺)\s*(?:ve\s+)?(?:uzeri|ustu|altinda|alti|den\s+fazla|dan\s+fazla|den\s+az|dan\s+az)\w*`)
-	wordPctRe   = regexp.MustCompile(`\byuzde\s+(` + numWords + `)\b`)
+	wordPctRe = regexp.MustCompile(`\byuzde\s+(` + numWords + `)\b`)
+
+	// ---- amounts that are NOT offers: thresholds -------------------------
+	// "1000 TL üzeri alışverişe 100 TL indirim": the 1000 is a TERM of the offer.
+	// "toplam harcaması 1000 TL'den fazla olanlar": it is an AUDIENCE.
+	amtPattern = `(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)`
+	amtSuffix  = `(?:['’]?[a-z]*)`
+	overRe     = regexp.MustCompile(amtPattern + amtSuffix + `\s*(?:ve\s+)?(?:d[ae]n\s+)?(?:uzer\w*|ust\w*|asan\w*|fazla\w*)`)
+	underRe    = regexp.MustCompile(amtPattern + amtSuffix + `\s*(?:ve\s+)?(?:d[ae]n\s+)?(?:altinda\w*|alti\w*|az\b|azi\w*)`)
+	enAzRe     = regexp.MustCompile(`\ben\s+az\s+` + amtPattern + amtSuffix)
+	likRe      = regexp.MustCompile(amtPattern + `['’]?lik\b`)
+
+	explicitSpendRe = regexp.MustCompile(`\b(?:toplam\w*|harcamasi|harcayan\w*|harcamis\w*|harcama\s+tutari)\b`)
+	shopAfterRe     = regexp.MustCompile(`^[\s,.]*(?:[a-z0-9'’]+\s+)?(?:alisveris|sepet|siparis|harcama|urun|alim|odeme)\w*`)
+	audAfterRe      = regexp.MustCompile(`^[\s,.]*(?:[a-z0-9'’]+\s+){0,3}?(?:yapan|eden|olan|musteri|kullanici|kisi|uye|kitle|abone)\w*`)
+	andOverRe       = regexp.MustCompile(`\bve\s+(?:uzer|ust)`)
+
+	everyoneRe  = regexp.MustCompile(`\b(?:herkes\w*|(?:tum|butun)\s+(?:musteri|kullanici|uye|kisi|kitle|abone|alici|kayitli)\w*)`)
+	spendWordRe = regexp.MustCompile(`\b(?:toplam\s+harcama\w*|harcayan\w*|harcamis\w*|harcamasi\w*)`)
+	expiryCueRe = regexp.MustCompile(`\b(?:son\s+(?:kullan\w*|gecerl\w*|gun\w*)|gecerli\w*|gecerlilik\w*|kadar|bitis\w*|sona\s+er\w*)`)
 	kodRe       = regexp.MustCompile(`\bkod\w*`)
 )
 
@@ -204,6 +231,7 @@ func Analyze(text string) Intent {
 	in.analyzeCities(f)
 	in.analyzePurchase(d, f, work)
 	in.crossChecks()
+	in.analyzeAudience(f)
 	return in
 }
 
@@ -243,14 +271,25 @@ func (in *Intent) analyzeTime(d *doc, f string) {
 	for _, m := range vagueWindowRe.FindAllStringSubmatchIndex(f, -1) {
 		if _, ok := parseCount(f[m[2]:m[3]]); !ok {
 			q := d.quote(m[0:2])
+			example := `"son 30 gün" veya "son 2 hafta"`
+			// The example uses the number the person wrote ("son 45+ gün" -> "son 45 gün").
+			if digits := digitsRe.FindString(f[m[2]:m[3]]); digits != "" {
+				example = fmt.Sprintf(`"son %s %s"`, digits, unitWord(f[m[4]:m[5]]))
+			}
 			in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
-				"%q belirsiz. Kaç gün olduğunu sayıyla yazın; örneğin \"son 30 gün\" veya \"son 2 hafta\".", q))
+				"%q belirsiz. Kaç gün olduğunu sayıyla yazın; örneğin %s.", q, example))
 		}
 	}
-	for _, loc := range hoursRe.FindAllStringIndex(f, -1) {
-		q := d.quote(loc)
+	for _, m := range hoursRe.FindAllStringSubmatchIndex(f, -1) {
+		q := d.quote(m[0:2])
+		days := 1 // "son 3 saat" -> "son 1 gün"; "son 48 saat" -> "son 2 gün"
+		if m[2] >= 0 && strings.HasPrefix(f[m[4]:m[5]], "saat") {
+			if n, ok := parseCount(f[m[2]:m[3]]); ok && n > 24 {
+				days = (n + 23) / 24
+			}
+		}
 		in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
-			"%q saat/dakika düzeyinde bir aralık; kitle yalnızca gün cinsinden tanımlanabiliyor. Örneğin \"son 1 gün\" yazın.", q))
+			"%q saat/dakika düzeyinde bir aralık; kitle yalnızca gün cinsinden tanımlanabiliyor. Örneğin \"son %d gün\" yazın.", q, days))
 	}
 	for _, loc := range calendarRe.FindAllStringIndex(f, -1) {
 		if strings.HasPrefix(strings.TrimLeft(f[loc[1]:], " "), "sonu") { // "bu ay sonuna kadar": a deadline in the copy
@@ -280,24 +319,29 @@ func (in *Intent) analyzeTime(d *doc, f string) {
 
 func (in *Intent) analyzeOffer(d *doc, text string) {
 	f := d.foldString
-	// A spending threshold ("500 TL üzeri") is not an offer; it is a condition we cannot express.
-	scan := f
-	for _, loc := range thresholdRe.FindAllStringIndex(f, -1) {
-		q := d.quote(loc)
-		in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
-			"%q bir tutar eşiği. Bunun toplam harcama mı yoksa tek bir sepet/sipariş tutarı mı olduğu belli değil ve sepet/sipariş tutarı kitle kuralında yok. Toplam harcamayı kastediyorsanız \"toplam harcaması 500 TL'den fazla\" yazın.", q))
+	// Work on a copy in which every phrase that is NOT the discount itself (a
+	// threshold, a date) is blanked, so none of them is mistaken for a second
+	// offer.
+	scan := []byte(f)
+	blank := func(a, b int) {
+		for i := a; i < b; i++ {
+			scan[i] = ' '
+		}
 	}
-	scan = thresholdRe.ReplaceAllString(scan, " ")
 
-	pcts := offer.Percents(scan)
-	for _, m := range wordPctRe.FindAllStringSubmatch(scan, -1) {
+	minSpend := in.analyzeThresholds(d, f, blank)
+	expires := in.analyzeDates(d, f, blank)
+	s := string(scan)
+
+	pcts := offer.Percents(s)
+	for _, m := range wordPctRe.FindAllStringSubmatch(s, -1) {
 		if n, ok := parseCount(m[1]); ok {
 			pcts = append(pcts, float64(n))
 		}
 	}
 	pcts = distinct(pcts)
-	amts := distinct(offer.Amounts(scan))
-	free := offer.HasFreeShipping(scan)
+	amts := distinct(offer.Amounts(s))
+	free := offer.HasFreeShipping(s)
 	code := findCoupon(text)
 
 	var found []string
@@ -343,6 +387,233 @@ func (in *Intent) analyzeOffer(d *doc, text string) {
 		in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
 			"Brief'te kupon %q geçiyor ama kodun kendisini bulamadım. Kupon kodunu yazar mısınız? (örneğin \"HOSGELDIN10 kodu\")", q))
 	}
+
+	// The terms belong to the offer. Without an offer they would be dropped
+	// silently, so ask instead.
+	if minSpend > 0 || expires != "" {
+		if in.Offer.IsNone() {
+			var what []string
+			if minSpend > 0 {
+				what = append(what, offer.FormatNumber(minSpend)+" TL alt limiti")
+			}
+			if expires != "" {
+				what = append(what, offer.FormatDate(expires)+" son kullanma tarihi")
+			}
+			in.block(segment.StatusNeedsClarification, strings.Join(what, ", "), fmt.Sprintf(
+				"Brief'te teklif şartı var (%s) ama hangi teklif için olduğu yazılmamış. Teklifi de yazın: yüzde indirim, TL tutarı, ücretsiz kargo ya da kupon kodu.", strings.Join(what, ", ")))
+			return
+		}
+		in.Offer.MinSpend, in.Offer.ExpiresAt = minSpend, expires
+	}
+}
+
+// spanKind says what an amount with "üzeri / fazla / altı" in front of it is.
+type spanKind int
+
+const (
+	spanTerm      spanKind = iota // a term of the offer: "1000 TL üzeri alışverişe 100 TL indirim"
+	spanSpend                     // an audience: "toplam harcaması 1000 TL'den fazla"
+	spanAmbiguous                 // could be either: ask
+	spanIgnore                    // not a threshold at all
+)
+
+type threshold struct {
+	start, end int
+	number     string // as the person wrote it
+	under      bool
+	orEqual    bool // "ve üzeri", "en az"
+	form       string
+}
+
+// analyzeThresholds finds amount thresholds. A threshold that qualifies a
+// purchase ("1000 TL üzeri alışverişe") is the offer's minimum basket; one that
+// describes a customer's total spending is an audience condition; anything
+// else is ambiguous and is asked about, with the person's own number in the
+// example. It returns the minimum basket (0 if none) and blanks every span it
+// consumed.
+func (in *Intent) analyzeThresholds(d *doc, f string, blank func(a, b int)) float64 {
+	var found []threshold
+	collect := func(re *regexp.Regexp, under bool, form string) {
+		for _, m := range re.FindAllStringSubmatchIndex(f, -1) {
+			t := threshold{start: m[0], end: m[1], number: f[m[2]:m[3]], under: under, form: form}
+			t.orEqual = form == "enaz" || andOverRe.MatchString(f[m[0]:m[1]])
+			found = append(found, t)
+		}
+	}
+	collect(overRe, false, "over")
+	collect(underRe, true, "under")
+	collect(enAzRe, false, "enaz")
+	collect(likRe, false, "lik")
+	sort.Slice(found, func(i, j int) bool { return found[i].start < found[j].start })
+
+	var minSpends []float64
+	lastEnd := -1
+	for _, t := range found {
+		if t.start < lastEnd {
+			continue // overlaps one we already handled
+		}
+		lastEnd = t.end
+		value, ok := offer.ParseNumber(t.number)
+		if !ok {
+			continue
+		}
+		before := f[max(0, t.start-40):t.start]
+		after := f[t.end:min(len(f), t.end+60)]
+		kind := classifyThreshold(t, before, after)
+		switch kind {
+		case spanIgnore:
+			continue
+		case spanTerm:
+			minSpends = append(minSpends, value)
+			// The shopping word that ends the term ("... üzeri sepete") belongs to the
+			// offer; it must not be read again as "the brief is about carts".
+			if loc := shopAfterRe.FindStringIndex(after); loc != nil {
+				in.consumed = append(in.consumed, [2]int{t.end + loc[0], t.end + loc[1]})
+			}
+		case spanSpend:
+			op := segment.OpGt
+			switch {
+			case t.under:
+				op = segment.OpLt
+			case t.orEqual:
+				op = segment.OpGte
+			}
+			if in.HasSpend && (in.SpendValue != value || in.SpendOp != op) {
+				in.block(segment.StatusNeedsClarification, d.quote([]int{t.start, t.end}),
+					"Brief'te birden fazla toplam harcama tutarı var. Hangisinin kullanılacağını netleştirin.")
+			}
+			in.HasSpend, in.SpendOp, in.SpendValue = true, op, value
+		default:
+			q := d.quote([]int{t.start, t.end})
+			more := "fazla"
+			if t.under {
+				more = "az"
+			}
+			in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
+				"%q bir tutar eşiği ama neyin eşiği olduğu belli değil. Müşterinin toplam harcamasıysa \"toplam harcaması %s TL'den %s\" yazın. "+
+					"Teklifin şartıysa (hangi alışverişte geçerli olduğu) \"%s TL üzeri alışverişe ... indirim\" gibi yazın; bu kitleyi değil teklifi sınırlar.",
+				q, t.number, more, t.number))
+		}
+		blank(t.start, t.end)
+	}
+	if len(distinct(minSpends)) > 1 {
+		in.block(segment.StatusNeedsClarification, "", "Brief'te birden fazla alışveriş alt limiti var. Teklifin tek bir alt limiti olabilir; hangisini istediğinizi yazın.")
+	}
+	if len(minSpends) > 0 {
+		return minSpends[0]
+	}
+	return 0
+}
+
+func classifyThreshold(t threshold, before, after string) spanKind {
+	if explicitSpendRe.MatchString(before) || explicitSpendRe.MatchString(after[:min(len(after), 40)]) {
+		return spanSpend
+	}
+	if t.under {
+		return spanAmbiguous
+	}
+	if audAfterRe.MatchString(after) {
+		return spanAmbiguous
+	}
+	if shopAfterRe.MatchString(after) {
+		return spanTerm
+	}
+	if t.form == "lik" { // "100 TL'lik indirim kuponu": the amount IS the discount
+		return spanIgnore
+	}
+	return spanAmbiguous
+}
+
+// analyzeDates reads the offer's last day. Every date in the brief must be
+// accounted for: an impossible date, a day-and-month without a year, two
+// different dates, or a date that is not said to be a deadline are all asked
+// about instead of being dropped.
+func (in *Intent) analyzeDates(d *doc, f string, blank func(a, b int)) string {
+	matches := offer.FindDates(f)
+	var valid []string
+	for _, m := range matches {
+		blank(m.Start, m.End)
+		q := d.quote([]int{m.Start, m.End})
+		if !m.Valid {
+			in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
+				"%q geçerli bir tarih değil. Gün, ay ve yılı gerçek bir tarih olarak yazın (gün.ay.yıl).", q))
+			continue
+		}
+		valid = append(valid, m.ISO)
+	}
+	for _, span := range offer.FindDayMonths(f) {
+		blank(span[0], span[1])
+		q := d.quote(span[:])
+		in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
+			"%q için yıl yazılmamış. Son kullanma tarihini yılıyla yazın; örneğin \"%s %d\".", q, q, time.Now().Year()))
+	}
+	uniq := map[string]bool{}
+	var distinctDates []string
+	for _, v := range valid {
+		if !uniq[v] {
+			uniq[v] = true
+			distinctDates = append(distinctDates, v)
+		}
+	}
+	switch {
+	case len(distinctDates) == 0:
+		return ""
+	case len(distinctDates) > 1:
+		var shown []string
+		for _, v := range distinctDates {
+			shown = append(shown, offer.FormatDate(v))
+		}
+		in.block(segment.StatusNeedsClarification, strings.Join(shown, ", "), fmt.Sprintf(
+			"Brief'te birden fazla tarih var (%s). Kuponun tek bir son kullanma tarihi olabilir; hangisini istediğinizi yazın.", strings.Join(shown, " ve ")))
+		return ""
+	case !expiryCueRe.MatchString(f):
+		shown := offer.FormatDate(distinctDates[0])
+		in.block(segment.StatusNeedsClarification, shown, fmt.Sprintf(
+			"Brief'te %s tarihi geçiyor ama ne için olduğu belli değil. Kuponun son kullanma tarihiyse \"son kullanım %s\" diye yazın.", shown, shown))
+		return ""
+	}
+	return distinctDates[0]
+}
+
+// analyzeAudience decides who receives the campaign when the brief names no
+// condition. "Herkese / tüm müşterilere" is an explicit audience (every
+// customer who may be contacted); saying nothing is a question, never an empty
+// rule that would select everyone by accident.
+func (in *Intent) analyzeAudience(f string) {
+	if in.HasSpend || len(in.Included)+len(in.Excluded) > 0 || in.Cart || in.NotPurchased || in.Purchased || in.HasWindow {
+		return
+	}
+	if spendWordRe.MatchString(f) {
+		if len(in.Blockers) == 0 {
+			in.block(segment.StatusNeedsClarification, "", "Harcama tutarına göre bir kitle istiyorsunuz ama tutar yazılmamış. Örneğin \"toplam harcaması 1000 TL'den fazla olan müşteriler\" yazın.")
+		}
+		return
+	}
+	if everyoneRe.MatchString(f) {
+		in.Everyone = true
+		return
+	}
+	if len(in.Blockers) == 0 {
+		in.Blockers = append(in.Blockers, Blocker{Status: segment.StatusNeedsClarification, Message: WhoQuestion, Suggestion: segment.SuggestAllCustomers})
+	}
+}
+
+// WhoQuestion is asked when the brief does not say who should receive the campaign.
+const WhoQuestion = "Bu kampanya kime gönderilsin? Tüm müşterilere mi?"
+
+var digitsRe = regexp.MustCompile(`\d+`)
+
+// unitWord writes a folded unit ("gun", "haftada") the way a person would.
+func unitWord(u string) string {
+	switch {
+	case strings.HasPrefix(u, "gun"):
+		return "gün"
+	case strings.HasPrefix(u, "hafta"):
+		return "hafta"
+	case strings.HasPrefix(u, "ay"):
+		return "ay"
+	}
+	return "yıl"
 }
 
 func distinct(v []float64) []float64 {
@@ -478,7 +749,7 @@ func (in *Intent) analyzePurchase(d *doc, f string, work []rune) {
 	in.NegationPhrase, notBought = first(notBoughtRes)
 	boughtPhrase, bought = first(boughtRes)
 
-	in.Cart = cartRe.MatchString(f)
+	in.Cart = cartRe.MatchString(maskSpans(f, in.consumed))
 	if abandon {
 		in.Abandoned, in.Cart, in.NotPurchased = true, true, true
 		if in.NegationPhrase == "" {
@@ -536,6 +807,13 @@ func (in Intent) Blocked() (segment.Rule, bool) {
 		}
 	}
 	rule := segment.Rule{Status: status, Conditions: []segment.Condition{}, Offer: offer.Offer{Kind: offer.KindNone}}
+	for _, b := range in.Blockers {
+		if b.Status == status && b.Suggestion != "" {
+			// "Who should get this?" is the only open question: keep the offer that was
+			// understood, so the screen can show it next to the question.
+			rule.Suggestion, rule.Offer = b.Suggestion, in.Offer.Normalize()
+		}
+	}
 	if status == segment.StatusUnsupported {
 		rule.Explanation = clip(strings.Join(msgs, " ")+" Kitleyi şehir, sepete ekleme zamanı ve sipariş geçmişiyle tanımlayın.", segment.MaxExplanation)
 	} else {
@@ -564,6 +842,14 @@ func (in Intent) Rule() segment.Rule {
 		conds = append(conds, segment.Condition{Field: field, Op: op, Value: v})
 	}
 
+	if in.Everyone {
+		add("all_customers", segment.OpEq, true)
+		parts = append(parts, "tüm müşteriler (izin vermiş olanlar)")
+	}
+	if in.HasSpend {
+		add("total_spent", in.SpendOp, in.SpendValue)
+		parts = append(parts, "toplam harcaması "+offer.FormatNumber(in.SpendValue)+" TL"+map[string]string{segment.OpGt: "'den fazla", segment.OpGte: " ve üzeri", segment.OpLt: "'den az"}[in.SpendOp]+" olan müşteriler")
+	}
 	switch len(in.Included) {
 	case 0:
 	case 1:
@@ -622,7 +908,8 @@ func (in Intent) Rule() segment.Rule {
 		return segment.Rule{
 			Status:     segment.StatusNeedsClarification,
 			Conditions: []segment.Condition{},
-			Question:   "Mesajı kimlere göndermek istiyorsunuz? Örneğin bir şehir, sepet davranışı (sepete ekleyip satın almayanlar) veya sipariş geçmişi belirtebilirsiniz.",
+			Question:   WhoQuestion,
+			Suggestion: segment.SuggestAllCustomers,
 			Offer:      offer.Offer{Kind: offer.KindNone},
 		}
 	}
@@ -631,4 +918,19 @@ func (in Intent) Rule() segment.Rule {
 		explanation += " (ödeme adımı verimizde ayrı tutulmuyor; \"ödemeyi tamamlamamış\", sepete ekleyip satın almamış olarak yorumlandı)"
 	}
 	return segment.Rule{Status: segment.StatusOK, Match: segment.MatchAll, Conditions: conds, Explanation: explanation, Offer: in.Offer}
+}
+
+// maskSpans blanks the given byte spans of s (same length), so later readers do
+// not see words that were already explained.
+func maskSpans(s string, spans [][2]int) string {
+	if len(spans) == 0 {
+		return s
+	}
+	b := []byte(s)
+	for _, sp := range spans {
+		for i := sp[0]; i < sp[1] && i < len(b); i++ {
+			b[i] = ' '
+		}
+	}
+	return string(b)
 }

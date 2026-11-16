@@ -41,3 +41,9 @@ describe('describeCondition', () => {
     expect(describeCondition({ field: 'x', op: 'eq', value: 1 })).toBe('x eq 1')
   })
 })
+
+describe('describeCondition: everyone', () => {
+  it('says plainly that the audience is everybody who may be contacted', () => {
+    expect(describeCondition({ field: 'all_customers', op: 'eq', value: true })).toBe('Tüm müşteriler (iletişim izni olanlar)')
+  })
+})

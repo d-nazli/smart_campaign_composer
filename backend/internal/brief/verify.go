@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"smartcampaign/internal/offer"
 	"smartcampaign/internal/segment"
 )
 
@@ -26,15 +27,14 @@ func Verify(in Intent, r segment.Rule) []string {
 
 	if !r.Offer.Equal(in.Offer) {
 		if in.Offer.IsNone() {
-			bad("Brief'te bir teklif geçmiyor ama offer alanında %q var; offer.kind \"none\", value 0 ve code \"\" olmalı.", r.Offer.Describe())
+			bad("Brief'te bir teklif geçmiyor ama offer alanında %q var; offer.kind \"none\", value 0, code \"\", min_spend 0 ve expires_at \"\" olmalı.", r.Offer.Describe())
 		} else {
-			bad("Brief'teki teklif %q ama offer alanı %q. offer alanını brief'teki teklifle aynen doldur (kind, value, code).", in.Offer.Describe(), r.Offer.Describe())
+			bad("Brief'teki teklif %q ama offer alanı %q. offer alanını brief'teki teklifle aynen doldur (kind, value, code, min_spend, expires_at). Alışveriş tutarı şartı (ör. \"1000 TL üzeri alışverişe\") teklife aittir: min_spend; son kullanma tarihi expires_at (YYYY-MM-DD).", in.Offer.Describe(), r.Offer.Describe())
 		}
 	}
 
-	if has(r, "total_spent") && !containsAny(in.folded, "harcama", "harcayan", "tutar", " tl", "lira", "₺") {
-		bad("Brief toplam harcamadan söz etmiyor ama kuralda total_spent koşulu var; brief'te olmayan koşulu kaldır.")
-	}
+	in.verifyEveryone(r, bad)
+	in.verifySpend(r, bad)
 	if r.Match == segment.MatchAny && !containsAny(in.folded, " veya ", " ya da ") {
 		bad("Brief \"veya\" demiyor ama match \"any\"; koşulların hepsi birlikte geçerli olmalı, match \"all\" kullan.")
 	}
@@ -273,3 +273,61 @@ func describe(conds []intCondition) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// verifyEveryone: "all_customers" must be there exactly when the brief says
+// everyone, and then it must stand alone.
+func (in Intent) verifyEveryone(r segment.Rule, bad func(string, ...any)) {
+	switch {
+	case in.Everyone && !has(r, "all_customers"):
+		bad("Brief açıkça tüm müşterilere/herkese diyor ama kuralda all_customers eq true koşulu yok. Kitle için yalnızca bu tek koşulu kullan (başka koşul ekleme).")
+	case !in.Everyone && has(r, "all_customers"):
+		bad("Brief \"herkese / tüm müşterilere\" demiyor ama kuralda all_customers var. Brief'te yazan kitle koşullarını kullan; kitle belirtilmemişse needs_clarification dön.")
+	}
+}
+
+type numCondition struct {
+	op    string
+	value float64
+}
+
+func numConds(r segment.Rule, field string) []numCondition {
+	var out []numCondition
+	for _, c := range r.Conditions {
+		if c.Field != field {
+			continue
+		}
+		switch v := c.Value.(type) {
+		case float64:
+			out = append(out, numCondition{c.Op, v})
+		case int64:
+			out = append(out, numCondition{c.Op, float64(v)})
+		}
+	}
+	return out
+}
+
+// verifySpend: a total_spent condition is right only when the brief describes
+// a customer's TOTAL spending. An amount that qualifies a purchase ("1000 TL
+// üzeri alışverişe") is a term of the offer (offer.min_spend), never an audience.
+func (in Intent) verifySpend(r segment.Rule, bad func(string, ...any)) {
+	got := numConds(r, "total_spent")
+	if !in.HasSpend {
+		if len(got) > 0 {
+			hint := ""
+			if in.Offer.MinSpend > 0 {
+				hint = fmt.Sprintf(" Brief'teki %s TL alışveriş tutarı şartı teklife aittir: offer.min_spend = %s; kitleye (total_spent) yazılmaz.",
+					offerNumber(in.Offer.MinSpend), offerNumber(in.Offer.MinSpend))
+			}
+			bad("Brief müşterinin toplam harcamasından söz etmiyor ama kuralda total_spent koşulu var; kaldır.%s", hint)
+		}
+		return
+	}
+	for _, g := range got {
+		if g.op == in.SpendOp && g.value == in.SpendValue {
+			return
+		}
+	}
+	bad("Brief toplam harcama koşulu veriyor (total_spent %s %s) ama kuralda bu koşul yok veya değeri yanlış. Aynen ekle.", in.SpendOp, offerNumber(in.SpendValue))
+}
+
+func offerNumber(v float64) string { return offer.FormatNumber(v) }

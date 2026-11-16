@@ -49,6 +49,10 @@ export interface Offer {
   kind: OfferKind
   value: number
   code: string
+  /** Smallest basket (TRY) the offer applies to; 0 or absent = no minimum. A term of the offer, not an audience. */
+  min_spend?: number
+  /** Last day the offer can be used, YYYY-MM-DD; empty or absent = none. */
+  expires_at?: string
 }
 
 export interface Segment {
@@ -59,6 +63,8 @@ export interface Segment {
   question?: string
   audience?: Audience
   offer?: Offer
+  /** A one-click answer to `question`: "all_customers" offers the "send to all" button. */
+  suggestion?: 'all_customers'
 }
 
 export type ContentSource = 'llm' | 'fallback' | 'edited'
