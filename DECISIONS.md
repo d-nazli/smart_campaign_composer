@@ -367,6 +367,14 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - `make test-live`: `TestLiveBriefsWithTermsAndEveryone` (6 brief, tüm hat: kod okur, gerçek model cevaplar, kod doğrular) ve `TestLiveMessagesStateTheTermsOfTheOffer`.
 - Mock bir modeli taklit eder: kodun kararı olan `suggestion` alanını çıktısından çıkarır (katı ayrıştırıcı model çıktısında bu alanı reddeder; test bunu yakaladı).
 
+## D67 — Kullanıcı profili: dil, cinsiyet, doğum tarihi · `Kesin (kullanıcı kararı)`
+- **Bonus başlangıcı:** "kullanıcının diline göre içerik" ve "zamanlanmış gönderim" bonusları kullanıcı isteğiyle kapsama alındı (önceki "bonuslar dışarıda" kararı bu iki bonus için kalktı; A/B ve CI hâlâ dışarıda). Üç faz: 1 profil alanları, 2 dil, 3 zamanlama.
+- **Şema (`00006_user_profile.sql`):** `users.language` (`tr|en|de`, `NOT NULL DEFAULT 'tr'`, CHECK), `users.gender` (`female|male|other`, NULL = belirtmemiş), `users.birth_date` (`DATE`, NULL = belirtmemiş). Dil için varsayılan, mevcut satırların geçerli kalmasını sağlar; liste veritabanında CHECK ile de korunur (uygulama kodu atlansa bile `fr` girilemez).
+- **Seed dağılımı (tam sayılar, rastgele yerleşim):** dil %60 tr / %25 en / %15 de (5000 kişide 3000/1250/750); cinsiyet %48 kadın / %48 erkek / %2 other / %2 belirtmemiş; doğum tarihi 18–75 yaş arasında düzgün dağılmış, %3'ü boş. Her alan karıştırılmış bir listeden dağıtılır (rıza alanlarındaki gibi): toplamlar şansa bırakılmaz, ama kişiler arasında şehirle, rızayla veya brief kohortuyla ilişki yoktur. Testle: örnek brief kohortunda üç dil de ve iki cinsiyet de bulunur.
+- **Ayrı rastgele akış:** profil alanları kendi `rand` akışından çekilir. Böylece mevcut veri (isimler, şehirler, rızalar, siparişler) ve "örnek brief kohortu tam 300 kişi" garantisi değişmez; eski testlerin hepsi dokunulmadan geçer.
+- **Kapsam:** cinsiyet ve doğum tarihi şimdilik yalnız saklanır; segment alanı ya da kişiselleştirme değişkeni değildir (istenirse `segment/fields.go` ve `content/variables.go` tek yerden genişler). Dil, Faz 2'de içerik seçimini yönetir.
+- **Mevcut veritabanı:** seed "users boş değilse atla" kuralıyla çalıştığı için eski bir volume'da yeni alanlar boş kalır (dil hep `tr`). Yeniden seed: `make clean` (`docker compose down -v`).
+
 ---
 
 ## Açık / onay bekleyenler

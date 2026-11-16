@@ -38,6 +38,13 @@ type User struct {
 	OrderCount      int
 	TotalSpentCents int64
 	CreatedAt       time.Time
+
+	// Profile fields. Language is always set; Gender and BirthDate are nil for
+	// the few people who did not state them. BirthDate is a calendar date at
+	// 00:00 UTC.
+	Language  string
+	Gender    *string
+	BirthDate *time.Time
 }
 
 type CartEvent struct {
@@ -128,6 +135,10 @@ func Generate(seed uint64, now time.Time, n int) (*Dataset, error) {
 	for i := range users {
 		users[i].CreatedAt = g.ago(1, 730)
 	}
+
+	// The profile fields use their own random stream: adding them did not move
+	// a single value of the data above (and the brief cohort stays exactly 300).
+	assignProfileFields(users, rand.New(rand.NewPCG(seed, profileStream)), now)
 	return ds, nil
 }
 

@@ -105,6 +105,56 @@ func TestDerivedColumnsMatchRawTablesInDB(t *testing.T) {
 	}
 }
 
+func TestProfileFieldsAreStoredInTheDatabase(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, 42, now, seed.DefaultUsers, log); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := pool.Query(ctx, `SELECT language, count(*) FROM users GROUP BY language`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	langs := map[string]int{}
+	for rows.Next() {
+		var l string
+		var n int
+		if err := rows.Scan(&l, &n); err != nil {
+			t.Fatal(err)
+		}
+		langs[l] = n
+	}
+	if langs["tr"] != 3000 || langs["en"] != 1250 || langs["de"] != 750 {
+		t.Fatalf("languages in the database = %v", langs)
+	}
+
+	var noGender, noBirth, minAge, maxAge int
+	err = pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE gender IS NULL),
+		       count(*) FILTER (WHERE birth_date IS NULL),
+		       min(extract(year FROM age($1::date, birth_date)))::int,
+		       max(extract(year FROM age($1::date, birth_date)))::int
+		FROM users`, now).Scan(&noGender, &noBirth, &minAge, &maxAge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noGender != 100 || noBirth != 150 || minAge < 18 || maxAge > 75 {
+		t.Fatalf("noGender=%d noBirth=%d ages=%d..%d", noGender, noBirth, minAge, maxAge)
+	}
+}
+
+func TestDatabaseRejectsAnUnknownLanguage(t *testing.T) {
+	pool, _ := testdb.New(t)
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO users (first_name, last_name, city, sms_consent, email_consent, created_at, language)
+		 VALUES ('A', 'B', 'İstanbul', false, false, now(), 'fr')`)
+	if err == nil {
+		t.Fatal("expected the language CHECK to reject 'fr'")
+	}
+}
+
 func TestBriefCohortQueryReturnsKnownCount(t *testing.T) {
 	pool, _ := testdb.New(t)
 	ctx := context.Background()
