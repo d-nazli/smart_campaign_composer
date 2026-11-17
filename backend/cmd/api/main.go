@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"smartcampaign/internal/brief"
 	"smartcampaign/internal/campaign"
 	"smartcampaign/internal/config"
 	"smartcampaign/internal/content"
@@ -61,6 +62,12 @@ func main() {
 	defer pool.Close()
 
 	svc := campaign.NewService(pool, client, policy, log)
+	// The real model understands the brief itself and code checks it objectively
+	// (D87); the mock is the rule reader, so it keeps the strict flow.
+	if cfg.Mode == "claude" {
+		svc.UseSegmentMode(brief.Grounded)
+	}
+	log.Info("segment mode", "grounded", cfg.Mode == "claude")
 	handler := httpapi.New(svc, httpapi.Info{LLMMode: cfg.Mode, Model: cfg.Model, WorkerHealthURL: os.Getenv("WORKER_HEALTH_URL")}, pool.Ping, metrics.New(pool).Handler(), log)
 
 	srv := &http.Server{

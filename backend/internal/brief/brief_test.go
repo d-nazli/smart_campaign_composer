@@ -44,7 +44,7 @@ var (
 	pct          = func(v float64) offer.Offer { return offer.Offer{Kind: offer.KindPercent, Value: v} }
 	freeShipping = offer.Offer{Kind: offer.KindFreeShipping}
 	amountOf     = func(v float64) offer.Offer { return offer.Offer{Kind: offer.KindAmount, Value: v} }
-	freePart = offer.Part{Kind: offer.KindFreeShipping}
+	freePart     = offer.Part{Kind: offer.KindFreeShipping}
 	// combo is a combined offer: the main part and the extras.
 	combo = func(main offer.Offer, extras ...offer.Part) offer.Offer {
 		main.Extras = extras
@@ -250,6 +250,15 @@ var table = []row{
 		want: []string{everyone}, offer: withExtras(tier(100, 1000, 300), freePart)},
 	{name: "cap on a percentage", brief: "Herkese %20 indirim, en fazla 300 TL", status: segment.StatusOK, want: []string{everyone}, offer: capped(pct(20), 300)},
 	{name: "cap on a percentage: '... TL'ye kadar'", brief: "Herkese 250 TL'ye kadar %20 indirim", status: segment.StatusOK, want: []string{everyone}, offer: capped(pct(20), 250)},
+	// "N TL'ye varan sipariş" is a basket that reaches N TL: the minimum (D88).
+	{name: "varan: the reported brief, 'tl ye' written apart", brief: "henüz hiç sipariş vermemiş kullanıcılara ilk siparişine özel 1000 tl ye varan siparişte 300 tl indirim uygula",
+		status: segment.StatusOK, want: []string{"order_count eq 0"}, offer: withTerms(amountOf(300), 1000, "")},
+	{name: "varan: 'TL'ye varan alışverişte' with a percentage", brief: "Herkese 500 TL'ye varan alışverişlerde %10 indirim",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(pct(10), 500, "")},
+	{name: "varan: 'ulaşan sepete'", brief: "Herkese 750 TL'ye ulaşan sepete ücretsiz kargo", status: segment.StatusOK, want: []string{everyone}, offer: withTerms(freeShipping, 750, "")},
+	{name: "varan: '... varan indirim' stays a cap", brief: "Herkese 300 TL'ye varan %20 indirim", status: segment.StatusOK, want: []string{everyone}, offer: capped(pct(20), 300)},
+	{name: "varan: 'kadar alışverişte' is an upper basket limit and is asked", brief: "Herkese 1000 TL'ye kadar alışverişte %10 indirim",
+		status: segment.StatusNeedsClarification, say: "üst sınırı"},
 	{name: "cap without anything to cap", brief: "Herkese en fazla 300 TL indirim", status: segment.StatusNeedsClarification, say: "üst sınır"},
 	{name: "tier together with a percentage", brief: "Herkese %10 indirim ve her 1000 TL'ye 100 TL indirim", status: segment.StatusNeedsClarification, say: "kademeli"},
 	{name: "tier: discount not smaller than the step", brief: "Herkese her 100 TL'ye 100 TL indirim", status: segment.StatusNeedsClarification, say: "step_spend"},

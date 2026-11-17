@@ -27,21 +27,21 @@ func TestCombinedAndTieredOffersAreValidated(t *testing.T) {
 		}
 	}
 	bad := map[string]Offer{
-		"same kind twice":                {Kind: KindPercent, Value: 20, Extras: []Part{{Kind: KindPercent, Value: 30}}},
-		"four parts":                     {Kind: KindPercent, Value: 10, Extras: []Part{{Kind: KindAmount, Value: 5}, free, free}},
-		"extras on nothing":              {Kind: KindNone, Extras: []Part{free}},
-		"extras on a coupon":             {Kind: KindCouponCode, Code: "ABC10", Extras: []Part{free}},
-		"coupon code as a part":          {Kind: KindPercent, Value: 10, Extras: []Part{{Kind: KindCouponCode}}},
-		"bad extra value":                {Kind: KindPercent, Value: 10, Extras: []Part{{Kind: KindAmount, Value: -5}}},
-		"tier on a percentage":           {Kind: KindPercent, Value: 10, StepSpend: 1000},
-		"tier with a percentage extra":   {Kind: KindAmount, Value: 100, StepSpend: 1000, Extras: []Part{{Kind: KindPercent, Value: 5}}},
-		"discount not below the step":    {Kind: KindAmount, Value: 1000, StepSpend: 1000},
-		"cap on a fixed amount":          {Kind: KindAmount, Value: 100, MaxDiscount: 300},
-		"cap below one step":             {Kind: KindAmount, Value: 100, StepSpend: 1000, MaxDiscount: 50},
-		"cap on free shipping":           {Kind: KindFreeShipping, MaxDiscount: 300},
-		"cap with percent and amount":    {Kind: KindPercent, Value: 10, MaxDiscount: 300, Extras: []Part{{Kind: KindAmount, Value: 50}}},
-		"tier on nothing":                {Kind: KindNone, StepSpend: 1000},
-		"negative step":                  {Kind: KindAmount, Value: 10, StepSpend: -1},
+		"same kind twice":              {Kind: KindPercent, Value: 20, Extras: []Part{{Kind: KindPercent, Value: 30}}},
+		"four parts":                   {Kind: KindPercent, Value: 10, Extras: []Part{{Kind: KindAmount, Value: 5}, free, free}},
+		"extras on nothing":            {Kind: KindNone, Extras: []Part{free}},
+		"extras on a coupon":           {Kind: KindCouponCode, Code: "ABC10", Extras: []Part{free}},
+		"coupon code as a part":        {Kind: KindPercent, Value: 10, Extras: []Part{{Kind: KindCouponCode}}},
+		"bad extra value":              {Kind: KindPercent, Value: 10, Extras: []Part{{Kind: KindAmount, Value: -5}}},
+		"tier on a percentage":         {Kind: KindPercent, Value: 10, StepSpend: 1000},
+		"tier with a percentage extra": {Kind: KindAmount, Value: 100, StepSpend: 1000, Extras: []Part{{Kind: KindPercent, Value: 5}}},
+		"discount not below the step":  {Kind: KindAmount, Value: 1000, StepSpend: 1000},
+		"cap on a fixed amount":        {Kind: KindAmount, Value: 100, MaxDiscount: 300},
+		"cap below one step":           {Kind: KindAmount, Value: 100, StepSpend: 1000, MaxDiscount: 50},
+		"cap on free shipping":         {Kind: KindFreeShipping, MaxDiscount: 300},
+		"cap with percent and amount":  {Kind: KindPercent, Value: 10, MaxDiscount: 300, Extras: []Part{{Kind: KindAmount, Value: 50}}},
+		"tier on nothing":              {Kind: KindNone, StepSpend: 1000},
+		"negative step":                {Kind: KindAmount, Value: 10, StepSpend: -1},
 	}
 	for name, o := range bad {
 		if err := o.Validate(); err == nil {

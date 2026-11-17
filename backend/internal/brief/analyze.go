@@ -66,10 +66,10 @@ type Intent struct {
 	// brief names both ("kadın ve erkek müşterilere"), which is everyone.
 	Gender, GenderPhrase string
 	BothGenders          bool
-	HasSpend           bool        // an explicit total-spending audience (toplam harcaması N TL'den fazla)
-	SpendOp            string      // gt, gte or lt
-	SpendValue         float64
-	Blockers           []Blocker
+	HasSpend             bool   // an explicit total-spending audience (toplam harcaması N TL'den fazla)
+	SpendOp              string // gt, gte or lt
+	SpendValue           float64
+	Blockers             []Blocker
 
 	folded   string   // the folded brief, for checks that need to look at it again
 	consumed [][2]int // spans (byte offsets in folded) already explained as part of an offer term
@@ -338,9 +338,13 @@ func (in *Intent) analyzeTime(d *doc, f string) {
 // the amounts: "her 1000 TL'lik alışverişe 100 TL" is one tiered discount, not
 // a minimum basket plus a second offer, and "en fazla 300 TL" is a cap.
 var (
-	tierRe    = regexp.MustCompile(`\bher\s+(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)(?:['’]?[a-z]*)?(?:\s+(?:alisveris|harcama|sepet|siparis|tutar)\w*)?\s+(?:icin\s+|basina\s+)?(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)(?:['’]?[a-z]*)?`)
-	capRe     = regexp.MustCompile(`\b(?:toplam(?:da)?\s+)?(?:en\s+fazla|en\s+cok|maksimum|maks|azami|max)\s+(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)(?:['’]?[a-z]*)?`)
-	capUpToRe = regexp.MustCompile(`(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)['’]?(?:ye|ya|e|a)\s+(?:kadar|varan)\b`)
+	tierRe = regexp.MustCompile(`\bher\s+(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)(?:['’]?[a-z]*)?(?:\s+(?:alisveris|harcama|sepet|siparis|tutar)\w*)?\s+(?:icin\s+|basina\s+)?(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)(?:['’]?[a-z]*)?`)
+	capRe  = regexp.MustCompile(`\b(?:toplam(?:da)?\s+)?(?:en\s+fazla|en\s+cok|maksimum|maks|azami|max)\s+(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)(?:['’]?[a-z]*)?`)
+	// "300 TL'ye kadar / varan" (also written "300 tl ye varan"). What follows decides
+	// what it is: "... indirim" is a cap; "1000 TL'ye varan siparişte" is a basket
+	// that REACHES 1000 TL, i.e. the minimum basket (D88).
+	capUpToRe   = regexp.MustCompile(`(\d+(?:[.,]\d+)*)\s*(?:tl|try|lira|₺)\s?['’]?\s?(?:ye|ya|e|a)\s+(kadar|varan|ulasan)\b`)
+	reachShopRe = regexp.MustCompile(`^\s+(?:siparis|alisveris|sepet|harcama|tutar)\w*`)
 	// Words that turn two incentives into a choice ("%20 ya da ücretsiz kargo").
 	alternativeRe = regexp.MustCompile(`\b(?:ya\s+da|veya|yahut|yoksa)\b`)
 	// Where an incentive is written, to look between the first and the last one.
@@ -373,12 +377,29 @@ func (in *Intent) analyzeOffer(d *doc, text string) {
 		tierStep, tierValue = step, value
 		blank(m[0], m[1])
 	}
-	var capValue float64
+	var capValue, reachMin float64
 	capPhrase := ""
 	for _, re := range []*regexp.Regexp{capRe, capUpToRe} {
 		for _, m := range re.FindAllStringSubmatchIndex(string(scan), -1) {
 			v, ok := offer.ParseNumber(f[m[2]:m[3]])
 			if !ok {
+				continue
+			}
+			if loc := reachShopRe.FindStringIndex(f[m[1]:]); re == capUpToRe && loc != nil {
+				blank(m[0], m[1])
+				// The shopping word belongs to the offer ("sepete"), not to a cart audience.
+				in.consumed = append(in.consumed, [2]int{m[1] + loc[0], m[1] + loc[1]})
+				if f[m[4]:m[5]] == "kadar" { // "1000 TL'ye kadar alışverişte": an upper basket limit
+					q := quote(m[0], m[1])
+					in.block(segment.StatusNeedsClarification, q, fmt.Sprintf(
+						"%q alışverişin üst sınırı gibi okunuyor; teklifler yalnızca alt limitle (\"%s TL ve üzeri alışverişte\") ya da indirim üst sınırıyla (\"en fazla %s TL indirim\") tanımlanabiliyor. Hangisini kastettiğinizi yazın.",
+						q, offer.FormatNumber(v), offer.FormatNumber(v)))
+					continue
+				}
+				if reachMin > 0 && v != reachMin {
+					in.block(segment.StatusNeedsClarification, quote(m[0], m[1]), "Brief'te birden fazla alışveriş alt limiti var. Teklifin tek bir alt limiti olabilir; hangisini istediğinizi yazın.")
+				}
+				reachMin = v
 				continue
 			}
 			if capValue > 0 && v != capValue {
@@ -391,6 +412,12 @@ func (in *Intent) analyzeOffer(d *doc, text string) {
 
 	masked := string(scan)
 	minSpend := in.analyzeThresholds(d, masked, blank)
+	if reachMin > 0 {
+		if minSpend > 0 && minSpend != reachMin {
+			in.block(segment.StatusNeedsClarification, "", "Brief'te birden fazla alışveriş alt limiti var. Teklifin tek bir alt limiti olabilir; hangisini istediğinizi yazın.")
+		}
+		minSpend = reachMin
+	}
 	expires := in.analyzeDates(d, masked, blank)
 	s := string(scan)
 

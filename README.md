@@ -41,6 +41,10 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 - `ANTHROPIC_API_KEY` boş → **mock LLM** (varsayılan; anahtar gerekmez). Anahtarı `.env`'ye yazıp
   `docker compose up -d api` ile yeniden başlatırsanız kod değişikliği olmadan **gerçek Claude** kullanılır
   (`CLAUDE_MODEL`, varsayılan `claude-sonnet-5-5`). Aktif mod açılış logunda ve arayüzün sağ üstündeki rozette görünür.
+- **Brief'i kim anlıyor?** Gerçek Claude modunda brief'i Claude yorumlar ve kitleyi çıkarır. Kod yalnız nesnel kontrol
+  yapar: şema/beyaz liste ve SQL güvenliği, teklifin mantıklı olması ve Claude'un yazdığı şehir, sayı, tutar, kod ve
+  tarihin brief'te gerçekten geçmesi (uydurma onarıma gönderilir, sürerse sorulur). Mock modunda brief'i kural okuyucusu
+  anlar (`brief.Analyze`): tanımadığı ya da belirsiz bulduğu ifadeyi sorar (DECISIONS.md D87).
 - `make test` **her zaman mock** ile çalışır; `.env`'de anahtar olsa bile okunmaz, internet gerekmez.
 - `make test-live` gerçek Claude'a duman testi yapar (yalnız anahtar varsa, birkaç sent tutar; `make test`'e dahil değil).
 
@@ -89,8 +93,8 @@ yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=
 
 ## Brief'te özel gün, cinsiyet, birleşik ve kademeli teklif
 
-Mock LLM ve gerçek Claude aynı brief'leri aynı biçimde anlar: kural koddan okunur, Claude'un cevabı aynı kontrolden
-geçer, eksik/yanlış kısım geri bildirimle düzelttirilir (D82–D86).
+Aşağıdaki kurallar mock modunda kural okuyucusunun kurallarıdır. Gerçek Claude modunda aynı kurallar Claude'a prompt'ta
+söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
 
 - **Özel gün kitleyi kısıtlamaz.** "Kadınlar Günü'ne özel %20 indirim" mesajın konusunu ve tonunu belirler; kitle
   yazılmadıysa **herkes** seçilir ve kitle adımında "Kitle belirtilmediği için tüm müşteriler seçildi." yazar (soru
@@ -103,7 +107,8 @@ geçer, eksik/yanlış kısım geri bildirimle düzelttirilir (D82–D86).
   TL hediye çeki ve ücretsiz kargo"); her parça SMS'te ve e-postada geçmek zorundadır. Aynı türden iki değer ("%20 ya da
   %30") ya da seçenek olarak yazılmış teklifler ("%20 indirim ya da ücretsiz kargo") sorulur.
 - **Kademeli indirim:** "Her 1000 TL'lik alışverişe 100 TL indirim, toplamda en fazla 300 TL" → teklif `amount 100`,
-  `step_spend 1000`, `max_discount 300`; mesajda üç sayı da yazılır. Yüzdeye tavan da olur: "%20 indirim, en fazla 300 TL".
+  `step_spend 1000`, `max_discount 300`; mesajda üç sayı da yazılır. "1000 TL'ye varan siparişte 300 TL indirim"
+  alt limittir (`min_spend 1000`), "300 TL'ye varan indirim" ise tavan. Yüzdeye tavan da olur: "%20 indirim, en fazla 300 TL".
   Mesajda teklifte olmayan bir TL tutarı (ör. örnek hesap "3000 TL'lik alışverişte…") çelişki sayılır ve düzelttirilir.
 - **Metinler konuya ve tona göre değişir.** Kod brief'ten bir tema çıkarır (özel gün; konu: sepet / geri kazanma / hoş
   geldin / teşekkür; ton: samimi, resmi, heyecanlı, kısa, zarif, acil) ve bunu Claude'a da mock'a da verir. Mock, ifade
@@ -162,9 +167,12 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
   kalıplarla okunur ve model kuralı bunlara karşı doğrulanır. Sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz;
   gerçek Claude ile bu durumda `purchased=false` koşulunun kuraldan düştüğü görüldü. Kampanyayı onaylamadan önce
   ekrandaki kitle kartındaki koşulları kontrol edin. Açık iş olarak PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
-- Desteklenmeyen kısıtlar (yaş, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen hafta")
-  sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
+- Mock modunda desteklenmeyen kısıtlar (yaş, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen
+  hafta") sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
   Sözlükte hiç olmayan bir kısıt ise mock'ta fark edilmeyebilir.
+- **Gerçek Claude modunda kitle yorumu Claude'a aittir** (D87). Kod Claude'un brief'te olmayan bir şehir, sayı, tutar,
+  kod ya da tarih uydurmasını yakalar, ama bir koşulu yanlış anlamasını ya da düşürmesini yakalamaz. Onaydan önce kitle
+  kartındaki koşul rozetlerini ve kişi sayısını kontrol edin.
 
 ## Seed verisi hakkında notlar
 

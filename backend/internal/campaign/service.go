@@ -57,7 +57,13 @@ type Service struct {
 	llm    llm.Client
 	policy content.Policy
 	log    *slog.Logger
+	// segmentMode says who understands the brief: the rule reader (Strict, the
+	// default and the mock's mode) or the real model (Grounded, D87).
+	segmentMode briefs.Mode
 }
+
+// UseSegmentMode sets who understands the brief (see brief.Mode).
+func (s *Service) UseSegmentMode(m briefs.Mode) *Service { s.segmentMode = m; return s }
 
 func NewService(pool *pgxpool.Pool, client llm.Client, policy content.Policy, log *slog.Logger) *Service {
 	return &Service{pool: pool, llm: client, policy: policy, log: log}
@@ -132,7 +138,7 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	genCtx, cancel := context.WithTimeout(ctx, segmentTimeout)
 	defer cancel()
 
-	rule, err := briefs.ResolveSegment(genCtx, s.llm, brief, llm.Hooks{OnLog: s.recorder(id, "segment", content.DefaultLanguage)})
+	rule, err := briefs.ResolveSegmentWith(genCtx, s.llm, brief, llm.Hooks{OnLog: s.recorder(id, "segment", content.DefaultLanguage)}, s.segmentMode)
 	if err != nil {
 		return nil, s.generationError(err, "Kitle kuralı üretilemedi")
 	}
