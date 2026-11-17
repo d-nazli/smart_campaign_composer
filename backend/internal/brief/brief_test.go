@@ -44,6 +44,19 @@ var (
 	pct          = func(v float64) offer.Offer { return offer.Offer{Kind: offer.KindPercent, Value: v} }
 	freeShipping = offer.Offer{Kind: offer.KindFreeShipping}
 	amountOf     = func(v float64) offer.Offer { return offer.Offer{Kind: offer.KindAmount, Value: v} }
+	freePart = offer.Part{Kind: offer.KindFreeShipping}
+	// combo is a combined offer: the main part and the extras.
+	combo = func(main offer.Offer, extras ...offer.Part) offer.Offer {
+		main.Extras = extras
+		return main
+	}
+	withExtras = func(o offer.Offer, extras ...offer.Part) offer.Offer { o.Extras = extras; return o }
+	withCode   = func(o offer.Offer, code string) offer.Offer { o.Code = code; return o }
+	// tier is "her step TL'ye value TL, toplamda en fazla max TL".
+	tier = func(value, step, max float64) offer.Offer {
+		return offer.Offer{Kind: offer.KindAmount, Value: value, StepSpend: step, MaxDiscount: max}
+	}
+	capped = func(o offer.Offer, max float64) offer.Offer { o.MaxDiscount = max; return o }
 	// withTerms adds the terms of an offer: a minimum basket and a last day.
 	withTerms = func(o offer.Offer, minSpend float64, expires string) offer.Offer {
 		o.MinSpend, o.ExpiresAt = minSpend, expires
@@ -161,7 +174,7 @@ var table = []row{
 	{name: "offer: coupon code only", brief: "Sepeti terk edenlere HOSGELDIN10 kupon kodunu gönder", status: segment.StatusOK, want: []string{abandoned}, offer: offer.Offer{Kind: offer.KindCouponCode, Code: "HOSGELDIN10"}},
 	{name: "offer: percent together with a code", brief: "Sepeti terk edenlere %15 indirim, kupon kodu: YAZ25", status: segment.StatusOK, want: []string{abandoned}, offer: offer.Offer{Kind: offer.KindPercent, Value: 15, Code: "YAZ25"}},
 	{name: "offer: no offer at all", brief: "Sepeti terk edenlere hatırlatma gönder", status: segment.StatusOK, want: []string{abandoned}, offer: none},
-	{name: "offer: two different offers", brief: "Sepeti terk edenlere %15 indirim ve ücretsiz kargo ver", status: segment.StatusNeedsClarification, say: "teklif"},
+	{name: "offer: percent and free shipping go together", brief: "Sepeti terk edenlere %15 indirim ve ücretsiz kargo ver", status: segment.StatusOK, want: []string{abandoned}, offer: combo(pct(15), freePart)},
 	{name: "offer: two different percentages", brief: "Sepeti terk edenlere %15 indirim, VIP olanlara %20 indirim ver", status: segment.StatusNeedsClarification, say: "teklif"},
 	{name: "offer: impossible percentage", brief: "Sepeti terk edenlere %150 indirim ver", status: segment.StatusNeedsClarification, say: "150"},
 	{name: "offer: 'kod' without a code", brief: "Sepeti terk edenlere indirim kodu gönder", status: segment.StatusNeedsClarification, say: "kod"},
@@ -169,8 +182,6 @@ var table = []row{
 	// ---- things we cannot do: must be said out loud ----------------------
 	{name: "unsupported: age", brief: "35 yaş üstü sepeti terk eden müşterilere %10 indirim", status: segment.StatusUnsupported, say: "yaş"},
 	{name: "unsupported: age, other wording", brief: "30 yaşındaki müşterilere kampanya", status: segment.StatusUnsupported, say: "yaş"},
-	{name: "unsupported: gender", brief: "Sepeti terk eden kadın müşterilere %10 indirim", status: segment.StatusUnsupported, say: "kadın"},
-	{name: "unsupported: gender, other wording", brief: "Cinsiyeti erkek olan müşterilere kampanya", status: segment.StatusUnsupported, say: "cinsiyet"},
 	{name: "unsupported: product category", brief: "Ayakkabı kategorisinde sepete ürün ekleyenlere %10 indirim", status: segment.StatusUnsupported, say: "kategori"},
 	{name: "unsupported: product, no word 'category'", brief: "Sepetine telefon ekleyip almayanlara %10 indirim", status: segment.StatusUnsupported, say: "telefon"},
 	{name: "unsupported: birthday", brief: "Doğum günü bu hafta olanlara %10 indirim", status: segment.StatusUnsupported, say: "doğum"},
@@ -180,9 +191,8 @@ var table = []row{
 	// ---- offer terms (minimum basket, last day) are NOT audience conditions ---
 	// The brief that was reported: "1000 TL üzeri" is a term of the discount, and the
 	// brief names no audience, so the only open question is who gets the message.
-	{name: "mother's day: terms are read, the audience is asked", brief: mothersDay,
-		status: segment.StatusNeedsClarification, question: whoQuestion, suggest: segment.SuggestAllCustomers,
-		offer: withTerms(amountOf(100), 1000, "2026-12-31")},
+	{name: "mother's day: terms are read, the special day means everyone", brief: mothersDay,
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(amountOf(100), 1000, "2026-12-31")},
 	{name: "mother's day, after 'send to everyone'", brief: mothersDay + "\n\nTüm müşterilere gönder.",
 		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(amountOf(100), 1000, "2026-12-31")},
 	{name: "terms: minimum basket with a percentage", brief: "Tüm müşterilere 1000 TL üzeri alışverişe %10 indirim",
@@ -218,6 +228,58 @@ var table = []row{
 		question: whoQuestion, suggest: segment.SuggestAllCustomers, offer: pct(10)},
 	{name: "nobody named: a greeting only", brief: "Hoş geldin mesajı gönder", status: segment.StatusNeedsClarification,
 		question: whoQuestion, suggest: segment.SuggestAllCustomers, offer: none},
+
+	// ---- combined offers: different kinds go together, the same kind twice is asked ----
+	{name: "combined: order does not matter", brief: "Herkese ücretsiz kargo ve %20 indirim", status: segment.StatusOK, want: []string{everyone}, offer: combo(pct(20), freePart)},
+	{name: "combined: written with +", brief: "Herkese %20 indirim + ücretsiz kargo", status: segment.StatusOK, want: []string{everyone}, offer: combo(pct(20), freePart)},
+	{name: "combined: three parts", brief: "Tüm müşterilere %10 indirim, 50 TL hediye çeki ve ücretsiz kargo", status: segment.StatusOK, want: []string{everyone},
+		offer: combo(pct(10), offer.Part{Kind: offer.KindAmount, Value: 50}, freePart)},
+	{name: "combined: with a code and terms", brief: "Herkese 500 TL üzeri alışverişe %15 indirim ve ücretsiz kargo, kupon kodu YAZ15, son kullanım 31.12.2026",
+		status: segment.StatusOK, want: []string{everyone}, offer: withCode(withTerms(combo(pct(15), freePart), 500, "2026-12-31"), "YAZ15")},
+	{name: "combined: a choice is asked", brief: "Herkese %20 indirim ya da ücretsiz kargo", status: segment.StatusNeedsClarification, say: "ya da"},
+	{name: "combined: two percentages are asked", brief: "Herkese %20 ya da %30 indirim", status: segment.StatusNeedsClarification, say: "aynı türden"},
+	{name: "combined: two amounts are asked", brief: "Herkese 100 TL indirim ve 50 TL indirim", status: segment.StatusNeedsClarification, say: "aynı türden"},
+
+	// ---- tiered discounts and caps ----------------------------------------------
+	{name: "tier: the reported brief", brief: "Her 1000 TL'lik alışverişe 100 TL indirim, toplamda en fazla 300 TL. Tüm müşterilere.",
+		status: segment.StatusOK, want: []string{everyone}, offer: tier(100, 1000, 300)},
+	{name: "tier: 'TL'ye' without a shopping word, no cap", brief: "Herkese her 500 TL'ye 50 TL indirim", status: segment.StatusOK, want: []string{everyone}, offer: tier(50, 500, 0)},
+	{name: "tier: 'alışverişte' and 'en çok'", brief: "Sepeti terk edenlere her 1.000 TL alışverişte 75 TL indirim, en çok 225 TL", status: segment.StatusOK,
+		want: []string{abandoned}, offer: tier(75, 1000, 225)},
+	{name: "tier with free shipping", brief: "Herkese her 1000 TL'lik alışverişe 100 TL indirim ve ücretsiz kargo, toplamda en fazla 300 TL", status: segment.StatusOK,
+		want: []string{everyone}, offer: withExtras(tier(100, 1000, 300), freePart)},
+	{name: "cap on a percentage", brief: "Herkese %20 indirim, en fazla 300 TL", status: segment.StatusOK, want: []string{everyone}, offer: capped(pct(20), 300)},
+	{name: "cap on a percentage: '... TL'ye kadar'", brief: "Herkese 250 TL'ye kadar %20 indirim", status: segment.StatusOK, want: []string{everyone}, offer: capped(pct(20), 250)},
+	{name: "cap without anything to cap", brief: "Herkese en fazla 300 TL indirim", status: segment.StatusNeedsClarification, say: "üst sınır"},
+	{name: "tier together with a percentage", brief: "Herkese %10 indirim ve her 1000 TL'ye 100 TL indirim", status: segment.StatusNeedsClarification, say: "kademeli"},
+	{name: "tier: discount not smaller than the step", brief: "Herkese her 100 TL'ye 100 TL indirim", status: segment.StatusNeedsClarification, say: "step_spend"},
+
+	// ---- special days: the theme, never the audience ----------------------------
+	{name: "special day: Kadınlar Günü, nobody named -> everyone", brief: "Kadınlar Günü'ne özel %20 indirim", status: segment.StatusOK, want: []string{everyone}, offer: pct(20)},
+	{name: "special day: 8 Mart", brief: "8 Mart'a özel %20 indirim kampanyası", status: segment.StatusOK, want: []string{everyone}, offer: pct(20)},
+	{name: "special day: 8 Mart with a year is a last day, not a special day", brief: "Herkese 8 Mart 2027'ye kadar geçerli %20 indirim",
+		status: segment.StatusOK, want: []string{everyone}, offer: withTerms(pct(20), 0, "2027-03-08")},
+	{name: "special day + explicit gender", brief: "Kadınlar Günü'ne özel, kadın müşterilere %20 indirim", status: segment.StatusOK, want: []string{"gender eq female"}, offer: pct(20)},
+	{name: "special day: Anneler Günü for women, explicitly", brief: "Anneler Günü için kadın müşterilere özel %15 indirim", status: segment.StatusOK, want: []string{"gender eq female"}, offer: pct(15)},
+	{name: "special day: Anneler Günü alone is everyone", brief: "Anneler Günü'ne özel ücretsiz kargo", status: segment.StatusOK, want: []string{everyone}, offer: freeShipping},
+	{name: "special day: Babalar Günü for men, explicitly", brief: "Babalar Günü'ne özel erkek müşterilerimize %10 indirim", status: segment.StatusOK, want: []string{"gender eq male"}, offer: pct(10)},
+	{name: "special day: Babalar Günü with everyone said", brief: "Babalar Günü'ne özel ücretsiz kargo, tüm müşterilere", status: segment.StatusOK, want: []string{everyone}, offer: freeShipping},
+	{name: "special day with a real audience: no gender, no default", brief: "Kadınlar Günü'nde sepeti terk eden İstanbul'daki müşterilere %10 indirim",
+		status: segment.StatusOK, want: []string{"city eq İstanbul", abandoned}, offer: pct(10)},
+	{name: "special day: Sevgililer Günü / 14 Şubat", brief: "14 Şubat Sevgililer Günü'ne özel %25 indirim", status: segment.StatusOK, want: []string{everyone}, offer: pct(25)},
+	{name: "special day: Yılbaşı", brief: "Yılbaşına özel tüm ürünlerde %30 indirim", status: segment.StatusOK, want: []string{everyone}, offer: pct(30)},
+	{name: "special day: Black Friday", brief: "Black Friday'e özel %40 indirim", status: segment.StatusOK, want: []string{everyone}, offer: pct(40)},
+	{name: "special day: Ramazan Bayramı", brief: "Ramazan Bayramı'na özel 1000 TL üzeri alışverişe ücretsiz kargo", status: segment.StatusOK, want: []string{everyone}, offer: withTerms(freeShipping, 1000, "")},
+	{name: "special day: Öğretmenler Günü", brief: "Öğretmenler Günü'ne özel 100 TL indirim", status: segment.StatusOK, want: []string{everyone}, offer: amountOf(100)},
+	{name: "special day: 23 Nisan", brief: "23 Nisan Çocuk Bayramı'na özel %15 indirim", status: segment.StatusOK, want: []string{everyone}, offer: pct(15)},
+
+	// ---- gender: only when the brief says so ------------------------------------
+	{name: "gender: kadın müşterilere", brief: "Sepeti terk eden kadın müşterilere %10 indirim", status: segment.StatusOK, want: []string{"gender eq female", abandoned}, offer: pct(10)},
+	{name: "gender: kadınlara", brief: "Ankara'daki kadınlara %10 indirim", status: segment.StatusOK, want: []string{"city eq Ankara", "gender eq female"}, offer: pct(10)},
+	{name: "gender: cinsiyeti erkek olan", brief: "Cinsiyeti erkek olan müşterilere kampanya", status: segment.StatusOK, want: []string{"gender eq male"}, offer: none},
+	{name: "gender: both genders is everyone", brief: "Kadın ve erkek müşterilerimize %10 indirim", status: segment.StatusOK, want: []string{everyone}, offer: pct(10)},
+	{name: "gender: a gender word that is not the audience changes nothing", brief: "Kadın koleksiyonunda %20 indirim", status: segment.StatusNeedsClarification,
+		question: whoQuestion, suggest: segment.SuggestAllCustomers, offer: pct(20)},
 
 	// ---- an amount threshold: ambiguous, and the example uses YOUR number ----
 	{name: "threshold: spending customers, example uses the brief's number", brief: "1500 TL üzeri alışveriş yapan müşterilere %10 indirim",
@@ -517,7 +579,7 @@ func TestTheModelCannotInventOrForgetEveryone(t *testing.T) {
 
 // When no audience is named at all the model is not asked: it would guess.
 func TestABriefThatNamesNobodyNeverReachesTheModel(t *testing.T) {
-	for _, b := range []string{"%10 indirim gönder", "Hoş geldin mesajı gönder", mothersDay} {
+	for _, b := range []string{"%10 indirim gönder", "Hoş geldin mesajı gönder", "Kadın koleksiyonunda %20 indirim"} {
 		m := mock.NewScripted([]mock.Step{rawRule(t, okRule(pct(10), c("all_customers", "eq", true)))}, nil)
 		rule, err := brief.ResolveSegment(context.Background(), m, b, llm.Hooks{})
 		if err != nil {

@@ -27,12 +27,16 @@ func createBrief(t *testing.T, svc *campaign.Service, brief string) *campaign.Vi
 	return v
 }
 
-// "1000 TL üzeri" is a term of the offer. The brief names no audience, so the
-// one open question is WHO, with the understood offer shown next to it.
+// The reported brief without its special day: "1000 TL üzeri" is a term of the
+// offer and the brief names no audience, so the one open question is WHO,
+// with the understood offer shown next to it. (With "anneler gününe özel" in
+// front the special day makes the audience everyone: see the next test.)
+const termsOnly = "1000 tl üzeri alışverişe 100tl indirim kullandır son kullanım 31.12.2026"
+
 func TestTheReportedBriefAsksWhoAndKeepsTheOffer(t *testing.T) {
 	m := mock.NewScripted([]mock.Step{raw(`{"status":"ok","match":"all","conditions":[{"field":"total_spent","op":"gt","value":1000}],"explanation":"x","question":"","offer":{"kind":"none","value":0,"code":"","min_spend":0,"expires_at":""}}`)}, nil)
 	svc, pool := newService(t, m)
-	v := createBrief(t, svc, mothersDay)
+	v := createBrief(t, svc, termsOnly)
 
 	s := v.Segment
 	if v.Status != campaign.StatusDraft || s.Status != segment.StatusNeedsClarification || s.Audience != nil || len(s.Conditions) != 0 {
@@ -59,6 +63,20 @@ func TestTheReportedBriefAsksWhoAndKeepsTheOffer(t *testing.T) {
 		t.Fatalf("approve: %v", err)
 	}
 	_ = pool
+}
+
+// The reported brief as written: the special day names no audience, so it goes
+// to everyone (user decision) and the terms still belong to the offer.
+func TestTheReportedMothersDayBriefGoesToEveryoneWithItsTerms(t *testing.T) {
+	svc, _ := newService(t, mock.New(0))
+	v := createBrief(t, svc, mothersDay)
+	s := v.Segment
+	if s.Status != segment.StatusOK || len(s.Conditions) != 1 || s.Conditions[0].Field != "all_customers" || s.Note == "" {
+		t.Fatalf("%+v", s)
+	}
+	if !s.Offer.Equal(mothersDayOffer) {
+		t.Fatalf("the terms must stay on the offer: %+v", s.Offer)
+	}
 }
 
 // After the person answers "send to all", the audience is every customer who

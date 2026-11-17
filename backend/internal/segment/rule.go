@@ -43,6 +43,9 @@ type rawRule struct {
 	Explanation string         `json:"explanation"`
 	Question    string         `json:"question"`
 	Offer       *offer.Offer   `json:"offer"`
+	// Note is not in the model's schema; it is accepted here because a stored
+	// rule (which code may have given a note) is parsed again at approval.
+	Note string `json:"note"`
 }
 
 type rawCondition struct {
@@ -73,6 +76,9 @@ type Rule struct {
 	// needs_clarification question (SuggestAllCustomers). Set by code, never by
 	// the model.
 	Suggestion string `json:"suggestion,omitempty"`
+	// Note is a sentence the audience step shows next to an "ok" rule, for
+	// example why everyone was chosen. Set by code, never by the model.
+	Note string `json:"note,omitempty"`
 }
 
 // ParseError lists every problem found, so it can be fed back to the LLM.
@@ -110,8 +116,12 @@ func validate(rr rawRule) (Rule, error) {
 	if utf8.RuneCountInString(rr.Question) > MaxQuestion {
 		bad("question en fazla %d karakter olmalı", MaxQuestion)
 	}
+	if utf8.RuneCountInString(rr.Note) > MaxQuestion {
+		bad("note en fazla %d karakter olmalı", MaxQuestion)
+	}
 	out.Explanation = strings.TrimSpace(rr.Explanation)
 	out.Question = strings.TrimSpace(rr.Question)
+	out.Note = strings.TrimSpace(rr.Note)
 
 	switch rr.Status {
 	case StatusOK:
@@ -244,6 +254,13 @@ func decodeValue(f fieldDef, op string, raw json.RawMessage) (any, error) {
 			return nil, fmt.Errorf("%v ile %v arasında olmalı", f.Min, f.Max)
 		}
 		return x, nil
+
+	case kindGender:
+		var g string
+		if err := json.Unmarshal(raw, &g); err != nil || !contains(Genders, g) {
+			return nil, fmt.Errorf("cinsiyet \"female\" veya \"male\" olmalı")
+		}
+		return g, nil
 
 	case kindBool:
 		switch string(bytes.TrimSpace(raw)) {

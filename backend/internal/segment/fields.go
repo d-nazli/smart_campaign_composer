@@ -19,7 +19,12 @@ const (
 	kindInt
 	kindNumber
 	kindBool
+	kindGender // "female" or "male"
 )
+
+// Genders a gender condition may name (users.gender also allows "other" and
+// NULL = not stated; neither is ever selected by a gender condition).
+var Genders = []string{"female", "male"}
 
 // Operators.
 const (
@@ -147,6 +152,17 @@ var fields = []fieldDef{
 				return "NOT (city = ANY(" + a.add(v) + "))", nil
 			}
 			return "", fmt.Errorf("operator %q not supported", op)
+		},
+	},
+	{
+		FieldInfo: FieldInfo{Name: "gender", Type: "string", Ops: []string{OpEq},
+			Description: "Customer's stated gender: \"female\" or \"male\". Use it ONLY when the brief explicitly restricts WHO receives the campaign by gender (\"kadın müşterilere özel\", \"erkek müşterilerimize\", \"kadınlara\"). A special day (Kadınlar Günü, Anneler Günü, Babalar Günü, Sevgililer Günü ...) is the THEME of the message, never an audience: do not add gender for it. Customers who did not state a gender never match."},
+		kind: kindGender,
+		sql: func(op string, v any, _ time.Time, a *args) (string, error) {
+			if op != OpEq {
+				return "", fmt.Errorf("operator %q not supported", op)
+			}
+			return "gender = " + a.add(v), nil
 		},
 	},
 	{

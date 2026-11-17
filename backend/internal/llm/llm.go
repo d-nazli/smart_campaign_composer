@@ -58,6 +58,46 @@ type MessageRequest struct {
 	Language          string
 	Reference         *content.Content
 	ReferenceLanguage string
+	// Theme is what the copy is about and how it should sound, read from the
+	// brief by code (brief.ThemeOf). Empty fields mean "nothing special".
+	Theme Theme
+}
+
+// Theme steers the copy. It never changes who receives the campaign.
+type Theme struct {
+	// Occasion is a special day (brief.Occasion* ids), OccasionName its name in
+	// the language being written ("Kadınlar Günü", "Women's Day").
+	Occasion, OccasionName string
+	// Topic is what the campaign is about: cart, winback, welcome, loyal, general.
+	Topic string
+	// Tones the brief asks for: friendly, formal, excited, short, elegant, urgent.
+	Tones []string
+}
+
+// Topics and tones of a Theme.
+const (
+	TopicCart    = "cart"
+	TopicWinback = "winback"
+	TopicWelcome = "welcome"
+	TopicLoyal   = "loyal"
+	TopicGeneral = "general"
+
+	ToneFriendly = "friendly"
+	ToneFormal   = "formal"
+	ToneExcited  = "excited"
+	ToneShort    = "short"
+	ToneElegant  = "elegant"
+	ToneUrgent   = "urgent"
+)
+
+// Has reports whether the theme asks for a tone.
+func (t Theme) Has(tone string) bool {
+	for _, x := range t.Tones {
+		if x == tone {
+			return true
+		}
+	}
+	return false
 }
 
 // Client is implemented by the Claude client and by the mock.

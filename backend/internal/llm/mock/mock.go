@@ -140,7 +140,7 @@ func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta f
 	}
 	c.mu.Unlock()
 
-	out, err := resolve(step, func() string { return smartMessagesFor(lang, req.Brief, req.Offer) })
+	out, err := resolve(step, func() string { return smartMessagesFor(req, lang) })
 	if err != nil {
 		return out, err
 	}

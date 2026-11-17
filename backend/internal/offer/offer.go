@@ -41,6 +41,15 @@ type Offer struct {
 	// ExpiresAt is the last day the offer can be used, YYYY-MM-DD; empty means
 	// the brief gives none.
 	ExpiresAt string `json:"expires_at"`
+	// StepSpend makes an amount discount tiered: Value TL for every StepSpend TL
+	// of the basket. 0 = not tiered. See parts.go.
+	StepSpend float64 `json:"step_spend"`
+	// MaxDiscount caps the discount in TL: the total of a tiered discount, or the
+	// most a percentage can take off. 0 = no cap.
+	MaxDiscount float64 `json:"max_discount"`
+	// Extras are the other incentives promised together with the main one
+	// ("%20 indirim + ücretsiz kargo"); each of a different kind.
+	Extras []Part `json:"extras"`
 }
 
 const (
@@ -53,17 +62,24 @@ var codeRe = regexp.MustCompile(`^[A-Za-z0-9_-]{3,32}$`)
 // IsNone reports whether the brief promises nothing.
 func (o Offer) IsNone() bool { return o.Kind == "" || o.Kind == KindNone }
 
-// Normalize upper-cases the code and clears fields the kind does not use.
+// Normalize upper-cases the code, clears fields the kind does not use and puts
+// the parts of a combined offer in canonical order (the first one becomes the
+// main part), so two offers that promise the same compare Equal.
 func (o Offer) Normalize() Offer {
 	if o.IsNone() {
 		return Offer{Kind: KindNone}
 	}
 	o.Code = strings.ToUpper(strings.TrimSpace(o.Code))
 	o.ExpiresAt = strings.TrimSpace(o.ExpiresAt)
-	switch o.Kind {
-	case KindFreeShipping, KindCouponCode:
-		o.Value = 0
+	if o.Kind == KindCouponCode {
+		o.Value, o.Extras = 0, nil
+		return o
 	}
+	main, extras, ok := normalizeParts(o)
+	if !ok {
+		return Offer{Kind: KindNone}
+	}
+	o.Kind, o.Value, o.Extras = main.Kind, main.Value, extras
 	return o
 }
 
@@ -71,16 +87,13 @@ func (o Offer) Normalize() Offer {
 func (o Offer) Validate() error {
 	switch o.Kind {
 	case "", KindNone:
-		if o.Value != 0 || strings.TrimSpace(o.Code) != "" || o.MinSpend != 0 || strings.TrimSpace(o.ExpiresAt) != "" {
-			return fmt.Errorf("offer.kind \"none\" iken value 0, code, min_spend ve expires_at boş olmalı")
+		if o.Value != 0 || strings.TrimSpace(o.Code) != "" || o.MinSpend != 0 || strings.TrimSpace(o.ExpiresAt) != "" ||
+			o.StepSpend != 0 || o.MaxDiscount != 0 || len(o.Extras) != 0 {
+			return fmt.Errorf("offer.kind \"none\" iken value 0, code, min_spend, expires_at, step_spend, max_discount ve extras boş olmalı")
 		}
-	case KindPercent:
-		if o.Value <= 0 || o.Value > MaxPercent {
-			return fmt.Errorf("offer.value yüzde için 0'dan büyük ve en fazla %d olmalı (verilen %s)", MaxPercent, FormatNumber(o.Value))
-		}
-	case KindAmount:
-		if o.Value <= 0 || o.Value > MaxAmount {
-			return fmt.Errorf("offer.value TL tutarı için 0'dan büyük ve en fazla %d olmalı (verilen %s)", MaxAmount, FormatNumber(o.Value))
+	case KindPercent, KindAmount:
+		if err := valueError("offer", o.Kind, o.Value); err != nil {
+			return err
 		}
 	case KindFreeShipping:
 		if o.Value != 0 {
@@ -99,27 +112,29 @@ func (o Offer) Validate() error {
 	if c := strings.TrimSpace(o.Code); c != "" && !codeRe.MatchString(c) {
 		return fmt.Errorf("offer.code %q geçersiz; 3-32 karakter, yalnızca harf, rakam, - ve _", c)
 	}
+	if err := partsError(o); err != nil {
+		return err
+	}
 	return termsError(o)
 }
 
 // Equal compares two offers after normalization.
 func (o Offer) Equal(p Offer) bool {
 	a, b := o.Normalize(), p.Normalize()
-	return a.Kind == b.Kind && math.Abs(a.Value-b.Value) < 1e-9 && a.Code == b.Code &&
-		math.Abs(a.MinSpend-b.MinSpend) < 1e-9 && a.ExpiresAt == b.ExpiresAt
+	return a.Kind == b.Kind && near(a.Value, b.Value) && a.Code == b.Code &&
+		near(a.MinSpend, b.MinSpend) && a.ExpiresAt == b.ExpiresAt &&
+		near(a.StepSpend, b.StepSpend) && near(a.MaxDiscount, b.MaxDiscount) && partsEqual(a.Extras, b.Extras)
 }
+
+func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 // Describe renders the offer for people and for repair feedback, in Turkish.
 func (o Offer) Describe() string {
 	o = o.Normalize()
 	var s string
 	switch o.Kind {
-	case KindPercent:
-		s = "%" + FormatNumber(o.Value) + " indirim"
-	case KindAmount:
-		s = FormatNumber(o.Value) + " TL indirim"
-	case KindFreeShipping:
-		s = "ücretsiz kargo"
+	case KindPercent, KindAmount, KindFreeShipping:
+		s = o.whatIn("tr")
 	case KindCouponCode:
 		s = "kupon kodu " + o.Code
 	default:
@@ -222,17 +237,27 @@ func hasValue(list []float64, v float64) bool {
 }
 
 // Mentions reports whether text states the offer. A "none" offer is always
-// satisfied. When the offer has a Code, the code must be present as well.
+// satisfied. Every part of a combined offer must be present, and so must every
+// number of its terms: the code, the minimum basket, the tier step and cap,
+// the last day.
 func (o Offer) Mentions(text string) bool {
 	o = o.Normalize()
 	ok := true
-	switch o.Kind {
-	case KindPercent:
-		ok = hasValue(Percents(text), o.Value)
-	case KindAmount:
-		ok = hasValue(Amounts(text), o.Value)
-	case KindFreeShipping:
-		ok = HasFreeShipping(text)
+	for _, p := range o.Parts() {
+		switch p.Kind {
+		case KindPercent:
+			ok = ok && hasValue(Percents(text), p.Value)
+		case KindAmount:
+			ok = ok && hasValue(Amounts(text), p.Value)
+		case KindFreeShipping:
+			ok = ok && HasFreeShipping(text)
+		}
+	}
+	if ok && o.StepSpend > 0 {
+		ok = hasValue(Amounts(text), o.StepSpend)
+	}
+	if ok && o.MaxDiscount > 0 {
+		ok = hasValue(Amounts(text), o.MaxDiscount)
 	}
 	if ok && o.Code != "" {
 		ok = strings.Contains(strings.ToUpper(text), o.Code)
@@ -247,17 +272,33 @@ func (o Offer) Mentions(text string) bool {
 }
 
 // Conflicts lists claims in text that contradict the offer: a percentage other
-// than the promised one (or any percentage when no percentage was promised).
+// than the promised one (or any percentage when no percentage was promised),
+// and a TL amount that is none of the offer's own numbers (its discount, its
+// minimum basket, its tier step or its cap). A message that adds "for example
+// 3000 TL" or "worth 500 TL" states something nobody agreed.
 func (o Offer) Conflicts(text string) []string {
 	o = o.Normalize()
 	var out []string
 	seen := map[float64]bool{}
+	promised, hasPercent := o.part(KindPercent)
 	for _, p := range Percents(text) {
-		if seen[p] || (o.Kind == KindPercent && math.Abs(p-o.Value) < 1e-9) {
+		if seen[p] || (hasPercent && near(p, promised.Value)) {
 			continue
 		}
 		seen[p] = true
 		out = append(out, "%"+FormatNumber(p))
+	}
+	allowed := []float64{o.MinSpend, o.StepSpend, o.MaxDiscount}
+	if a, ok := o.part(KindAmount); ok {
+		allowed = append(allowed, a.Value)
+	}
+	seenAmount := map[float64]bool{}
+	for _, a := range Amounts(text) {
+		if seenAmount[a] || (a > 0 && hasValue(allowed, a)) {
+			continue
+		}
+		seenAmount[a] = true
+		out = append(out, FormatNumber(a)+" TL")
 	}
 	return out
 }

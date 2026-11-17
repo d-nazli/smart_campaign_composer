@@ -3,6 +3,7 @@ package content
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"smartcampaign/internal/offer"
 	"smartcampaign/internal/trtext"
@@ -66,10 +67,15 @@ func (p Policy) Quality(c Content, o offer.Offer) []Issue {
 }
 
 func conflictMessage(label, claim string, o offer.Offer) string {
-	if o.IsNone() {
+	amount := strings.HasSuffix(claim, " TL")
+	switch {
+	case o.IsNone() && amount:
+		return fmt.Sprintf("%s: brief'te hiçbir tutar yok ama metinde %s yazıyor. Brief'te olmayan tutar, fiyat veya örnek hesap yazma.", label, claim)
+	case o.IsNone():
 		return fmt.Sprintf("%s: brief'te hiçbir indirim oranı yok ama metinde %s yazıyor. Brief'te olmayan teklif uydurma.", label, claim)
-	}
-	if o.Kind == offer.KindPercent {
+	case amount:
+		return fmt.Sprintf("%s: metinde %s yazıyor ama bu tutar brief'teki teklifte (%q) yok. Yalnızca teklifin kendi tutarlarını yaz; örnek hesap, fiyat veya başka tutar ekleme.", label, claim, o.Describe())
+	case o.Kind == offer.KindPercent:
 		return fmt.Sprintf("%s: metinde %s yazıyor ama brief'teki teklif %q. Başka bir indirim oranı yazma.", label, claim, o.Describe())
 	}
 	return fmt.Sprintf("%s: metinde %s yazıyor ama brief'teki teklif %q. Brief'te olmayan indirim oranı yazma.", label, claim, o.Describe())

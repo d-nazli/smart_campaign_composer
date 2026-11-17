@@ -29,11 +29,12 @@ func Verify(in Intent, r segment.Rule) []string {
 		if in.Offer.IsNone() {
 			bad("Brief'te bir teklif geçmiyor ama offer alanında %q var; offer.kind \"none\", value 0, code \"\", min_spend 0 ve expires_at \"\" olmalı.", r.Offer.Describe())
 		} else {
-			bad("Brief'teki teklif %q ama offer alanı %q. offer alanını brief'teki teklifle aynen doldur (kind, value, code, min_spend, expires_at). Alışveriş tutarı şartı (ör. \"1000 TL üzeri alışverişe\") teklife aittir: min_spend; son kullanma tarihi expires_at (YYYY-MM-DD).", in.Offer.Describe(), r.Offer.Describe())
+			bad("Brief'teki teklif %q ama offer alanı %q. offer alanını brief'teki teklifle aynen doldur (kind, value, code, min_spend, expires_at, step_spend, max_discount, extras). Alışveriş tutarı şartı (ör. \"1000 TL üzeri alışverişe\") teklife aittir: min_spend; son kullanma tarihi expires_at (YYYY-MM-DD). Birlikte verilen farklı türden teklifler (ör. \"%%20 indirim + ücretsiz kargo\") tek teklifin parçalarıdır: biri kind/value, diğerleri extras. \"Her 1000 TL'ye 100 TL\" kademeli indirimdir: kind amount, value 100, step_spend 1000; \"toplamda en fazla 300 TL\" max_discount 300.", in.Offer.Describe(), r.Offer.Describe())
 		}
 	}
 
 	in.verifyEveryone(r, bad)
+	in.verifyGender(r, bad)
 	in.verifySpend(r, bad)
 	if r.Match == segment.MatchAny && !containsAny(in.folded, " veya ", " ya da ") {
 		bad("Brief \"veya\" demiyor ama match \"any\"; koşulların hepsi birlikte geçerli olmalı, match \"all\" kullan.")
@@ -278,10 +279,35 @@ func describe(conds []intCondition) string {
 // everyone, and then it must stand alone.
 func (in Intent) verifyEveryone(r segment.Rule, bad func(string, ...any)) {
 	switch {
+	case in.AudienceDefaulted && !has(r, "all_customers"):
+		bad("Brief bir özel günden söz ediyor (%s) ama kitle belirtmiyor. Özel gün mesajın konusudur, kitleyi daraltmaz: kitle tüm müşterilerdir, yalnızca all_customers eq true koşulunu kullan.", in.Occasion.NameIn("tr"))
 	case in.Everyone && !has(r, "all_customers"):
 		bad("Brief açıkça tüm müşterilere/herkese diyor ama kuralda all_customers eq true koşulu yok. Kitle için yalnızca bu tek koşulu kullan (başka koşul ekleme).")
 	case !in.Everyone && has(r, "all_customers"):
 		bad("Brief \"herkese / tüm müşterilere\" demiyor ama kuralda all_customers var. Brief'te yazan kitle koşullarını kullan; kitle belirtilmemişse needs_clarification dön.")
+	}
+}
+
+// verifyGender: a gender condition exactly when the brief explicitly narrows
+// the audience by gender. A special day is never a reason for one.
+func (in Intent) verifyGender(r segment.Rule, bad func(string, ...any)) {
+	var got []string
+	for _, c := range r.Conditions {
+		if c.Field == "gender" {
+			if v, ok := c.Value.(string); ok {
+				got = append(got, v)
+			}
+		}
+	}
+	switch {
+	case in.Gender != "" && (len(got) != 1 || got[0] != in.Gender):
+		bad("Brief kitleyi cinsiyete göre sınırlıyor (%q) ama kuralda gender eq %s koşulu yok veya değeri yanlış; aynen ekle.", in.GenderPhrase, in.Gender)
+	case in.Gender == "" && len(got) > 0:
+		why := "Brief kitleyi cinsiyete göre açıkça sınırlamıyor"
+		if in.Occasion != nil {
+			why += fmt.Sprintf(" (%s bir özel gündür, mesajın konusudur; kitle değildir)", in.Occasion.NameIn("tr"))
+		}
+		bad("%s ama kuralda gender koşulu var; kaldır.", why)
 	}
 }
 

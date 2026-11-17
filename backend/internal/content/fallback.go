@@ -19,11 +19,12 @@ func (p Policy) Fallback(o offer.Offer) Content { return p.FallbackFor(o, Defaul
 // limit, else a variable-free text.
 func (p Policy) FallbackFor(o offer.Offer, lang string) Content {
 	o = o.Normalize()
-	personal := fallbackIn(lang, o, true)
-	if norm, rep := p.Validate(personal); rep.OK && len(p.Quality(norm, o)) == 0 {
-		return norm
+	for _, mode := range fallbackModes {
+		if norm, rep := p.Validate(fallbackIn(lang, o, mode)); rep.OK && len(p.Quality(norm, o)) == 0 {
+			return norm
+		}
 	}
-	norm, _ := p.Validate(fallbackIn(lang, o, false))
+	norm, _ := p.Validate(fallbackIn(lang, o, fallbackMinimal))
 	return norm
 }
 
@@ -68,17 +69,11 @@ func fallbackTexts(o offer.Offer, smsHello, subjectHello, bodyHello, bodySana, l
 }
 
 // offerPhrases returns how the offer reads inside a sentence ("%15 indirim",
-// "ücretsiz kargo") and the coupon code to append, if any.
+// "%20 indirim + ücretsiz kargo", a tier with its cap) and the coupon code to
+// append, if any.
 func offerPhrases(o offer.Offer) (what, code string) {
-	switch o.Kind {
-	case offer.KindPercent:
-		return "%" + offer.FormatNumber(o.Value) + " indirim", o.Code
-	case offer.KindAmount:
-		return offer.FormatNumber(o.Value) + " TL indirim", o.Code
-	case offer.KindFreeShipping:
-		return "ücretsiz kargo", o.Code
-	case offer.KindCouponCode:
+	if o.Kind == offer.KindCouponCode {
 		return o.Code + " kodlu indirim", ""
 	}
-	return "", ""
+	return o.WhatIn("tr"), o.Code
 }

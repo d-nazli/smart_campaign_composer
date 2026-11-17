@@ -26,39 +26,12 @@ func replaceComma(s string) string {
 	return string(b)
 }
 
-// WhatIn is how the offer reads inside a sentence, without terms: "%15 indirim",
-// "15% off", "15 % Rabatt", "free shipping". Empty for a "none" offer and for a
-// coupon-only offer (the code is stated separately).
-func (o Offer) WhatIn(lang string) string {
-	o = o.Normalize()
-	switch o.Kind {
-	case KindPercent:
-		switch lang {
-		case "en":
-			return FormatNumberIn(o.Value, lang) + "% off"
-		case "de":
-			return FormatNumberIn(o.Value, lang) + " % Rabatt"
-		}
-		return "%" + FormatNumber(o.Value) + " indirim"
-	case KindAmount:
-		switch lang {
-		case "en":
-			return FormatNumberIn(o.Value, lang) + " TL off"
-		case "de":
-			return FormatNumberIn(o.Value, lang) + " TL Rabatt"
-		}
-		return FormatNumber(o.Value) + " TL indirim"
-	case KindFreeShipping:
-		switch lang {
-		case "en":
-			return "free shipping"
-		case "de":
-			return "kostenloser Versand"
-		}
-		return "ücretsiz kargo"
-	}
-	return ""
-}
+// WhatIn is how the offer reads inside a sentence, without its terms: "%15
+// indirim", "15% off", "15 % Rabatt", "free shipping"; every part of a combined
+// offer joined with " + ", a tier and its cap included ("her 1000 TL alışverişe
+// 100 TL indirim (toplamda en fazla 300 TL)"). Empty for a "none" offer and for
+// a coupon-only offer (the code is stated separately).
+func (o Offer) WhatIn(lang string) string { return o.whatIn(lang) }
 
 // MinSpendPhraseIn is how the minimum basket reads: "1000 TL ve üzeri
 // alışverişte", "on orders of 1000 TL and over", "ab einem Einkaufswert von

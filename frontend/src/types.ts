@@ -66,6 +66,18 @@ export interface Offer {
   min_spend?: number
   /** Last day the offer can be used, YYYY-MM-DD; empty or absent = none. */
   expires_at?: string
+  /** Tiered discount: `value` TL for every `step_spend` TL of the basket; 0 or absent = not tiered. */
+  step_spend?: number
+  /** Cap of the discount in TL (total of a tier, or the most a percentage takes off); 0 or absent = none. */
+  max_discount?: number
+  /** Other incentives promised together with the main one ("%20 indirim + ücretsiz kargo"). */
+  extras?: OfferPart[] | null
+}
+
+/** One incentive of a combined offer. */
+export interface OfferPart {
+  kind: 'percent' | 'amount' | 'free_shipping'
+  value: number
 }
 
 export interface Segment {
@@ -78,6 +90,8 @@ export interface Segment {
   offer?: Offer
   /** A one-click answer to `question`: "all_customers" offers the "send to all" button. */
   suggestion?: 'all_customers'
+  /** A sentence shown with an ok audience, e.g. why everyone was chosen. Set by the backend, never by the model. */
+  note?: string
   /** How many reachable people speak each language, e.g. {"tr": 120, "en": 45}. */
   languages?: Record<LanguageCode, number>
 }

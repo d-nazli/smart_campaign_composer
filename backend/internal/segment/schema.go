@@ -39,16 +39,32 @@ func JSONSchema() map[string]any {
 	for i, k := range offer.Kinds {
 		kinds[i] = string(k)
 	}
+	partKinds := make([]any, len(offer.PartKinds))
+	for i, k := range offer.PartKinds {
+		partKinds[i] = string(k)
+	}
+	part := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"kind":  map[string]any{"type": "string", "enum": partKinds},
+			"value": map[string]any{"type": "number"},
+		},
+		"required":             []any{"kind", "value"},
+		"additionalProperties": false,
+	}
 	offerSchema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"kind":       map[string]any{"type": "string", "enum": kinds},
-			"value":      map[string]any{"type": "number"},
-			"code":       str,
-			"min_spend":  map[string]any{"type": "number"}, // 0 = no minimum basket
-			"expires_at": str,                              // YYYY-MM-DD or ""
+			"kind":         map[string]any{"type": "string", "enum": kinds},
+			"value":        map[string]any{"type": "number"},
+			"code":         str,
+			"min_spend":    map[string]any{"type": "number"}, // 0 = no minimum basket
+			"expires_at":   str,                              // YYYY-MM-DD or ""
+			"step_spend":   map[string]any{"type": "number"}, // 0 = not tiered
+			"max_discount": map[string]any{"type": "number"}, // 0 = no cap
+			"extras":       map[string]any{"type": "array", "items": part},
 		},
-		"required":             []any{"kind", "value", "code", "min_spend", "expires_at"},
+		"required":             []any{"kind", "value", "code", "min_spend", "expires_at", "step_spend", "max_discount", "extras"},
 		"additionalProperties": false,
 	}
 	return map[string]any{

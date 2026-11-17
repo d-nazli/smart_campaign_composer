@@ -157,6 +157,13 @@ var fallbackOffers = map[string]offer.Offer{
 	"terms":           {Kind: offer.KindAmount, Value: 100, MinSpend: 1000, ExpiresAt: "2026-12-31"},
 	"terms+code":      {Kind: offer.KindPercent, Value: 30, Code: "ANNELER", MinSpend: 1000, ExpiresAt: "2026-05-10"},
 	"coupon+terms":    {Kind: offer.KindCouponCode, Code: "YAZ25", MinSpend: 750, ExpiresAt: "2026-08-31"},
+	// combined and tiered offers: every part and every number must survive
+	"percent+free shipping": {Kind: offer.KindPercent, Value: 20, Extras: []offer.Part{{Kind: offer.KindFreeShipping}}},
+	"tier":                  {Kind: offer.KindAmount, Value: 100, StepSpend: 1000, MaxDiscount: 300},
+	"tier+code+last day":    {Kind: offer.KindAmount, Value: 100, StepSpend: 1000, MaxDiscount: 300, Code: "KADEME100", ExpiresAt: "2027-03-08"},
+	"three parts+terms": {Kind: offer.KindPercent, Value: 10, Code: "BAYRAM10", MinSpend: 1500, ExpiresAt: "2027-04-01",
+		Extras: []offer.Part{{Kind: offer.KindAmount, Value: 50}, {Kind: offer.KindFreeShipping}}},
+	"capped percent": {Kind: offer.KindPercent, Value: 20, MaxDiscount: 300},
 }
 
 func TestTheBuiltInTextIsValidAndStatesTheOfferInEveryLanguage(t *testing.T) {

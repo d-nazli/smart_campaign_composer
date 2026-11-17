@@ -78,6 +78,9 @@ type SegmentView struct {
 	Offer       offer.Offer         `json:"offer"`
 	// Suggestion is a one-click answer to Question (segment.SuggestAllCustomers).
 	Suggestion string `json:"suggestion,omitempty"`
+	// Note is a sentence shown with an ok audience, for example why everyone was
+	// chosen ("Kitle belirtilmediği için tüm müşteriler seçildi.").
+	Note string `json:"note,omitempty"`
 	// Languages is how many reachable people speak each language (for example
 	// {"tr": 120, "en": 45}); it is recounted when the audience is built.
 	Languages map[string]int `json:"languages,omitempty"`
@@ -235,7 +238,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 			if err := json.Unmarshal(r.segmentRule, &stored); err != nil {
 				return nil, fmt.Errorf("stored rule is corrupt: %w", err)
 			}
-			sv.Match, sv.Conditions, sv.Offer, sv.Suggestion = stored.Match, stored.Conditions, stored.Offer.Normalize(), stored.Suggestion
+			sv.Match, sv.Conditions, sv.Offer, sv.Suggestion, sv.Note = stored.Match, stored.Conditions, stored.Offer.Normalize(), stored.Suggestion, stored.Note
 		}
 		if r.matched != nil {
 			sv.Audience = &segment.Audience{Matched: *r.matched, SMSReachable: *r.smsReachable,

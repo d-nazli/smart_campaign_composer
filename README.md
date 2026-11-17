@@ -52,6 +52,9 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 - Değişkenler (`{{first_name}}`, `{{city}}`) limitlere **sabit pay** olarak sayılır (20 ve 15 karakter; `.env`'den
   ayarlanır). Kişinin değeri boşsa veya payı aşıyorsa mesajda kısa bir yedek sözcük yazılır, böylece limit hiçbir
   alıcı için aşılamaz.
+- Worker da aynı payları kullanır (`VARIABLE_BUDGET_*` api ve worker'a birlikte verilir) ve **her mesajı göndermeden
+  önce son kez ölçer**: kişiselleştirilmiş SMS 160'ı ya da konu 80'i aşarsa gönderilmez, teslimat nedeniyle `failed` olur
+  (dashboard: "Kişiselleştirme sonrası karakter sınırını aştığı için gönderilmedi").
 - Not: gerçek SMS ağlarında Türkçe karakterli (ş, ğ, ı …) bir mesaj 70 karakterle sınırlıdır; case 160 dediği için burada
   karakter sayılır.
 
@@ -60,7 +63,8 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 1. Kitleyi çıkarın, mesajları üretin (gerekirse düzenleyip kaydedin), **Onayla ve gönder**'e basın. Onay iki adımlıdır ve
    uyarıları (ör. düzenlemede silinen teklif) tekrar gösterir. Onaydan sonra kitle ve metin değiştirilemez.
 2. Onay, izin vermiş ve telefon/e-postası kayıtlı herkesi kanal başına bir kez kuyruğa alır (`deliveries`). Aynı onayı iki
-   kez (hatta aynı anda) göndermek çift kayıt üretmez.
+   kez (hatta aynı anda) göndermek çift kayıt üretmez. Aynı telefonu ya da e-postayı paylaşan iki müşteri kaydı da o
+   adrese **tek mesaj** alır (ekrandaki "ulaşılabilir" sayıları adres sayısıdır).
 3. `worker` kuyruğu kanal başına **90 mesaj/sn** (`WORKER_RATE_PER_SEC`) hızla boşaltır. Provider'ın 429/5xx/zaman aşımı
    cevaplarında yeniden dener (429'da `Retry-After`'e uyar ve kanalı bekletir; 5xx'te üstel bekleme + jitter, en fazla 5
    deneme). Aynı mesaj aynı `Idempotency-Key` ile gittiği için provider "kabul ettim ama hata döndüm" durumunda bile
@@ -80,7 +84,31 @@ yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=
 - Bir dil üretilemezse üç dil de yerleşik şablona düşer (karışık metin/şablon olmaz, D69).
 - Gönderimde kişinin dili **gönderim anında** okunur: zamanlamadan sonra dilini değiştiren kişi yeni dilindeki mesajı bir kez alır.
   Adı boşsa kendi dilindeki sözcük yazılır ("değerli müşterimiz" / "valued customer" / "geschätzter Kunde").
-- Onay ekranı kitlenin dil dağılımını gösterir. Cinsiyet ve doğum tarihi şimdilik yalnız saklanır (segmentte/değişkende yok).
+- Onay ekranı kitlenin dil dağılımını gösterir. Cinsiyet yalnız brief açıkça isterse kitle koşulu olur (aşağıya bakın);
+  doğum tarihi şimdilik yalnız saklanır.
+
+## Brief'te özel gün, cinsiyet, birleşik ve kademeli teklif
+
+Mock LLM ve gerçek Claude aynı brief'leri aynı biçimde anlar: kural koddan okunur, Claude'un cevabı aynı kontrolden
+geçer, eksik/yanlış kısım geri bildirimle düzelttirilir (D82–D86).
+
+- **Özel gün kitleyi kısıtlamaz.** "Kadınlar Günü'ne özel %20 indirim" mesajın konusunu ve tonunu belirler; kitle
+  yazılmadıysa **herkes** seçilir ve kitle adımında "Kitle belirtilmediği için tüm müşteriler seçildi." yazar (soru
+  sorulmaz). Tanınan günler: Kadınlar Günü / 8 Mart, Anneler, Babalar, Sevgililer (14 Şubat), Öğretmenler, 23 Nisan,
+  Yılbaşı, Black Friday, Ramazan / Kurban Bayramı, bayram.
+- **Cinsiyet yalnız açıkça istenirse** filtrelenir: "kadın müşterilere özel", "kadınlara", "erkek müşterilerimize",
+  "cinsiyeti erkek olan". "Kadın ve erkek müşterilere" herkestir; "kadın koleksiyonu" gibi kitleyi anlatmayan bir kelime
+  hiçbir şeyi değiştirmez. Cinsiyetini belirtmemiş kişiler cinsiyet koşuluna girmez.
+- **Birleşik teklif:** farklı türden en fazla 3 teklif birlikte verilir ("%20 indirim + ücretsiz kargo", "%10 indirim, 50
+  TL hediye çeki ve ücretsiz kargo"); her parça SMS'te ve e-postada geçmek zorundadır. Aynı türden iki değer ("%20 ya da
+  %30") ya da seçenek olarak yazılmış teklifler ("%20 indirim ya da ücretsiz kargo") sorulur.
+- **Kademeli indirim:** "Her 1000 TL'lik alışverişe 100 TL indirim, toplamda en fazla 300 TL" → teklif `amount 100`,
+  `step_spend 1000`, `max_discount 300`; mesajda üç sayı da yazılır. Yüzdeye tavan da olur: "%20 indirim, en fazla 300 TL".
+  Mesajda teklifte olmayan bir TL tutarı (ör. örnek hesap "3000 TL'lik alışverişte…") çelişki sayılır ve düzelttirilir.
+- **Metinler konuya ve tona göre değişir.** Kod brief'ten bir tema çıkarır (özel gün; konu: sepet / geri kazanma / hoş
+  geldin / teşekkür; ton: samimi, resmi, heyecanlı, kısa, zarif, acil) ve bunu Claude'a da mock'a da verir. Mock, ifade
+  bankalarından adaylar üretip brief'e göre farklı bir noktadan başlar ve backend kontrollerinden geçen ilk adayı seçer:
+  aynı brief hep aynı metni, farklı brief farklı metni alır; 160/80 sınırı ve teklifin her parçası korunur.
 
 ## Zamanlanmış gönderim (bonus)
 
@@ -114,7 +142,7 @@ yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=
 - **`GET :8081/healthz`**: api ve veritabanı bağlantısı (200 `{"status":"ok"}` / 503). docker-compose healthcheck'i bunu kullanır.
   Worker'ın `:9091/healthz`'ı da aynı veritabanı kontrolünü yapar.
 
-**Gönderim kapsamı dışında:** worker tek replica (hız sınırı süreç içi); e-posta gövdesi düz metin; "delivered" bildirimi
+**Gönderim kapsamı dışında:** worker tek replica (hız sınırı süreç içi; iki worker kanal başına 180/sn'ye çıkar, D81); e-posta gövdesi düz metin; "delivered" bildirimi
 yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız toplam ve adet (ortalama hesaplanır).
 
 ## Bilinen sınırlamalar
@@ -123,6 +151,9 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
   kitleyi de yazın: "Tüm müşterilere …" ya da "İstanbul'daki … müşterilere …". Kitle yazılmazsa sistem sorar: "Bu kampanya
   kime gönderilsin? Tüm müşterilere mi?" ve "Tüm müşterilere gönder" düğmesi sunar (iletişim izni olmayanlara yine de gitmez).
   Müşterinin *toplam harcamasına* göre kitle için "toplam harcaması 5000 TL'den fazla olan müşteriler" yazın.
+- Özel gün sözlüğü sınırlıdır: listede olmayan bir gün ("Dünya Kedi Günü") mock'ta tema olarak tanınmaz ve kitle yazılmamışsa
+  "kime gönderilsin?" sorulur. Gerçek Claude metinde temayı brief'ten yine okur. Kodla denetlenmeyen tek şey üslup: Claude'un
+  özel günde okura kadın/anne gibi hitap etmemesi prompt kuralıdır, kontrol değildir.
 - Son kullanım tarihi bugünle karşılaştırılmaz (geçmiş tarihli bir kupon fark edilmez); yalnız `gün.ay.yıl`, `gün/ay/yıl`,
   `yıl-ay-gün` ve "31 Aralık 2026" yazımları tanınır, yılsız tarih sorulur. Kodun tanımadığı bir kitle sıfatı ("VIP
   müşteriler") "kime gönderilsin?" sorusu alır. Ayrıntı: DECISIONS.md D62–D65.
@@ -131,7 +162,7 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
   kalıplarla okunur ve model kuralı bunlara karşı doğrulanır. Sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz;
   gerçek Claude ile bu durumda `purchased=false` koşulunun kuraldan düştüğü görüldü. Kampanyayı onaylamadan önce
   ekrandaki kitle kartındaki koşulları kontrol edin. Açık iş olarak PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
-- Desteklenmeyen kısıtlar (yaş, cinsiyet, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen hafta")
+- Desteklenmeyen kısıtlar (yaş, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen hafta")
   sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
   Sözlükte hiç olmayan bir kısıt ise mock'ta fark edilmeyebilir.
 

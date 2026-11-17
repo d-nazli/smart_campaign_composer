@@ -28,6 +28,7 @@ const hasOffer = computed(() => !!props.segment.offer && props.segment.offer.kin
   <Card id="step-audience" title="Kitle" aria-live="polite">
     <template v-if="segment.status === 'ok' && segment.audience && f">
       <p class="explanation">{{ sentenceCase(segment.explanation) }}</p>
+      <p v-if="segment.note" class="notice info" role="note" data-testid="audience-note">{{ segment.note }}</p>
 
       <ul class="conds" aria-label="Kural koşulları">
         <template v-for="(c, i) in chips" :key="c">

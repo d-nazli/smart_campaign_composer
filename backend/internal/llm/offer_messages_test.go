@@ -128,3 +128,47 @@ func TestMessagesPromptCarriesTheTerms(t *testing.T) {
 		}
 	}
 }
+
+// ---- special days, combined and tiered offers, as the prompts put them -----------
+
+func TestSegmentPromptExplainsSpecialDaysAndCombinedAndTieredOffers(t *testing.T) {
+	seg := llm.SegmentSystemPrompt()
+	for _, want := range []string{
+		"SPECIAL DAYS", "never its audience", "gender", "kadın müşterilere özel",
+		"COMBINED OFFERS", "extras", "ya da", "needs_clarification",
+		"TIERED DISCOUNTS", "step_spend", "max_discount",
+		"names a special day, the audience is everyone",
+	} {
+		if !strings.Contains(seg, want) {
+			t.Errorf("segment system prompt should contain %q", want)
+		}
+	}
+	if strings.Contains(seg, "age, gender") {
+		t.Error("gender is a supported field now; the prompt must not call it unsupported")
+	}
+}
+
+func TestMessagesPromptsCarryTheThemeAndEveryPartOfTheOffer(t *testing.T) {
+	o := offer.Offer{Kind: offer.KindAmount, Value: 100, StepSpend: 1000, MaxDiscount: 300, Extras: []offer.Part{{Kind: offer.KindFreeShipping}}}
+	theme := llm.Theme{Occasion: "womens_day", OccasionName: "Kadınlar Günü", Topic: llm.TopicCart, Tones: []string{llm.ToneFriendly, llm.ToneShort}}
+	user := llm.MessagesUserPromptFor(llm.MessageRequest{Brief: "b", Explanation: "tüm müşteriler", Offer: o, Theme: theme})
+	for _, want := range []string{"her 1000 TL alışverişe 100 TL indirim", "toplamda en fazla 300 TL", "ücretsiz kargo",
+		"special day: Kadınlar Günü", "topic: cart", "tone: friendly, short", "never the audience"} {
+		if !strings.Contains(user, want) {
+			t.Errorf("messages user prompt should contain %q:\n%s", want, user)
+		}
+	}
+	en := llm.MessagesUserPromptFor(llm.MessageRequest{Brief: "b", Offer: o, Language: "en", Theme: theme})
+	if !strings.Contains(en, "100 TL off every 1000 TL (up to 300 TL in total) + free shipping") {
+		t.Errorf("the English wording of every part must be given:\n%s", en)
+	}
+	if plain := llm.MessagesUserPromptFor(llm.MessageRequest{Brief: "b", Offer: o}); strings.Contains(plain, "Theme") {
+		t.Errorf("no theme, no theme line:\n%s", plain)
+	}
+	sys := llm.MessagesSystemPrompt(policy(t))
+	for _, want := range []string{"EVERY part", "step, the discount per step and the cap", "THEME", "do not assume the reader's gender", "stock lines"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("messages system prompt should contain %q", want)
+		}
+	}
+}

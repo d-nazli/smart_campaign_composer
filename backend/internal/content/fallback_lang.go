@@ -7,10 +7,24 @@ import (
 	"smartcampaign/internal/offer"
 )
 
-// fallbackIn builds the built-in text of one language. personal puts
-// {{first_name}} in the greeting of the SMS, the subject and the body; the
-// plain variant has no variable at all.
-func fallbackIn(lang string, o offer.Offer, personal bool) Content {
+// The built-in text comes in three forms, tried in this order: personalised
+// ({{first_name}} in the SMS greeting, the subject and the body), plain (no
+// variable at all) and minimal (the offer and its terms, nothing else: for an
+// offer with many parts and terms that would not fit 160 / 80 otherwise).
+const (
+	fallbackPersonal = iota
+	fallbackPlain
+	fallbackMinimal
+)
+
+var fallbackModes = []int{fallbackPersonal, fallbackPlain, fallbackMinimal}
+
+// fallbackIn builds the built-in text of one language in one form.
+func fallbackIn(lang string, o offer.Offer, mode int) Content {
+	if mode == fallbackMinimal {
+		return minimalIn(lang, o)
+	}
+	personal := mode == fallbackPersonal
 	switch lang {
 	case "en":
 		return fallbackFromWords(o, personal, englishWords)
@@ -23,27 +37,56 @@ func fallbackIn(lang string, o offer.Offer, personal bool) Content {
 	return fallbackTexts(o, "Merhaba, size", "Size", "Merhaba,", "Size", "göz atın", "ziyaret edin")
 }
 
+// minimalIn is the shortest text that still states everything: the offer with
+// its minimum basket, the code and the last day. The body is the plain one.
+func minimalIn(lang string, o offer.Offer) Content {
+	plain := fallbackIn(lang, o, fallbackPlain)
+	what, minP := o.WhatIn(lang), o.MinSpendPhraseIn(lang)
+	label := offer.CouponLabelIn(lang)
+	headline := o.HeadlineIn(lang)
+	if what == "" && o.Kind == offer.KindCouponCode {
+		what, headline = label+": "+o.Code, label+" "+o.Code
+	}
+	if what == "" { // no incentive: the plain text is already short
+		return plain
+	}
+	full := joinSpace(what, minP)
+	if lang == "tr" && minP != "" {
+		full = minP + " " + what
+	}
+	sms := upperFirst(full) + "!"
+	if o.Code != "" && o.Kind != offer.KindCouponCode {
+		sms += " " + label + ": " + o.Code + "."
+	}
+	if e := o.ExpiryPhraseIn(lang); e != "" {
+		sms += " " + e + "."
+	}
+	return Content{SMSBody: sms, EmailSubject: upperFirst(headline), EmailBody: plain.EmailBody}
+}
+
 // FallbackSet is the built-in text for every language, built so that they all
-// say the same thing: either every language is personalised or none is, which
-// keeps the placeholders identical across languages (see Consistency).
+// say the same thing: every language uses the same form, which keeps the
+// placeholders identical across languages (see Consistency).
 func (p Policy) FallbackSet(o offer.Offer) map[string]Content {
 	o = o.Normalize()
-	set := make(map[string]Content, len(Languages))
-	ok := true
-	for _, l := range Languages {
-		c := fallbackIn(l.Code, o, true)
-		norm, rep := p.Validate(c)
-		if !rep.OK || len(p.Quality(norm, o)) > 0 {
-			ok = false
-			break
+	for _, mode := range fallbackModes {
+		set := make(map[string]Content, len(Languages))
+		ok := true
+		for _, l := range Languages {
+			norm, rep := p.Validate(fallbackIn(l.Code, o, mode))
+			if !rep.OK || len(p.Quality(norm, o)) > 0 {
+				ok = false
+				break
+			}
+			set[l.Code] = norm
 		}
-		set[l.Code] = norm
+		if ok {
+			return set
+		}
 	}
-	if ok {
-		return set
-	}
+	set := make(map[string]Content, len(Languages))
 	for _, l := range Languages {
-		norm, _ := p.Validate(fallbackIn(l.Code, o, false))
+		norm, _ := p.Validate(fallbackIn(l.Code, o, fallbackMinimal))
 		set[l.Code] = norm
 	}
 	return set

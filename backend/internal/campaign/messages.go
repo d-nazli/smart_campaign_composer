@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	briefs "smartcampaign/internal/brief"
 	"smartcampaign/internal/content"
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/offer"
@@ -252,6 +253,7 @@ func (s *Service) generateLanguage(ctx context.Context, id int64, row *campaignR
 			return s.llm.Messages(ctx, llm.MessageRequest{
 				Brief: row.brief, Explanation: row.explanation, Offer: promised, Policy: s.policy, Previous: prev,
 				Language: lang, Reference: ref, ReferenceLanguage: content.DefaultLanguage,
+				Theme: briefs.ThemeOf(row.brief, lang),
 			}, func(text string) {
 				if ev.Delta == nil {
 					return

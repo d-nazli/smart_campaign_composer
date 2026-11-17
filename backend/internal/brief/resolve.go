@@ -57,6 +57,11 @@ func ResolveSegment(ctx context.Context, client llm.Client, text string, hooks l
 	)
 	if err == nil {
 		rule.Offer = rule.Offer.Normalize()
+		// The note is decided by code from the brief, never taken from the model.
+		rule.Note = ""
+		if in.AudienceDefaulted {
+			rule.Note = AudienceDefaultedNote
+		}
 		return rule, nil
 	}
 	if _, exhausted := llm.IsExhausted(err); exhausted && len(lastCoverage) > 0 {

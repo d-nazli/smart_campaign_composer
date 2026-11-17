@@ -36,7 +36,7 @@ func TestTermsAreValidated(t *testing.T) {
 }
 
 func TestNormalizeDropsTermsOfAnOfferThatPromisesNothing(t *testing.T) {
-	if got := (Offer{Kind: KindNone, MinSpend: 5, ExpiresAt: "2026-12-31"}).Normalize(); got != (Offer{Kind: KindNone}) {
+	if got := (Offer{Kind: KindNone, MinSpend: 5, ExpiresAt: "2026-12-31"}).Normalize(); !reflect.DeepEqual(got, Offer{Kind: KindNone}) {
 		t.Fatalf("%+v", got)
 	}
 	if got := (Offer{Kind: KindAmount, Value: 1, MinSpend: 5, ExpiresAt: " 2026-12-31 "}).Normalize(); got.MinSpend != 5 || got.ExpiresAt != "2026-12-31" {
