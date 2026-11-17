@@ -155,7 +155,7 @@ func TestGroundedTheSchemaAndTheOfferAreStillChecked(t *testing.T) {
 	badField := mock.Step{Kind: mock.Raw, Raw: `{"status":"ok","match":"all","conditions":[{"field":"password","op":"eq","value":"x"}],"explanation":"x","question":"","offer":{"kind":"none","value":0,"code":"","min_spend":0,"expires_at":"","step_spend":0,"max_discount":0,"extras":[]}}`}
 	badOffer := rawRule(t, okRule(offer.Offer{Kind: offer.KindAmount, Value: 100, MaxDiscount: 300}, c("all_customers", "eq", true)))
 	for name, step := range map[string]mock.Step{"field outside the whitelist": badField, "an offer that makes no sense": badOffer} {
-		rule, m := grounded(t, "Herkese 100 TL indirim, en fazla 300 TL", step, rawRule(t, okRule(amountOf(100), c("all_customers", "eq", true))))
+		rule, m := grounded(t, "Herkese 100 TL indirim", step, rawRule(t, okRule(amountOf(100), c("all_customers", "eq", true))))
 		if rule.Status != segment.StatusOK || len(m.Calls()) != 2 {
 			t.Errorf("%s: must be repaired: %+v (calls %d)", name, rule, len(m.Calls()))
 		}
@@ -172,5 +172,79 @@ func TestGroundedNoteWhenTheModelChoseEveryone(t *testing.T) {
 	rule, _ = grounded(t, "Herkese %20 indirim", rawRule(t, all))
 	if rule.Note != "" {
 		t.Errorf("note = %q", rule.Note)
+	}
+}
+
+// ---- the other direction: every amount and percentage of the brief is used (D89) ----
+
+const varanBrief = "henüz hiç sipariş vermemiş kullanıcılara ilk siparişine özel 1000 tl ye varan siparişte 300 tl indirim uygula"
+
+// The live case: the model wrote a plain 300 TL discount and dropped the
+// 1000 TL. It is told the amount is unused and where it could go; it places it.
+func TestGroundedAnUnusedAmountIsSentBack(t *testing.T) {
+	dropped := okRule(amountOf(300), c("order_count", "eq", int64(0)))
+	right := okRule(withTerms(amountOf(300), 1000, ""), c("order_count", "eq", int64(0)))
+	rule, m := grounded(t, varanBrief, rawRule(t, dropped), rawRule(t, right))
+	if rule.Status != segment.StatusOK || !rule.Offer.Equal(right.Offer) {
+		t.Fatalf("%+v", rule)
+	}
+	fb := feedback(t, m)
+	for _, w := range []string{"1000 tl", "min_spend", "max_discount", "total_spent"} {
+		if !strings.Contains(fb, w) {
+			t.Errorf("feedback should mention %q: %s", w, fb)
+		}
+	}
+	// Placed as a cap instead (on a percentage, where a cap is valid): also used.
+	// Which reading is meant is the model's call, not this check's.
+	pctCap := okRule(capped(pct(20), 1000), c("all_customers", "eq", true))
+	if rule, m := grounded(t, "Herkese %20 indirim, 1000 TL'ye varan", rawRule(t, pctCap)); rule.Status != segment.StatusOK || len(m.Calls()) != 1 {
+		t.Errorf("an amount used as a cap counts as used: %+v", rule)
+	}
+}
+
+// If the model never places it, the person is asked, with the choices.
+func TestGroundedAnAmountThatStaysUnusedBecomesAChoiceQuestion(t *testing.T) {
+	dropped := okRule(amountOf(300), c("order_count", "eq", int64(0)))
+	rule, m := grounded(t, varanBrief, rawRule(t, dropped))
+	if rule.Status != segment.StatusNeedsClarification || len(m.Calls()) != brief.MaxAttempts {
+		t.Fatalf("%+v (calls %d)", rule, len(m.Calls()))
+	}
+	q := trtext.Fold(rule.Question)
+	for _, w := range []string{"1000 tl ne icin", "minimum sepet", "ust siniri", "toplam harcamasi"} {
+		if !strings.Contains(q, w) {
+			t.Errorf("the question should offer %q: %q", w, rule.Question)
+		}
+	}
+}
+
+// An unused percentage is sent back too.
+func TestGroundedAnUnusedPercentageIsSentBack(t *testing.T) {
+	onlyShipping := okRule(freeShipping, c("all_customers", "eq", true))
+	right := okRule(combo(pct(20), freePart), c("all_customers", "eq", true))
+	rule, m := grounded(t, "Herkese %20 indirim ve ücretsiz kargo", rawRule(t, onlyShipping), rawRule(t, right))
+	if rule.Status != segment.StatusOK || !rule.Offer.Equal(right.Offer) {
+		t.Fatalf("%+v", rule)
+	}
+	if fb := feedback(t, m); !strings.Contains(fb, "%20") {
+		t.Errorf("feedback: %s", fb)
+	}
+}
+
+// Dates and special days are not amounts; day counts are not checked here.
+func TestGroundedDatesAndSpecialDaysAreNotAmounts(t *testing.T) {
+	for _, tt := range []struct {
+		brief string
+		rule  segment.Rule
+	}{
+		{"23 Nisan'a özel herkese %15 indirim, son kullanım 30.04.2027", okRule(withTerms(pct(15), 0, "2027-04-30"), c("all_customers", "eq", true))},
+		{"8 Mart'a özel herkese 100 TL indirim, 31 Mart 2027'ye kadar geçerli", okRule(withTerms(amountOf(100), 0, "2027-03-31"), c("all_customers", "eq", true))},
+		{"Son 30 günde sepete ekleyip almayanlara %10 indirim", okRule(pct(10), c("days_since_last_cart_add", "lte", int64(30)), c("purchased_since_last_cart_add", "eq", false))},
+		{"Toplam harcaması 5000 TL'den fazla olanlara 1000 TL üzeri alışverişte 200 TL indirim",
+			okRule(withTerms(amountOf(200), 1000, ""), c("total_spent", "gt", 5000.0))},
+	} {
+		rule, m := grounded(t, tt.brief, rawRule(t, tt.rule))
+		if rule.Status != segment.StatusOK || len(m.Calls()) != 1 {
+			t.Errorf("%q: %+v (calls %d) unused=%v", tt.brief, rule, len(m.Calls()), brief.UnusedValues(tt.brief, tt.rule))
+		}
 	}
 }

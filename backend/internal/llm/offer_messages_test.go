@@ -138,6 +138,7 @@ func TestSegmentPromptExplainsSpecialDaysAndCombinedAndTieredOffers(t *testing.T
 		"COMBINED OFFERS", "extras", "ya da", "needs_clarification",
 		"TIERED DISCOUNTS", "step_spend", "max_discount",
 		"names a special day, the audience is everyone",
+		"1000 TL'ye varan siparişte 300 TL indirim", "1000 TL ve üzeri siparişlerde", "EVERY TL amount", "1000 TL ne için",
 	} {
 		if !strings.Contains(seg, want) {
 			t.Errorf("segment system prompt should contain %q", want)

@@ -505,6 +505,13 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - "1000 TL'ye varan/ulaşan **siparişte/alışverişte/sepete** 300 TL indirim": 1000 TL'ye ulaşan sepet, yani `min_spend 1000`. "300 TL'ye varan **indirim**" ise tavandır (`max_discount`), D85'teki gibi. Ayrım, tutarın arkasından gelen kelimeye göre yapılır. "tl ye" gibi boşluklu yazım da tanınır. "1000 TL'ye **kadar** alışverişte" alışverişin üst sınırı gibi okunduğu için sorulur (teklif modelinde üst sepet sınırı yok).
 - Kural okuyucusundadır, yani mock modunda geçerlidir. Gerçek Claude modunda Claude kendisi okur; dayanak kontrolü yalnız 1000 ve 300'ün brief'te geçtiğine bakar.
 
+## D89 — Claude modunda brief'teki her tutar ve yüzde kuralda bir yere oturmalı · `Kesin (kullanıcı kararı)`
+- **Sorun:** D87'nin dayanak kontrolü tek yönlüydü (Claude'un yazdığı sayı brief'te var mı). Canlı denemede Claude "1000 tl ye varan siparişte 300 tl indirim" brief'ini düz "300 TL indirim" okudu. 1000 TL kayboldu; kuralda uydurma olmadığı için hiçbir kontrol bunu görmedi. Mesajlar alt limiti söylemeyecekti.
+- **Karar:** ters yön de nesnel olarak denetlenir (`brief.UnusedValues`). Brief'teki her TL tutarı ve her yüzde, teklifte (value, extras, min_spend, step_spend, max_discount) ya da bir `total_spent` koşulunda yer almalı. Yer almıyorsa Claude'a geri bildirim gider. Geri bildirim tutarın nereye konabileceğini sayar ama hangisi olduğunu dayatmaz; kararı Claude verir. Onarımdan sonra hâlâ kullanılmıyorsa pazarlamacıya seçenekli bir soru sorulur: "Brief'teki 1000 TL ne için: minimum sepet tutarı mı, indirimin üst sınırı mı, yoksa müşterinin toplam harcaması mı?" Örnekler brief'in kendi sayısıyla yazılır.
+- **Sayılmayanlar:** tarihler ("31.12.2026", "31 Aralık", "31 Mart 2027") ve özel gün ifadeleri ("23 Nisan", "8 Mart", "14 Şubat") kontrolden önce metinden çıkarılır. Gün sayıları (TL ya da % işareti taşımadıkları için) bu kontrole girmez; onlar D87'nin dayanak kontrolündedir.
+- **Prompt:** minimum sepetin gündelik yazımları örneklendi ("1000 TL ve üzeri siparişlerde", "1000 TL'ye varan siparişte", "sepet tutarı 1000 TL'yi geçince", "en az 1000 TL'lik alışverişte"). "Her tutar bir yere oturmalı, değilse seçenekli sor" kuralı eklendi. Canlıda örnek brief ilk denemede `min_spend 1000` ile doğru geldi. İki belirsiz brief'te ("2000 tl 250 tl indirim" ve iki ayrı tutarlı bir teklif) Claude kendisi seçenekli soru sordu. Onarım döngüsünün bu yolu betikli testlerle sınanıyor.
+- Mock modu değişmez: kural okuyucusu her tutarı zaten bir terime bağlıyor ya da soruyor.
+
 ---
 
 ## Açık / onay bekleyenler

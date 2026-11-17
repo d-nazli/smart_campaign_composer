@@ -43,7 +43,9 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
   (`CLAUDE_MODEL`, varsayılan `claude-sonnet-5-5`). Aktif mod açılış logunda ve arayüzün sağ üstündeki rozette görünür.
 - **Brief'i kim anlıyor?** Gerçek Claude modunda brief'i Claude yorumlar ve kitleyi çıkarır. Kod yalnız nesnel kontrol
   yapar: şema/beyaz liste ve SQL güvenliği, teklifin mantıklı olması ve Claude'un yazdığı şehir, sayı, tutar, kod ve
-  tarihin brief'te gerçekten geçmesi (uydurma onarıma gönderilir, sürerse sorulur). Mock modunda brief'i kural okuyucusu
+  tarihin brief'te gerçekten geçmesi (uydurma onarıma gönderilir, sürerse sorulur). Ters yönde de: brief'teki her TL
+  tutarı ve yüzde kuralda ya da teklifte bir yere oturmalı; oturmazsa Claude'a geri gönderilir, sürerse "1000 TL ne için:
+  minimum sepet mi, üst sınır mı…?" diye sorulur (tarihler ve özel gün ifadeleri sayılmaz, D89). Mock modunda brief'i kural okuyucusu
   anlar (`brief.Analyze`): tanımadığı ya da belirsiz bulduğu ifadeyi sorar (DECISIONS.md D87).
 - `make test` **her zaman mock** ile çalışır; `.env`'de anahtar olsa bile okunmaz, internet gerekmez.
 - `make test-live` gerçek Claude'a duman testi yapar (yalnız anahtar varsa, birkaç sent tutar; `make test`'e dahil değil).

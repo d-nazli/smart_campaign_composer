@@ -58,7 +58,10 @@ func ResolveSegmentWith(ctx context.Context, client llm.Client, text string, hoo
 	if rule, blocked := in.Blocked(); blocked {
 		return rule, nil
 	}
-	rule, err := ask(ctx, client, text, hooks, func(r segment.Rule) []string { return Verify(in, r) })
+	rule, problems, err := ask(ctx, client, text, hooks, func(r segment.Rule) []string { return Verify(in, r) })
+	if problems != nil {
+		return unresolved(problems), nil
+	}
 	if err == nil {
 		// The note is decided by code from the brief, never taken from the model.
 		rule.Note = ""
@@ -70,7 +73,21 @@ func ResolveSegmentWith(ctx context.Context, client llm.Client, text string, hoo
 }
 
 func resolveGrounded(ctx context.Context, client llm.Client, text string, hooks llm.Hooks) (segment.Rule, error) {
-	rule, err := ask(ctx, client, text, hooks, func(r segment.Rule) []string { return Ground(text, r) })
+	// lastUnused belongs to the latest rule that parsed. When the loop gives up
+	// on check problems, the latest attempt parsed, so it is that attempt's.
+	var lastUnused []UnusedValue
+	rule, problems, err := ask(ctx, client, text, hooks, func(r segment.Rule) []string {
+		lastUnused = UnusedValues(text, r)
+		return append(Ground(text, r), unusedFeedback(lastUnused)...)
+	})
+	if problems != nil {
+		if len(lastUnused) > 0 {
+			// The model never placed an amount of the brief: ask the person, with the choices.
+			return segment.Rule{Status: segment.StatusNeedsClarification, Conditions: []segment.Condition{},
+				Question: unusedQuestion(lastUnused), Offer: offer.Offer{Kind: offer.KindNone}}, nil
+		}
+		return unresolved(problems), nil
+	}
 	if err != nil {
 		return rule, err
 	}
@@ -87,8 +104,9 @@ func resolveGrounded(ctx context.Context, client llm.Client, text string, hooks 
 }
 
 // ask runs the ask-parse-check-repair loop. check returns the problems of a
-// rule that parsed; they are sent back to the model.
-func ask(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, check func(segment.Rule) []string) (segment.Rule, error) {
+// rule that parsed; they are sent back to the model. When the model never
+// passes check, problems is the latest attempt's list (and err is nil).
+func ask(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, check func(segment.Rule) []string) (segment.Rule, []string, error) {
 	var lastCoverage []string // check problems of the latest attempt (nil if it failed for another reason)
 	rule, err := llm.Repair(ctx, MaxAttempts,
 		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
@@ -115,12 +133,12 @@ func ask(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, c
 	)
 	if err == nil {
 		rule.Offer = rule.Offer.Normalize()
-		return rule, nil
+		return rule, nil, nil
 	}
 	if _, exhausted := llm.IsExhausted(err); exhausted && len(lastCoverage) > 0 {
-		return unresolved(lastCoverage), nil
+		return segment.Rule{}, lastCoverage, nil
 	}
-	return segment.Rule{}, err
+	return segment.Rule{}, nil, err
 }
 
 // unresolved is the answer when the model repeatedly left something out.
