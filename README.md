@@ -15,7 +15,7 @@ Gereken: Docker Desktop (host'ta Go/Node gerekmez). `make` için Windows'ta `cho
 docker compose up --build      # veya: make up
 ```
 
-- Uygulama: http://localhost:8080 — **Dashboard:** http://localhost:8080/#/dashboard
+- Uygulama: http://localhost:8080 — **Kampanyalar (dashboard):** http://localhost:8080/#/dashboard
 - API: http://localhost:8081 — sağlık: **http://localhost:8081/healthz** (veritabanını da kontrol eder, bozuksa 503),
   metrikler: **http://localhost:8081/metrics** (Prometheus formatı), ayrıca `/readyz`, `/api/info`
 - Mock provider: http://localhost:8090
@@ -133,7 +133,7 @@ söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
 
 ## İzleme: dashboard, `/metrics`, `/healthz`
 
-- **Dashboard** (`/#/dashboard`): tüm kampanyalar, kanal bazlı ilerleme çubuğu, gönderildi / başarısız / tekrar / 429 sayıları;
+- **Kampanyalar** (`/#/dashboard`, eski adıyla dashboard): tüm kampanyalar, kanal bazlı ilerleme çubuğu, gönderildi / başarısız / tekrar / 429 sayıları;
   her 2 sn'de kendini yeniler. Sade bir ilk sürümdür, arayüz sonra yeniden tasarlanacak.
 - **`GET :8081/metrics`** (Prometheus metin formatı). Hepsi veritabanından (`deliveries`, `llm_generations`, `campaigns`)
   okunur; api ve worker ayrı süreçlerdir ve sayılar yeniden başlatmada kaybolmaz. Veritabanı okunamazsa scrape 503 döner

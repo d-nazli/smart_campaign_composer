@@ -38,7 +38,7 @@ describe('the main button of each step', () => {
     expect(bar({ view: 'approve', confirming: true }).action).toBe('send')
   })
   it('ends at the dashboard', () => {
-    expect(bar({ view: 'send', frozen: true })).toEqual({ action: 'dashboard', label: "Dashboard'a git" })
+    expect(bar({ view: 'send', frozen: true })).toEqual({ action: 'dashboard', label: 'Kampanyalara git' })
   })
   it('opens earlier steps read-only: no action that changes anything', () => {
     for (const view of ['brief', 'audience', 'messages', 'approve'] as const) {

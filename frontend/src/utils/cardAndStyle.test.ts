@@ -94,11 +94,10 @@ describe('read-only fields look read-only', () => {
 })
 
 describe('the active step stands out', () => {
-  const dot = stepBar.match(/\.current \.dot\s*\{([^}]*)\}/)?.[1] ?? ''
   const button = stepBar.match(/\.current button\s*\{([^}]*)\}/)?.[1] ?? ''
-  it('has a filled dot and a bold label on a tinted pill', () => {
-    expect(dot).toMatch(/background:\s*var\(--accent\)/)
-    expect(button).toMatch(/font-weight:\s*700/)
-    expect(button).toMatch(/background:\s*var\(--accent-soft\)/)
+  it('is blue, semibold and underlined in the flow bar', () => {
+    expect(button).toMatch(/color:\s*var\(--accent\)/)
+    expect(button).toMatch(/font-weight:\s*600/)
+    expect(button).toMatch(/box-shadow:\s*inset 0 -2px 0 var\(--accent\)/)
   })
 })

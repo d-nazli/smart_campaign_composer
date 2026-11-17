@@ -40,42 +40,43 @@ const body = computed(() => fillSample(props.body))
 
 <style scoped>
 .mail {
-  margin: 0;
+  margin: 0 auto;
   width: 100%;
-  border-radius: 14px;
-  background: #ffffff;
-  color: #15181e;
+  max-width: 420px;
+  border-radius: 12px;
+  background: var(--device-surface);
+  color: var(--device-fg);
   box-shadow: var(--shadow-device);
   overflow: hidden;
-  border: 1px solid #dcdfe4;
+  border: 1px solid var(--device-line);
 }
 .chrome {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 9px 12px;
-  background: #eceef1;
-  border-bottom: 1px solid #dcdfe4;
+  padding: 10px 14px;
+  background: var(--device-chrome);
+  border-bottom: 1px solid var(--device-line);
 }
 .d {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: #aeb4be;
+  background: var(--device-dot);
 }
 .title {
   margin-left: 8px;
-  font-size: 0.74rem;
-  color: #5e6573;
+  font-size: 0.78rem;
+  color: var(--device-muted);
   font-weight: 600;
 }
 .msg {
-  padding: 16px 18px 18px;
+  padding: 18px 20px 20px;
 }
 .subject {
   margin: 0 0 12px;
   font-family: var(--font-num);
-  font-size: 1.08rem;
+  font-size: 1.125rem;
   font-weight: 650;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -86,37 +87,37 @@ const body = computed(() => fillSample(props.body))
   align-items: center;
   padding-bottom: 12px;
   margin-bottom: 12px;
-  border-bottom: 1px solid #dcdfe4;
-  font-size: 0.84rem;
+  border-bottom: 1px solid var(--device-line);
+  font-size: var(--text-sm);
 }
 .avatar {
   display: grid;
   place-items: center;
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: #7b4aa5;
-  color: #fff;
+  background: var(--device-avatar);
+  color: var(--device-surface);
   font-weight: 650;
 }
 .addr,
 .to {
-  color: #5e6573;
+  color: var(--device-muted);
 }
 .to {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 .body {
-  font-size: 0.9rem;
-  line-height: 1.55;
+  font-size: var(--text-sm);
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 280px;
+  max-height: 300px;
   overflow: auto;
 }
 .empty {
-  color: #8b919c;
+  color: var(--device-dot);
   font-weight: 400;
 }
 .cursor {

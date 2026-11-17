@@ -97,7 +97,7 @@ onBeforeUnmount(() => {
 }
 .ui-modal__dialog {
   position: relative;
-  width: min(440px, 100%);
+  width: min(480px, 100%);
   border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
 }
 .ui-modal__foot {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--s-2);
   padding: var(--s-3) var(--s-6);
   border-top: 1px solid var(--border);

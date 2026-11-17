@@ -4,6 +4,7 @@ import { mount } from '@vue/test-utils'
 import type { DeliveryProgress as Delivery, Segment } from '../types'
 import ApprovalCard from './ApprovalCard.vue'
 import DeliveryProgress from './DeliveryProgress.vue'
+import DateTimeField from './ui/DateTimeField.vue'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -28,10 +29,14 @@ describe('DeliveryProgress', () => {
     expect(w.get('[role="progressbar"]').attributes('aria-valuenow')).toBe('84')
   })
 
-  it('shows the channels in a table, each figure once', () => {
+  it('shows each channel as one figure group, each figure once', () => {
     const w = make()
-    const sms = w.get('[data-testid="delivery-sms"]').findAll('td').map((c) => c.text())
-    const email = w.get('[data-testid="delivery-email"]').findAll('td').map((c) => c.text())
+    const figures = (id: string) => {
+      const g = w.get(`[data-testid="${id}"]`)
+      return [g.get('.ui-stat__value .sr-only').text(), ...g.findAll('.leader b').map((c) => c.text())]
+    }
+    const sms = figures('delivery-sms')
+    const email = figures('delivery-email')
     expect(sms).toEqual(['20', '2', '0', '8'])
     expect(email).toEqual(['20', '0', '0', '0'])
     // the old layout repeated these numbers as tiles above the bars; there is nothing like that now
@@ -102,13 +107,28 @@ describe('ApprovalCard', () => {
     expect(w.find('[data-testid="later-note"]').exists()).toBe(false)
   })
 
-  it('shows the picker, the last allowed day and a short estimate note when sending later', () => {
+  it('shows the picker and marks the numbers as estimates when sending later (a badge, no sentence)', () => {
     const w = make({ mode: 'later', when: '2099-12-30T10:00' })
     expect(w.get('[data-testid="send-at"]').text()).toContain('30.12.2099 10:00')
-    expect(w.text()).toContain('31.12.2099') // the offer's last day is the limit
-    expect(w.get('[data-testid="later-note"]').text()).toBe('Kitle gönderim anında yeniden belirlenir; kişi sayısı değişebilir.')
-    expect(w.text()).toContain('Tahmini sayılar')
+    expect(w.text()).toContain('31.12.2099') // the offer's last day, in the offer line
+    expect(w.get('[data-testid="later-note"]').text()).toBe('Tahmini sayılar')
+    expect(w.text()).not.toContain('Kitle gönderim anında yeniden belirlenir')
     expect(w.find('input[type="datetime-local"]').exists()).toBe(false)
+  })
+
+  it('offers no day in the past and none more than 30 days ahead', async () => {
+    const w = make({ mode: 'later', when: '' })
+    const picker = w.getComponent(DateTimeField)
+    const min = new Date(picker.props('min') as string)
+    const max = new Date(picker.props('max') as string)
+    const now = Date.now()
+    expect(min.getTime()).toBeGreaterThan(now - 60_000)
+    expect(max.getTime() - now).toBeLessThanOrEqual(30 * 24 * 60 * 60 * 1000)
+    expect(max.getTime() - now).toBeGreaterThan(29 * 24 * 60 * 60 * 1000)
+    await w.get('[data-testid="send-at"]').trigger('click')
+    const enabled = w.findAll('.ui-dt__day:not([disabled])').map((d) => d.attributes('aria-label'))
+    const yesterday = new Date(now - 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' })
+    expect(enabled).not.toContain(yesterday)
   })
 
   it('says why a time cannot be used', () => {

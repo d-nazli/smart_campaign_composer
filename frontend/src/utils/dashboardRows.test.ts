@@ -38,7 +38,7 @@ describe('statusBadge', () => {
   it('colours what finished, what is moving and what needs attention', () => {
     expect(statusBadge(row({ status: 'completed' }))).toEqual({ text: 'Tamamlandı', tone: 'ok' })
     expect(statusBadge(row({ status: 'sending' })).tone).toBe('accent')
-    expect(statusBadge(row({ status: 'scheduled' }))).toEqual({ text: 'Zamanlandı', tone: 'accent' })
+    expect(statusBadge(row({ status: 'scheduled' }))).toEqual({ text: 'Zamanlandı', tone: 'plan' })
     expect(statusBadge(row({ status: 'failed' })).tone).toBe('danger')
     expect(statusBadge(row({ status: 'cancelled' }))).toEqual({ text: 'İptal edildi', tone: 'neutral' })
   })

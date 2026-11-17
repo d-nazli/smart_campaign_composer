@@ -51,14 +51,17 @@ describe('the screens are built from them', () => {
 })
 
 describe('one column for every page', () => {
-  it('the header and the page content share the same container', () => {
+  it('the shell is a navigation rail, a top bar and one content column', () => {
     const app = sources['./App.vue']
-    expect(app).toMatch(/class="container topbar-in"/)
+    expect(app).toMatch(/class="shell"/)
+    expect(app).toMatch(/<nav class="rail"/)
+    expect(app).toMatch(/<header class="topbar"/)
     expect(app).toMatch(/<main class="container content"/)
   })
-  it('the container takes its width from one token', () => {
-    expect(tokens).toMatch(/--page:\s*1040px/)
-    expect(styles).toMatch(/\.container\s*\{[^}]*max-width:\s*var\(--page\)[^}]*margin:\s*0 auto/s)
+  it('the container takes its width from one token, with the gutter on both sides', () => {
+    expect(tokens).toMatch(/--page:\s*1600px/)
+    expect(tokens).toMatch(/--gutter:\s*40px/)
+    expect(styles).toMatch(/\.container\s*\{[^}]*max-width:\s*calc\(var\(--page\) \+ 2 \* var\(--gutter\)\)[^}]*margin:\s*0 auto/s)
   })
   it('no screen sets a width of its own', () => {
     for (const file of ['./views/DashboardView.vue', './views/ComposeView.vue']) {
@@ -69,7 +72,7 @@ describe('one column for every page', () => {
 
 describe('tokens', () => {
   it('has a light and a dark palette with one accent', () => {
-    expect(tokens).toMatch(/--accent:\s*#2457d6/i)
+    expect(tokens).toMatch(/--accent:\s*#1f33cc/i)
     expect(tokens).toMatch(/prefers-color-scheme:\s*dark/)
     expect(tokens).toMatch(/--bg:[^;]+;[\s\S]*prefers-color-scheme:\s*dark[\s\S]*--bg:/)
   })
@@ -82,10 +85,15 @@ describe('tokens', () => {
     expect(tokens).toMatch(/--font:\s*'Geist Variable'/)
     expect(styles).toMatch(/font-family:\s*var\(--font\)/)
   })
-  it('does not use shadows on panels (lines are the edge)', () => {
-    expect(styles).not.toMatch(/\.card\s*\{[^}]*box-shadow/)
+  it('panels have only the faint card shadow from the token, and none in dark mode', () => {
     const card = sources['./components/ui/Card.vue']
-    expect(card).not.toMatch(/box-shadow/)
+    expect(card).toMatch(/box-shadow:\s*var\(--shadow-card\)/)
+    expect(card).not.toMatch(/box-shadow:\s*0/)
+    expect(tokens).toMatch(/prefers-color-scheme:\s*dark[\s\S]*--shadow-card:\s*none/)
+  })
+  it('uses a 16px base and 44px controls', () => {
+    expect(tokens).toMatch(/--text-base:\s*1rem/)
+    expect(tokens).toMatch(/--control-h:\s*44px/)
   })
 })
 

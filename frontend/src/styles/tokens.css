@@ -1,46 +1,62 @@
 /*
  * Design tokens. Everything the interface looks like comes from here.
  *
- * Palette: cool greys for structure, ONE accent (cobalt) for what can be acted on,
- * and meaning colours (green / amber / red) used only for state. SMS and e-mail keep
- * a muted hue of their own, but only as small marks (a dot, a bar), never as fills.
- * Type: one family (Geist), numbers always tabular.
- * Shape: 1px lines instead of shadows; two radii (controls, panels).
+ * Panel look (design/DESIGN.md §3): a dark navigation rail, a light grey page, white
+ * bordered panels, ONE royal-blue accent for what can be acted on, and meaning colours
+ * (green / amber / red / violet for "scheduled") used only for state. SMS and e-mail keep
+ * a hue of their own, but only as small marks (a dot, a bar), never as fills.
+ * Type: one family (Geist), base 16px, numbers always tabular.
+ * Shape: small radii, hairline borders, an almost invisible card shadow.
  */
 :root {
   /* surfaces */
-  --bg: #f7f8fa;
+  --bg: #f1f2f5;
   --surface: #ffffff;
-  --surface-2: #f0f2f5;
-  --fg: #15181e;
-  --muted: #5e6573;
-  --border: #e3e6eb;
-  --border-strong: #cbd0d8;
+  --surface-2: #f6f7f9;
+  --fg: #1f2433;
+  --muted: #6b7280;
+  --border: #e2e4e9;
+  --border-strong: #c9cdd5;
 
   /* accent */
-  --accent: #2457d6;
-  --accent-hover: #1c47b4;
+  --accent: #1f33cc;
+  --accent-hover: #1828a8;
   --accent-fg: #ffffff;
-  --accent-soft: #e8eefc;
+  --accent-soft: #e6ebff;
+  --cta-gradient: linear-gradient(90deg, #2233cc, #5b2bb5);
+
+  /* navigation rail */
+  --nav-bg: #0f1221;
+  --nav-fg: #9aa1b5;
+  --nav-active: #1f33cc;
+
+  /* AI surfaces (the brief, the model at work) */
+  --ai-surface: linear-gradient(135deg, #fbeef4 0%, #efedfb 55%, #e9ecfb 100%);
+  --ai-ring: linear-gradient(90deg, #e86fa8, #7b5cf0);
+  --ai-chip-bg: #ede7fb;
+  --ai-chip-fg: #6b3fd1;
 
   /* channels */
   --sms: #0e7c70;
   --sms-soft: #e3f3f0;
-  --email: #7b4aa5;
-  --email-soft: #f0e9f6;
+  --email: #e07b00;
+  --email-soft: #fff3e3;
 
   /* state */
-  --ok: #1b7f4b;
-  --ok-bg: #e4f4eb;
-  --ok-line: #a9d9bf;
-  --warn: #8f5a00;
-  --warn-bg: #fff4db;
-  --warn-line: #e8c46a;
-  --error: #b3261e;
-  --error-bg: #fdecea;
+  --ok: #2e7d32;
+  --ok-bg: #e8f6ec;
+  --ok-line: #a9d9b4;
+  --warn: #b45f00;
+  --warn-bg: #fff3e3;
+  --warn-line: #f0b25e;
+  --error: #c62828;
+  --error-bg: #fdecec;
   --error-line: #f0a9a3;
-  --info: var(--accent);
-  --info-bg: var(--accent-soft);
+  --info: #1d6fa5;
+  --info-bg: #dceef8;
+  --info-line: #a8d1ea;
+  --plan: #5b2bb5;
+  --plan-bg: #efe9fb;
 
   /* the model badge */
   --mock: var(--warn);
@@ -48,15 +64,36 @@
   --claude: var(--ok);
   --claude-bg: var(--ok-bg);
 
-  /* type */
+  /* charts (failure reasons) */
+  --chart-1: #1530c8;
+  --chart-2: #c97a2b;
+  --chart-3: #4a90d9;
+  --chart-4: #4a1f80;
+  --chart-5: #3d8a4a;
+  --chart-6: #e0ac45;
+
+  /* device mockups in the message preview: they stay light in both themes, like a real screen */
+  --device-frame: #15181e;
+  --device-screen: #f1f2f4;
+  --device-bubble: #dcdfe4;
+  --device-fg: #1f2433;
+  --device-muted: #6b7280;
+  --device-line: #dcdfe4;
+  --device-chrome: #eceef1;
+  --device-dot: #aeb4be;
+  --device-surface: #ffffff;
+  --device-avatar: #1f33cc;
+
+  /* type: base 16px, the scale grows with it */
   --font: 'Geist Variable', 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --font-num: var(--font);
-  --text-xs: 0.75rem; /* 12 */
-  --text-sm: 0.8125rem; /* 13 */
-  --text-base: 0.875rem; /* 14 */
-  --text-md: 1rem; /* 16 */
-  --text-lg: 1.25rem; /* 20 */
-  --text-xl: 1.75rem; /* 28 */
+  --text-xs: 0.8125rem; /* 13 */
+  --text-sm: 0.90625rem; /* 14.5 */
+  --text-base: 1rem; /* 16 */
+  --text-md: 1.125rem; /* 18 */
+  --text-lg: 1.375rem; /* 22 */
+  --text-xl: 2.125rem; /* 34 */
+  --text-label: 0.8125rem; /* 13, uppercase labels */
   --leading: 1.5;
 
   /* space: a 4px scale */
@@ -70,13 +107,18 @@
   --s-10: 40px;
 
   /* shape */
-  --r-sm: 6px; /* controls, badges */
-  --r-md: 10px; /* panels, modal */
-  --shadow-pop: 0 10px 30px -8px rgba(21, 24, 30, 0.22), 0 2px 6px rgba(21, 24, 30, 0.08);
-  --shadow-device: 0 10px 30px -14px rgba(21, 24, 30, 0.3);
+  --r-sm: 4px; /* controls, badges */
+  --r-md: 6px; /* panels, modal */
+  --control-h: 44px;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-pop: 0 12px 32px -8px rgba(16, 24, 40, 0.25), 0 2px 6px rgba(16, 24, 40, 0.08);
+  --shadow-device: 0 10px 30px -14px rgba(16, 24, 40, 0.3);
 
   /* layout: every page uses this one column */
-  --page: 1040px;
+  --page: 1600px;
+  --gutter: 40px;
+  --rail-w: 84px;
+  --rail-col: 360px;
   --header-h: 56px;
 
   /* motion */
@@ -87,25 +129,43 @@
   color-scheme: light dark;
 }
 
+@media (max-width: 1279px) {
+  :root {
+    --gutter: 24px;
+  }
+}
+@media (max-width: 767px) {
+  :root {
+    --gutter: 16px;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0e1015;
-    --surface: #151820;
+    --surface: #161922;
     --surface-2: #1c2029;
     --fg: #e8eaee;
     --muted: #98a0ae;
-    --border: #262b36;
+    --border: #272c37;
     --border-strong: #363c4a;
 
-    --accent: #6f95f5;
-    --accent-hover: #8aa9f7;
+    --accent: #7a8cff;
+    --accent-hover: #94a3ff;
     --accent-fg: #0b1020;
-    --accent-soft: #1b2340;
+    --accent-soft: #1d2347;
+
+    --nav-bg: #0a0c14;
+    --nav-active: #3a4bd8;
+
+    --ai-surface: linear-gradient(135deg, #221a2b 0%, #1b1a2e 55%, #171a2b 100%);
+    --ai-chip-bg: #2b2347;
+    --ai-chip-fg: #c5b3ff;
 
     --sms: #4fc9ba;
     --sms-soft: #11302c;
-    --email: #c39be6;
-    --email-soft: #2b2038;
+    --email: #f0a24a;
+    --email-soft: #33240f;
 
     --ok: #6fd69a;
     --ok-bg: #12301f;
@@ -116,7 +176,23 @@
     --error: #ff9a8f;
     --error-bg: #3a1613;
     --error-line: #8d3f38;
+    --info: #7cc4ef;
+    --info-bg: #10283a;
+    --info-line: #24506d;
+    --plan: #c5b3ff;
+    --plan-bg: #2b2347;
 
+    --chart-1: #7a8cff;
+    --chart-2: #f0a24a;
+    --chart-3: #7cc4ef;
+    --chart-4: #b597ff;
+    --chart-5: #6fd69a;
+    --chart-6: #f0c25a;
+
+    --device-frame: #000000;
+    --device-line: #c9cdd5;
+
+    --shadow-card: none;
     --shadow-pop: 0 14px 34px -8px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.4);
     --shadow-device: 0 10px 30px -14px rgba(0, 0, 0, 0.7);
   }

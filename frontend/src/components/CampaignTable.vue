@@ -5,13 +5,15 @@ import type { CampaignSummary, LanguageInfo } from '../types'
 import { briefTitle, languageCells, progressTitle, rowProgress, sentenceCase, statusBadge } from '../utils/dashboard'
 import { FALLBACK_LANGUAGES } from '../utils/languages'
 import { urlForCampaign } from '../utils/route'
-import { formatWhen, untilText } from '../utils/schedule'
+import { formatWhen, shortWhen, untilText } from '../utils/schedule'
 import Badge from './ui/Badge.vue'
 import Button from './ui/Button.vue'
 import ProgressBar from './ui/ProgressBar.vue'
 
 // Every campaign is one row. The title is the brief, cut to one line (the tooltip has all of it);
-// a row opens the wizard where the campaign stands.
+// a row opens the wizard where the campaign stands. A scheduled campaign says when in its
+// status ("Zamanlandı · 24 Kas 14:00") and can be cancelled from its row.
+// Below 1024px the rows are laid out as cards (CSS only: the same elements).
 const props = defineProps<{ campaigns: CampaignSummary[]; languages?: LanguageInfo[] }>()
 const emit = defineEmits<{ cancel: [CampaignSummary] }>()
 
@@ -35,8 +37,8 @@ const day = (iso: string) => formatWhen(iso)
         <tr>
           <th scope="col" class="title">Kampanya</th>
           <th scope="col" class="status">Durum</th>
-          <th scope="col" class="r hide-sm matched">Kitle</th>
-          <th scope="col" class="hide-sm langcol">Diller</th>
+          <th scope="col" class="r matched">Kitle</th>
+          <th scope="col" class="langcol">Diller</th>
           <th scope="col" class="progress">İlerleme</th>
           <th scope="col" class="when">Zaman</th>
           <th scope="col" class="act"><span class="sr-only">İşlemler</span></th>
@@ -49,16 +51,18 @@ const day = (iso: string) => formatWhen(iso)
             <span v-if="c.explanation" class="sub" :title="c.explanation" data-testid="card-audience">{{ sentenceCase(c.explanation) }}</span>
           </td>
           <td>
-            <Badge :tone="statusBadge(c).tone" :dot="c.status === 'sending' || c.status === 'scheduled'">{{ statusBadge(c).text }}</Badge>
+            <Badge :tone="statusBadge(c).tone" :dot="c.status === 'sending' || c.status === 'scheduled'" data-testid="status"
+              >{{ statusBadge(c).text }}<template v-if="c.status === 'scheduled' && c.scheduled_at"> · {{ shortWhen(c.scheduled_at) }}</template></Badge
+            >
           </td>
-          <td class="r hide-sm num">{{ c.matched != null ? c.matched.toLocaleString('tr-TR') : '–' }}</td>
-          <td class="hide-sm" :class="{ 'is-empty': languageCells(c, order()).length === 0 }" data-testid="card-languages">
+          <td class="r num matched-cell" data-label="Kitle">{{ c.matched != null ? c.matched.toLocaleString('tr-TR') : '–' }}</td>
+          <td class="langs-cell" :class="{ 'is-empty': languageCells(c, order()).length === 0 }" data-label="Diller" data-testid="card-languages">
             <span class="langs">
               <span v-for="l in languageCells(c, order())" :key="l.code" class="lang"><b>{{ l.code }}</b><span class="num">{{ l.text }}</span></span>
               <span v-if="languageCells(c, order()).length === 0" class="muted">–</span>
             </span>
           </td>
-          <td class="progress" :class="{ 'is-empty': rowProgress(c.delivery).total === 0 && c.status !== 'failed' }">
+          <td class="progress" data-label="İlerleme" :class="{ 'is-empty': rowProgress(c.delivery).total === 0 && c.status !== 'failed' }">
             <template v-if="rowProgress(c.delivery).total > 0">
               <ProgressBar
                 size="sm"
@@ -78,7 +82,7 @@ const day = (iso: string) => formatWhen(iso)
             <span v-else-if="c.status === 'failed'" class="bad small" :title="c.schedule_error">{{ c.schedule_error || 'Başlatılamadı' }}</span>
             <span v-else class="muted">–</span>
           </td>
-          <td class="when" data-testid="card-planned">
+          <td class="when" data-label="Zaman" data-testid="card-planned">
             <template v-if="c.scheduled_at">
               <span class="t num" :class="{ plan: c.status === 'scheduled' }"><Clock :size="13" aria-hidden="true" />{{ day(c.scheduled_at) }}</span>
               <span class="sub">{{ c.status === 'scheduled' ? untilText(c.scheduled_at, now) : 'zamanlanmıştı' }}</span>
@@ -102,26 +106,33 @@ const day = (iso: string) => formatWhen(iso)
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
-  overflow-x: auto;
+  box-shadow: var(--shadow-card);
 }
 .table {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  min-width: 760px;
 }
 th {
   padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--muted);
-  font-size: var(--text-sm);
-  font-weight: 500;
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   text-align: left;
   white-space: nowrap;
 }
+th:first-child {
+  border-top-left-radius: var(--r-md);
+}
+th:last-child {
+  border-top-right-radius: var(--r-md);
+}
 td {
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-4);
   border-top: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -133,7 +144,7 @@ tbody tr:first-child td {
   transition: background var(--t-fast) var(--ease);
 }
 .row:hover {
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface));
 }
 .r {
   text-align: right;
@@ -142,32 +153,33 @@ tbody tr:first-child td {
   width: 30%;
 }
 .status {
-  width: 12%;
+  width: 17%;
 }
 .matched {
-  width: 7%;
+  width: 8%;
 }
 .langcol {
-  width: 19%;
+  width: 16%;
 }
 .progress {
-  width: 15%;
-}
-.when {
   width: 14%;
 }
+.when {
+  width: 13%;
+}
 .act {
-  width: 52px;
+  width: 64px;
   padding-left: 0;
   text-align: right;
 }
 .icon-only {
-  width: 28px;
+  width: 34px;
   padding: 0;
+  color: var(--accent);
 }
 .name {
   display: block;
-  color: var(--fg);
+  color: var(--accent);
   font-weight: 500;
   text-decoration: none;
   overflow: hidden;
@@ -188,18 +200,21 @@ tbody tr:first-child td {
 }
 .langs {
   display: flex;
-  flex-wrap: nowrap;
-  gap: var(--s-3);
-  font-size: var(--text-sm);
-  white-space: nowrap;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--text-xs);
 }
 .lang {
   display: inline-flex;
-  gap: 5px;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
 }
 .lang b {
-  color: var(--muted);
-  font-weight: 500;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 .cap {
   display: block;
@@ -216,28 +231,28 @@ tbody tr:first-child td {
   align-items: center;
   gap: 5px;
   white-space: nowrap;
+  font-size: var(--text-sm);
 }
 .t.plan {
-  color: var(--accent);
+  color: var(--plan);
   font-weight: 500;
 }
-/* On a phone each campaign becomes a small block: title, then status and time, then the bar. */
-@media (max-width: 760px) {
-  .hide-sm,
+/* Below 1024px a table would need sideways scrolling: each campaign becomes a card.
+   Title, then status (and the cancel button), then the bar and the labelled facts. */
+@media (max-width: 1023px) {
   thead {
     display: none;
   }
   .table,
   tbody {
     display: block;
-    min-width: 0;
   }
   .row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--s-2) var(--s-3);
     align-items: center;
-    padding: var(--s-3) var(--s-4);
+    padding: var(--s-4);
     border-top: 1px solid var(--border);
   }
   .row:first-child {
@@ -249,25 +264,54 @@ tbody tr:first-child td {
     width: auto;
     padding: 0;
     border: none;
-  }
-  .title,
-  .progress {
-    grid-column: 1 / -1;
-  }
-  .row td.is-empty {
-    display: none;
-  }
-  .when {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: baseline;
-    gap: var(--s-2);
     text-align: left;
+  }
+  .title {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .row td:nth-child(2) {
+    grid-column: 1;
+    grid-row: 1;
   }
   .act {
     grid-column: 2;
     grid-row: 1;
     justify-self: end;
+  }
+  .name,
+  .sub {
+    white-space: normal;
+  }
+  .row td.progress,
+  .row td.matched-cell,
+  .row td.langs-cell,
+  .row td.when {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-3);
+  }
+  .row td.progress {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .matched-cell::before,
+  .langs-cell::before,
+  .when::before {
+    content: attr(data-label);
+    flex: none;
+    width: 64px;
+    color: var(--muted);
+    font-size: var(--text-sm);
+  }
+  .row td.is-empty {
+    display: none;
+  }
+  .when .sub {
+    display: inline;
   }
 }
 </style>

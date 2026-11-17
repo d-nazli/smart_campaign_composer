@@ -73,11 +73,12 @@ describe('Card', () => {
 })
 
 describe('StatTile', () => {
-  it('shows a number, a label and a hint', () => {
+  it('shows a number and a label; what it means is a tooltip, not a sentence', () => {
     const w = mount(StatTile, { props: { label: 'Gönderilen', value: 1234, hint: 'SMS ve e-posta' } })
     expect(w.text()).toContain('Gönderilen')
     expect(w.find('.ui-stat__value').text()).toContain('1.234') // Turkish thousands separator
-    expect(w.text()).toContain('SMS ve e-posta')
+    expect(w.text()).not.toContain('SMS ve e-posta')
+    expect(w.get('.ui-stat__q').attributes('title')).toBe('SMS ve e-posta')
   })
 
   it('shows a text value as it is, and a suffix', () => {

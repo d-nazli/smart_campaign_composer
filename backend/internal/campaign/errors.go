@@ -23,6 +23,13 @@ type InputError struct{ Message string }
 
 func (e *InputError) Error() string { return e.Message }
 
+// ScheduleError is a well-formed send time the rules do not allow: in the past,
+// within the next minute, more than 30 days ahead, or after the offer's last day.
+// (A time that cannot be parsed is an InputError.)
+type ScheduleError struct{ Message string }
+
+func (e *ScheduleError) Error() string { return e.Message }
+
 // StateError means the campaign is not in a state that allows the action.
 type StateError struct{ Message string }
 

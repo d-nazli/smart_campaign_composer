@@ -236,8 +236,8 @@ const shown = computed(() => (value.value ? displayValue(value.value) : ''))
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  min-height: 34px;
-  min-width: 220px;
+  min-height: var(--control-h);
+  min-width: 240px;
   padding: 0 var(--s-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);

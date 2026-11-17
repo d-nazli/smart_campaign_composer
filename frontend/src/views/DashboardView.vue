@@ -12,6 +12,7 @@ import CampaignTable from '../components/CampaignTable.vue'
 import SystemHealth from '../components/SystemHealth.vue'
 import Button from '../components/ui/Button.vue'
 import Modal from '../components/ui/Modal.vue'
+import KpiGroup from '../components/ui/KpiGroup.vue'
 import StatTile from '../components/ui/StatTile.vue'
 
 defineProps<{ info: AppInfo | null }>()
@@ -103,35 +104,37 @@ const newCampaign = () => (window.location.hash = '#/')
 
 <template>
   <section class="dash">
-    <div class="head">
-      <h2>Kampanyalar</h2>
-      <Button variant="primary" :icon="Plus" data-testid="new-campaign" @click="newCampaign">Yeni kampanya</Button>
+    <div class="page-head">
+      <h1>Kampanyalar</h1>
+      <Button variant="cta" :icon="Plus" data-testid="new-campaign" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
     <p v-if="error" class="notice error" role="alert">Liste güncellenemedi ({{ error }}). Gösterilen bilgi eski olabilir.</p>
     <p v-if="cancelError" class="notice error" role="alert" data-testid="cancel-error">Gönderim iptal edilemedi: {{ cancelError }}</p>
 
-    <div class="stats" data-testid="summary">
+    <KpiGroup :count="4" data-testid="summary">
       <StatTile label="Gönderilen" :value="totals.sent" tone="ok" hint="SMS ve e-posta birlikte" data-testid="total-sent" />
-      <StatTile label="Başarısız" :value="totals.failed" :tone="totals.failed > 0 ? 'danger' : 'default'" :hint="totals.failed > 0 ? 'Nedenleri satırlarda' : 'Sorun yok'" data-testid="total-failed" />
-      <StatTile label="Kuyrukta" :value="totals.pending" hint="Gönderilmeyi bekliyor" data-testid="total-pending" />
-      <StatTile label="Hız" :value="shownRate" :decimals="1" suffix="/sn" hint="Son 10 saniye" data-testid="rate" />
-    </div>
+      <StatTile
+        label="Başarısız"
+        :value="totals.failed"
+        :tone="totals.failed > 0 ? 'danger' : 'default'"
+        hint="Nedenleri kampanya satırlarında"
+        data-testid="total-failed"
+      />
+      <StatTile label="Kuyrukta" :value="totals.pending" hint="Gönderilmeyi bekleyen mesajlar" data-testid="total-pending" />
+      <StatTile label="Hız" :value="shownRate" :decimals="1" suffix="/sn" hint="Son 10 saniyedeki gönderim hızı" data-testid="rate" />
+    </KpiGroup>
 
     <p v-if="campaigns === null && !error" class="muted">Yükleniyor…</p>
     <div v-else-if="campaigns && campaigns.length === 0" class="empty" data-testid="empty">
-      <Inbox :size="22" aria-hidden="true" />
+      <span class="empty__icon" aria-hidden="true"><Inbox :size="22" /></span>
       <strong>Henüz kampanya yok</strong>
-      <p class="muted">Bir brief yazarak ilk kampanyayı oluşturun.</p>
-      <Button variant="primary" :icon="Plus" @click="newCampaign">Yeni kampanya</Button>
+      <Button variant="cta" :icon="Plus" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
     <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :languages="info?.languages" @cancel="toCancel = $event" />
 
-    <div class="foot">
-      <SystemHealth :system="system" :unreachable="apiUnreachable" :info="info" />
-      <p class="muted small">Sayfa her {{ POLL_MS / 1000 }} saniyede güncellenir.</p>
-    </div>
+    <SystemHealth :system="system" :unreachable="apiUnreachable" :info="info" />
 
     <Modal v-model="askCancel" title="Zamanlanmış gönderim iptal edilsin mi?" :description="cancelText">
       <template #footer>
@@ -147,62 +150,23 @@ const newCampaign = () => (window.location.hash = '#/')
   display: grid;
   gap: var(--s-5);
 }
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-}
-.head h2 {
-  margin: 0;
-  font-size: var(--text-lg);
-}
-/* four figures in one bordered strip, divided by lines */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface);
-}
-.stats > * + * {
-  border-left: 1px solid var(--border);
-}
 .empty {
   display: grid;
   justify-items: center;
-  gap: var(--s-2);
-  padding: var(--s-10) var(--s-4);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--r-md);
-  text-align: center;
-  color: var(--muted);
-}
-.empty p {
-  margin: 0 0 var(--s-2);
-}
-.empty strong {
-  color: var(--fg);
-}
-.foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
   gap: var(--s-3);
+  padding: var(--s-10) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  text-align: center;
 }
-.foot p {
-  margin: 0;
-}
-@media (max-width: 860px) {
-  .stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .stats > :nth-child(3) {
-    border-left: none;
-  }
-  .stats > :nth-child(n + 3) {
-    border-top: 1px solid var(--border);
-  }
+.empty__icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 </style>

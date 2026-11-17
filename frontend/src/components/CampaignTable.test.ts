@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { CampaignSummary } from '../types'
 import CampaignTable from './CampaignTable.vue'
+import { shortWhen } from '../utils/schedule'
 
 const ch = (o = {}) => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
 const LONG =
@@ -62,9 +63,19 @@ describe('CampaignTable', () => {
     expect(w.get('tbody tr').findAll('td')[2].text()).toBe('300')
   })
 
-  it('shows the status as a badge', () => {
+  it('shows the status as a badge; a scheduled one says when ("Zamanlandı · 1 Ara 12:00")', () => {
     const w = make([draft, sending, scheduled, failed])
-    expect(w.findAll('tbody tr').map((r) => r.findAll('td')[1].text())).toEqual(['Taslak', 'Gönderiliyor', 'Zamanlandı', 'Başlatılamadı'])
+    const when = shortWhen(scheduled.scheduled_at!)
+    expect(w.findAll('tbody tr').map((r) => r.findAll('td')[1].text())).toEqual(['Taslak', 'Gönderiliyor', `Zamanlandı · ${when}`, 'Başlatılamadı'])
+    expect(when).toMatch(/^\d{1,2} Ara \d{2}:\d{2}$/)
+  })
+
+  it('lets a scheduled campaign be cancelled from its row, and only that one', async () => {
+    const w = make([draft, sending, scheduled, failed])
+    const buttons = w.findAll('[data-testid="cancel"]')
+    expect(buttons).toHaveLength(1)
+    await buttons[0].trigger('click')
+    expect(w.emitted('cancel')?.[0]?.[0]).toMatchObject({ id: 3 })
   })
 
   it('shows languages as separate cells: the audience before sending, what was sent once it began', () => {

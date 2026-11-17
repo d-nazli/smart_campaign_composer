@@ -534,11 +534,18 @@ func TestScheduleAndCancelOverHTTP(t *testing.T) {
 	cancel := fmt.Sprintf("%s/api/campaigns/%d/cancel", srv.URL, id)
 	at := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 
-	// Bad requests: a time in the past, nonsense, unknown fields. Nothing changes.
-	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	if resp, body := do(t, "POST", approve, map[string]string{"scheduled_at": past}); resp.StatusCode != 400 || !strings.Contains(string(body), `"invalid_input"`) {
-		t.Fatalf("past: %d %s", resp.StatusCode, body)
+	// A well-formed time the rules do not allow: 422 invalid_schedule. Nothing changes.
+	for name, when := range map[string]time.Time{
+		"past":             time.Now().Add(-time.Hour),
+		"after 30 days":    time.Now().Add(30*24*time.Hour + 10*time.Minute),
+		"two months ahead": time.Now().AddDate(0, 2, 0),
+	} {
+		resp, body := do(t, "POST", approve, map[string]string{"scheduled_at": when.UTC().Format(time.RFC3339)})
+		if resp.StatusCode != 422 || !strings.Contains(string(body), `"invalid_schedule"`) {
+			t.Fatalf("%s: %d %s", name, resp.StatusCode, body)
+		}
 	}
+	// Requests that cannot be read at all: 400.
 	if resp, _ := do(t, "POST", approve, map[string]string{"scheduled_at": "tomorrow"}); resp.StatusCode != 400 {
 		t.Fatalf("nonsense: %d", resp.StatusCode)
 	}

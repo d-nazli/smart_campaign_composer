@@ -2,10 +2,10 @@
 import type { Component } from 'vue'
 
 // A short status or label. The colour says what kind of thing it is: neutral (plain fact),
-// accent (in progress / selected), ok, warn, danger.
+// accent (in progress / selected), plan (scheduled for later), ok, warn, danger.
 withDefaults(
   defineProps<{
-    tone?: 'neutral' | 'accent' | 'ok' | 'warn' | 'danger'
+    tone?: 'neutral' | 'accent' | 'plan' | 'ok' | 'warn' | 'danger'
     /** A small filled dot before the text (state). */
     dot?: boolean
     icon?: Component
@@ -27,7 +27,7 @@ withDefaults(
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: 24px;
   padding: 0 var(--s-2);
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
@@ -47,6 +47,11 @@ withDefaults(
   background: var(--accent-soft);
   border-color: transparent;
   color: var(--accent);
+}
+.ui-badge--plan {
+  background: var(--plan-bg);
+  border-color: transparent;
+  color: var(--plan);
 }
 .ui-badge--ok {
   background: var(--ok-bg);

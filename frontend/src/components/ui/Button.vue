@@ -3,10 +3,11 @@ import type { Component } from 'vue'
 import { Loader2 } from 'lucide-vue-next'
 
 // The one button. primary: the single main action of a screen; secondary: everything else;
-// ghost: quiet actions (back, cancel); danger: irreversible ones.
+// outline: a visible way back that sits on the page background; ghost: quiet actions;
+// danger: irreversible ones; cta: the page's create button (gradient, upper case).
 withDefaults(
   defineProps<{
-    variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
+    variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'cta'
     size?: 'md' | 'sm'
     icon?: Component
     loading?: boolean
@@ -19,8 +20,8 @@ withDefaults(
 
 <template>
   <button :type="type" :disabled="disabled || loading" :aria-busy="loading || undefined" class="ui-btn" :class="[`ui-btn--${variant}`, `ui-btn--${size}`]">
-    <Loader2 v-if="loading" class="ui-btn__spin" :size="15" aria-hidden="true" />
-    <component :is="icon" v-else-if="icon" :size="15" aria-hidden="true" />
+    <Loader2 v-if="loading" class="ui-btn__spin" :size="16" aria-hidden="true" />
+    <component :is="icon" v-else-if="icon" :size="16" aria-hidden="true" />
     <slot />
   </button>
 </template>
@@ -31,8 +32,8 @@ withDefaults(
   align-items: center;
   justify-content: center;
   gap: var(--s-2);
-  min-height: 34px;
-  padding: 0 var(--s-4);
+  min-height: var(--control-h);
+  padding: 0 var(--s-5);
   border-radius: var(--r-sm);
   border: 1px solid var(--border-strong);
   background: var(--surface);
@@ -41,7 +42,7 @@ withDefaults(
   white-space: nowrap;
 }
 .ui-btn--sm {
-  min-height: 28px;
+  min-height: 34px;
   padding: 0 var(--s-3);
   font-size: var(--text-sm);
 }
@@ -56,6 +57,27 @@ withDefaults(
 .ui-btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+}
+.ui-btn--outline {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ui-btn--outline:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.ui-btn--cta {
+  background: var(--cta-gradient);
+  border-color: transparent;
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ui-btn--cta:hover:not(:disabled) {
+  background: var(--cta-gradient);
+  filter: brightness(1.08);
 }
 .ui-btn--ghost {
   background: transparent;

@@ -73,6 +73,15 @@ export function formatWhen(iso: string | Date): string {
   return d.toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
+const SHORT_MONTHS = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara']
+
+/** "24 Kas 14:00" in the viewer's zone: a send time in a list, where the year is clear. */
+export function shortWhen(iso: string | Date): string {
+  const d = typeof iso === 'string' ? new Date(iso) : iso
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]} ${two(d.getHours())}:${two(d.getMinutes())}`
+}
+
 /** "2 sa 5 dk sonra", "3 dk sonra", "birazdan"; for a time that has passed: "şimdi başlıyor". */
 export function untilText(at: string | Date, now: Date): string {
   const ms = (typeof at === 'string' ? new Date(at) : at).getTime() - now.getTime()

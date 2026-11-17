@@ -415,7 +415,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Worker kapalıyken** zamanı gelen kampanya, worker açılınca hemen başlar (`scheduled_at <= now`). Teslimatların `created_at` değeri zamanlayıcının "şimdi"sidir; böylece yeniden deneme yaşı (en çok 10 dk) onaydan değil başlangıçtan sayılır ve saatler önce onaylanan kampanyanın ilk geçici hatası "çok eski" diye düşmez.
 
 ## D74 — Gönderim zamanı teklifin son gününden sonra olamaz · `Kesin (kullanıcı kararı)`
-- **Kural:** `scheduled_at`, teklifin `expires_at` gününün sonundan (Türkiye saatiyle 23:59:59.999, UTC+3, sabit dilim: DST yok, tzdata gerekmez) sonra olamaz; **son günün kendisi serbesttir**. Backend reddeder (400 `invalid_input`, mesaj tarihi söyler), arayüz de aynı kuralı uygular: zaman seçici `max` ile sınırlıdır, geçersiz zaman için "Zamanla" düğmesi kapanır ve neden yazılır (`utils/schedule.ts` backend'in aynasıdır; sunucu yine karar verendir).
+- **Kural:** `scheduled_at`, teklifin `expires_at` gününün sonundan (Türkiye saatiyle 23:59:59.999, UTC+3, sabit dilim: DST yok, tzdata gerekmez) sonra olamaz; **son günün kendisi serbesttir**. Backend reddeder (422 `invalid_schedule`, D91; mesaj tarihi söyler), arayüz de aynı kuralı uygular: zaman seçici `max` ile sınırlıdır, geçersiz zaman için "Zamanla" düğmesi kapanır ve neden yazılır (`utils/schedule.ts` backend'in aynasıdır; sunucu yine karar verendir).
 - **Tarayıcı saati:** `datetime-local` kişinin kendi saat dilimindedir; seçilen an UTC'ye çevrilip gönderilir, son gün ise hep Türkiye saatiyle okunur. Türkiye dışından kullananlar için sınır birkaç saat kayabilir; sunucu kuralı değişmez.
 - **Gönderim anında da denetlenir:** kampanya beklerken ya da worker kapalıyken teklif sona ererse mesaj **gönderilmez**, kampanya `failed` olur ("teklifin son kullanma tarihi geçti"). Süresi dolmuş bir indirimi duyurmak, onayın zamanlamasından daha kötü bir hatadır.
 
@@ -511,6 +511,33 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Sayılmayanlar:** tarihler ("31.12.2026", "31 Aralık", "31 Mart 2027") ve özel gün ifadeleri ("23 Nisan", "8 Mart", "14 Şubat") kontrolden önce metinden çıkarılır. Gün sayıları (TL ya da % işareti taşımadıkları için) bu kontrole girmez; onlar D87'nin dayanak kontrolündedir.
 - **Prompt:** minimum sepetin gündelik yazımları örneklendi ("1000 TL ve üzeri siparişlerde", "1000 TL'ye varan siparişte", "sepet tutarı 1000 TL'yi geçince", "en az 1000 TL'lik alışverişte"). "Her tutar bir yere oturmalı, değilse seçenekli sor" kuralı eklendi. Canlıda örnek brief ilk denemede `min_spend 1000` ile doğru geldi. İki belirsiz brief'te ("2000 tl 250 tl indirim" ve iki ayrı tutarlı bir teklif) Claude kendisi seçenekli soru sordu. Onarım döngüsünün bu yolu betikli testlerle sınanıyor.
 - Mock modu değişmez: kural okuyucusu her tutarı zaten bir terime bağlıyor ya da soruyor.
+
+## D90 — Arayüz Insider One panel diline taşındı · `Kesin (kullanıcı kararı)`
+- **Ne:** Bütün ekranlar InOne panelinin yerleşimine ve görsel diline uyarlandı. Plan, önizleme ve kararlar `design/DESIGN.md` içinde, 110 özelliklik kontrol listesi `design/FEATURES.md` içinde.
+  - Kabuk: koyu sol ray, beyaz üst bar, en fazla 1600px'lik tek kolon.
+  - Akış: "Brief › Kitle › …" akış barı, iki sütun (içerik ve sağ ray; Mesajlar 65/35 ve önizleme yapışık), kutusuz alt butonlar.
+  - Liste: KPI kartı, tablo; 1024px altında kart listesi.
+  - Gönderim: kampanya raporu (kanal KPI'ları, başarısızlık nedenleri yarım halkada).
+  - Responsive: 1280 / 1024 / 768 px kırılımları, telefonda hamburger menü.
+- **Değişmeyen:** API çağrıları, composable'lar, `utils/*` iş kuralları ve `types.ts`. Yalnız şablonlar ve stiller değişti. Insider adı, logosu ve görselleri kullanılmadı.
+- **Kullanıcı kararları:**
+  - Geist kaldı; koyu tema korundu.
+  - Yarım halka yalnız başarısızlık nedenlerinde.
+  - Hemen / Zamanla seçenek satırı oldu.
+  - "Dashboard" yerine "Kampanyalar".
+  - Önizleme sayfası dönüşümden sonra silindi.
+- **Açıklama cümleleri kaldırıldı:** Arayüz kullanıcıya bir şey anlatan yardımcı cümle göstermez. Sayılar, hata ve uyarılar kalır. Kaydedilmemiş değişiklik bir rozet ("Kaydedilmedi") ve sekmede nokta ile gösterilir. Bir sayının ne anlama geldiği (?) tooltip'tedir. Kaldırılanların listesi `design/DESIGN.md` §9'da.
+- **Zamanlanmış kampanya listede:** "Zamanlandı · 24 Kas 14:00" (mor) ve satırdan iptal edilebilir.
+- **Bilinen, ayrı iş:** Tablodaki geri sayım ilk gösterimde donuyor (F102); bu dönüşümde dokunulmadı.
+
+## D91 — Kurala uymayan gönderim zamanı 422 · `Kesin (kullanıcı kararı)`
+- **Kural (değişmedi):** `scheduled_at` en erken 1 dakika sonrası, en geç 30 gün sonrası (ve teklifin son günü) olabilir.
+- **Değişen:** Bu kurala uymayan, ama okunabilen bir zaman artık **422 `invalid_schedule`** döner (önceden 400 `invalid_input`). Okunamayan değer ("tomorrow"), bozuk JSON ve bilinmeyen alan 400 kalır. Böylece "istek bozuk" ile "istek anlaşıldı, kural izin vermiyor" ayrılır.
+- **Kod:** `campaign.ScheduleError` → `httpapi.classify` → 422.
+- **Arayüz:** Tarih seçicide geçmiş günler ve 30 günden sonraki günler seçilemez (`scheduleBounds`). Sunucunun mesajı onay kartının altında gösterilir.
+- **Testler:**
+  - Backend: `schedule_test.go` (geçmiş, 30 gün + 5 dk, 31 gün, 1 yıl → ScheduleError; 30 gün − 5 dk kabul) ve `httpapi_test.go` (geçmiş, 30 gün + 10 dk, 2 ay → 422 `invalid_schedule`).
+  - Frontend: `schedule.test.ts` (30 günlük pencere, seçici sınırları), `DeliveryAndApproval.test.ts` (seçicide dün ve 30 gün sonrası yok) ve `api/approve.test.ts` (422 → `ApiError` ve mesaj).
 
 ---
 

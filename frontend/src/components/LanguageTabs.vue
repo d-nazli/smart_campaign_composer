@@ -44,42 +44,40 @@ const emit = defineEmits<{ 'update:modelValue': [LanguageCode] }>()
 </template>
 
 <style scoped>
+/* Underlined tabs: the active language is blue with a blue line under it. */
 .tabs {
   display: flex;
-  gap: 6px;
   flex-wrap: wrap;
-  margin: 4px 0 16px;
+  gap: var(--s-5);
+  margin: 0 0 var(--s-2);
+  border-bottom: 1px solid var(--border);
 }
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  background: var(--surface);
+  gap: 6px;
+  min-height: 44px;
+  margin-bottom: -1px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
   color: var(--muted);
   font: inherit;
   cursor: pointer;
-  transition:
-    background var(--t-fast) var(--ease),
-    color var(--t-fast) var(--ease),
-    border-color var(--t-fast) var(--ease);
+  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
 }
-.tab:hover {
-  border-color: var(--accent);
+.tab:hover:not(.active) {
+  background: none;
+  color: var(--fg);
 }
 .tab.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--fg);
-  font-weight: 600;
+  border-bottom-color: var(--accent);
+  color: var(--accent);
 }
 .code {
-  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--accent);
 }
 .dot {
   width: 8px;
@@ -87,14 +85,14 @@ const emit = defineEmits<{ 'update:modelValue': [LanguageCode] }>()
   border-radius: 50%;
 }
 .dot.writing {
-  background: var(--accent);
+  background: var(--ai-chip-fg);
   animation: blink 1s ease-in-out infinite;
 }
 .dot.bad {
   background: var(--error);
 }
 .dot.edited {
-  background: var(--warn-line);
+  background: var(--email);
 }
 @keyframes blink {
   50% {

@@ -276,6 +276,7 @@ func writeError(w http.ResponseWriter, status int, code, message string, details
 func classify(err error) (string, int, string, any) {
 	var (
 		input   *campaign.InputError
+		sched   *campaign.ScheduleError
 		state   *campaign.StateError
 		invalid *campaign.InvalidContentError
 		gen     *campaign.GenerationError
@@ -285,6 +286,8 @@ func classify(err error) (string, int, string, any) {
 		return "not_found", http.StatusNotFound, "kampanya bulunamadı", nil
 	case errors.As(err, &input):
 		return "invalid_input", http.StatusBadRequest, input.Message, nil
+	case errors.As(err, &sched):
+		return "invalid_schedule", http.StatusUnprocessableEntity, sched.Message, nil
 	case errors.As(err, &state):
 		return "invalid_state", http.StatusConflict, state.Message, nil
 	case errors.As(err, &invalid):

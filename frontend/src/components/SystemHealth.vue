@@ -35,16 +35,16 @@ const allOk = computed(() => items.value.every((i) => i.state === 'ok'))
 
 <template>
   <div class="health" role="group" aria-label="Sistem sağlığı" data-testid="system-health">
-    <span class="summary" :class="{ ok: allOk }">{{ allOk ? 'Sistem sağlıklı' : 'Sistem durumu' }}</span>
+    <span class="summary label" :class="{ ok: allOk }">{{ allOk ? 'Sistem sağlıklı' : 'Sistem durumu' }}</span>
     <ul>
       <li v-for="i in items" :key="i.key" :data-testid="`health-${i.key}`">
         <span class="dot" :class="i.state" aria-hidden="true" />
-        <span class="label">{{ i.label }}</span>
+        <span class="name">{{ i.label }}</span>
         <span class="state muted small">{{ i.text }}</span>
       </li>
       <li data-testid="health-llm">
         <span class="dot" :class="info?.llm_mode === 'claude' ? 'ok' : 'mock'" aria-hidden="true" />
-        <span class="label">LLM</span>
+        <span class="name">LLM</span>
         <span class="state muted small">{{ llm }}</span>
       </li>
     </ul>
@@ -56,15 +56,15 @@ const allOk = computed(() => items.value.every((i) => i.state === 'ok'))
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--s-1) var(--s-5);
-  padding: var(--s-2) var(--s-4);
+  gap: var(--s-2) var(--s-6);
+  padding: var(--s-4) var(--s-6);
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
   font-size: var(--text-sm);
 }
 .summary {
-  font-weight: 600;
   color: var(--warn);
 }
 .summary.ok {
@@ -73,7 +73,7 @@ const allOk = computed(() => items.value.every((i) => i.state === 'ok'))
 ul {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s-1) var(--s-4);
+  gap: var(--s-2) var(--s-5);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -83,7 +83,7 @@ li {
   align-items: baseline;
   gap: 6px;
 }
-.label {
+.name {
   font-weight: 500;
 }
 .dot {
@@ -101,9 +101,14 @@ li {
   background: var(--error);
 }
 .dot.mock {
-  background: var(--warn-line);
+  background: var(--email);
 }
 .dot.checking {
   background: var(--border-strong);
+}
+@media (max-width: 767px) {
+  .health {
+    padding: var(--s-4);
+  }
 }
 </style>

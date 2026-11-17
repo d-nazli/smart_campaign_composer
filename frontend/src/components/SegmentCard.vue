@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertCircle, HelpCircle } from 'lucide-vue-next'
+import { AlertCircle, HelpCircle, Mail, MessageSquare } from 'lucide-vue-next'
 import type { LanguageInfo, Segment } from '../types'
 import { funnel } from '../utils/funnel'
 import { describeOffer } from '../utils/formatOffer'
@@ -13,6 +13,9 @@ import Card from './ui/Card.vue'
 import ProgressBar from './ui/ProgressBar.vue'
 import StatTile from './ui/StatTile.vue'
 
+// The audience step. A usable rule: the rule, the reach per channel, the offer and the
+// languages on the left; the estimated audience as one figure with a bar in the right rail.
+// A question from the model: the AI surface with a one-click answer when there is one.
 const props = defineProps<{ segment: Segment; busy?: boolean; languages?: LanguageInfo[] }>()
 const emit = defineEmits<{ (e: 'send-to-all'): void }>()
 
@@ -22,133 +25,200 @@ const offerText = computed(() => describeOffer(props.segment.offer))
 const f = computed(() => (props.segment.audience ? funnel(props.segment.audience) : null))
 const spoken = computed(() => languageSummary(props.segment.languages, props.languages ?? FALLBACK_LANGUAGES))
 const hasOffer = computed(() => !!props.segment.offer && props.segment.offer.kind !== 'none')
+const pct = (n: number) => (f.value && f.value.matched > 0 ? Math.round((n / f.value.matched) * 100) : 0)
+const unreachableText = computed(() => (f.value && f.value.unreachable > 0 ? `${f.value.unreachable} kişiye ulaşılamıyor` : 'Hepsine ulaşılabiliyor'))
 </script>
 
 <template>
-  <Card id="step-audience" title="Kitle" aria-live="polite">
-    <template v-if="segment.status === 'ok' && segment.audience && f">
-      <p class="explanation">{{ sentenceCase(segment.explanation) }}</p>
-      <p v-if="segment.note" class="notice info" role="note" data-testid="audience-note">{{ segment.note }}</p>
+  <div v-if="segment.status === 'ok' && segment.audience && f" id="step-audience" class="split" aria-live="polite">
+    <Card title="Kitle">
+      <div class="body">
+        <p class="explanation">{{ sentenceCase(segment.explanation) }}</p>
+        <p v-if="segment.note" class="notice info" role="note" data-testid="audience-note">{{ segment.note }}</p>
 
-      <ul class="conds" aria-label="Kural koşulları">
-        <template v-for="(c, i) in chips" :key="c">
-          <li v-if="i > 0" class="joiner" aria-hidden="true">{{ joiner }}</li>
-          <li><Badge>{{ c }}</Badge></li>
-        </template>
-      </ul>
+        <section v-if="chips.length">
+          <h3 class="label">Kural</h3>
+          <ul class="conds" aria-label="Kural koşulları">
+            <template v-for="(c, i) in chips" :key="c">
+              <li v-if="i > 0" class="joiner" aria-hidden="true">{{ joiner }}</li>
+              <li><span class="chip">{{ c }}</span></li>
+            </template>
+          </ul>
+        </section>
 
-      <div class="stats">
-        <StatTile label="Eşleşen kişi" :value="f.matched" :hint="f.unreachable > 0 ? `${f.unreachable} kişiye ulaşılamıyor` : 'Hepsine ulaşılabiliyor'" data-testid="matched-tile" />
-        <StatTile label="SMS ile ulaşılabilir" :value="f.sms" />
-        <StatTile label="E-posta ile ulaşılabilir" :value="f.email" />
+        <section>
+          <h3 class="label">Kanallara göre ulaşılabilirlik</h3>
+          <div class="reach">
+            <div class="reach__row">
+              <span class="reach__icon sms" aria-hidden="true"><MessageSquare :size="16" /></span>
+              <span><strong class="num">{{ f.sms.toLocaleString('tr-TR') }}</strong> <span class="muted">SMS</span></span>
+              <ProgressBar :value="f.sms" :max="f.matched" tone="accent" size="sm" label="SMS ile ulaşılabilenler" />
+              <span class="num muted pct">%{{ pct(f.sms) }}</span>
+            </div>
+            <div class="reach__row">
+              <span class="reach__icon email" aria-hidden="true"><Mail :size="16" /></span>
+              <span><strong class="num">{{ f.email.toLocaleString('tr-TR') }}</strong> <span class="muted">E-posta</span></span>
+              <ProgressBar :value="f.email" :max="f.matched" tone="accent" size="sm" label="E-posta ile ulaşılabilenler" />
+              <span class="num muted pct">%{{ pct(f.email) }}</span>
+            </div>
+          </div>
+        </section>
+
+        <dl v-if="hasOffer || spoken.length" class="ledger">
+          <div v-if="hasOffer" class="ledger__row" data-testid="offer">
+            <dt class="label">Teklif</dt>
+            <dd>{{ offerText }}</dd>
+          </div>
+          <div v-if="spoken.length" class="ledger__row" data-testid="audience-languages">
+            <dt class="label">Mesaj dili</dt>
+            <dd class="langs">
+              <Badge v-for="l in spoken" :key="l.code">{{ l.display }} <b class="num">{{ l.count }}</b></Badge>
+            </dd>
+          </div>
+        </dl>
+
+        <p v-if="segment.audience.matched === 0" class="notice warn">Bu kurala uyan kimse yok.</p>
       </div>
-      <!-- the same three numbers for tests and screen readers; the tiles above are the visual copy -->
+    </Card>
+
+    <aside aria-label="Tahmini kitle">
+      <section class="stat-card">
+        <StatTile label="Tahmini kitle" :value="f.matched" :sub="unreachableText" data-testid="matched-tile">
+          <ProgressBar
+            :segments="[
+              { value: f.both, tone: 'accent' },
+              { value: f.smsOnly, tone: 'sms' },
+              { value: f.emailOnly, tone: 'email' },
+            ]"
+            :max="f.matched"
+            label="Kanallara göre ulaşılabilirlik"
+            size="sm"
+            class="stack-bar"
+          />
+          <div class="leader"><i class="mark both" aria-hidden="true" /><span>İki kanaldan</span><span class="leader__fill" /><b class="num">{{ f.both }}</b></div>
+          <div class="leader"><i class="mark sms" aria-hidden="true" /><span>Yalnız SMS</span><span class="leader__fill" /><b class="num">{{ f.smsOnly }}</b></div>
+          <div class="leader"><i class="mark email" aria-hidden="true" /><span>Yalnız e-posta</span><span class="leader__fill" /><b class="num">{{ f.emailOnly }}</b></div>
+          <div v-if="f.unreachable > 0" class="leader">
+            <i class="mark none" aria-hidden="true" /><span>Ulaşılamayan</span><span class="leader__fill" /><b class="num">{{ f.unreachable }}</b>
+          </div>
+        </StatTile>
+      </section>
+      <!-- the same numbers for tests and screen readers; the card above is the visual copy -->
       <p class="sr-only">
         Eşleşen <span data-testid="matched">{{ f.matched }}</span>, SMS <span data-testid="sms-reachable">{{ f.sms }}</span>, e-posta
         <span data-testid="email-reachable">{{ f.email }}</span>, ulaşılamayan <span data-testid="unreachable">{{ f.unreachable }}</span>.
       </p>
+    </aside>
+  </div>
 
-      <ProgressBar
-        :segments="[
-          { value: f.both, tone: 'accent' },
-          { value: f.smsOnly, tone: 'sms' },
-          { value: f.emailOnly, tone: 'email' },
-        ]"
-        :max="f.matched"
-        label="Kanallara göre ulaşılabilirlik"
-        size="sm"
-      />
-      <p class="legend small muted">
-        <span><i class="mark both" aria-hidden="true" />İki kanaldan {{ f.both }}</span>
-        <span><i class="mark sms" aria-hidden="true" />Yalnız SMS {{ f.smsOnly }}</span>
-        <span><i class="mark email" aria-hidden="true" />Yalnız e-posta {{ f.emailOnly }}</span>
-        <span v-if="f.unreachable > 0"><i class="mark none" aria-hidden="true" />Ulaşılamayan {{ f.unreachable }}</span>
-      </p>
+  <section v-else-if="segment.status === 'needs_clarification'" id="step-audience" class="ask" role="status">
+    <p class="ask__title"><HelpCircle :size="18" aria-hidden="true" />Biraz daha bilgi lazım</p>
+    <p class="ask__text">{{ segment.question }}</p>
+    <p v-if="hasOffer" class="understood" data-testid="offer"><span class="chip ai">Anladığım teklif</span> {{ offerText }}</p>
+    <div v-if="segment.suggestion === 'all_customers'" class="ask__option">
+      <strong>Tüm müşteriler</strong>
+      <Button variant="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</Button>
+    </div>
+  </section>
 
-      <dl class="ledger">
-        <div v-if="hasOffer" class="ledger__row" data-testid="offer">
-          <dt>Teklif</dt>
-          <dd>{{ offerText }}</dd>
-        </div>
-        <div v-if="spoken.length" class="ledger__row" data-testid="audience-languages">
-          <dt>Mesaj dili</dt>
-          <dd class="langs"><Badge v-for="l in spoken" :key="l.code">{{ l.display }} <b class="num">{{ l.count }}</b></Badge></dd>
-        </div>
-      </dl>
-
-      <p v-if="f.unreachable > 0" class="hint">İzin vermeyen ya da telefonu / e-postası olmayan kişilere mesaj gönderilmez.</p>
-      <p v-if="segment.audience.matched === 0" class="notice warn">Bu kurala uyan kimse yok. Brief'i değiştirmeyi deneyin.</p>
-    </template>
-
-    <template v-else-if="segment.status === 'needs_clarification'">
-      <div class="box" role="status">
-        <p class="box__title"><HelpCircle :size="16" aria-hidden="true" />Biraz daha bilgi lazım</p>
-        <p class="box__text">{{ segment.question }}</p>
-        <p v-if="hasOffer" class="understood" data-testid="offer"><Badge tone="warn">Anladığım teklif</Badge> {{ offerText }}</p>
-        <div v-if="segment.suggestion === 'all_customers'" class="actions">
-          <Button variant="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</Button>
-          <span class="hint">İzin vermemiş olanlara yine de gönderilmez.</span>
-        </div>
-        <p class="hint">Ya da brief'i kime göndereceğinizi yazarak güncelleyip tekrar deneyin.</p>
-      </div>
-    </template>
-
-    <template v-else-if="segment.status === 'unsupported'">
-      <div class="box box--bad" role="alert">
-        <p class="box__title"><AlertCircle :size="16" aria-hidden="true" />Bu brief desteklenmiyor</p>
-        <p class="box__text">{{ segment.explanation }}</p>
-      </div>
-    </template>
+  <Card v-else-if="segment.status === 'unsupported'" id="step-audience" title="Kitle">
+    <div class="bad" role="alert">
+      <p class="bad__title"><AlertCircle :size="18" aria-hidden="true" />Bu brief desteklenmiyor</p>
+      <p class="bad__text">{{ segment.explanation }}</p>
+    </div>
   </Card>
 </template>
 
 <style scoped>
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
 .explanation {
-  margin: 0 0 var(--s-3);
+  margin: 0;
   font-size: var(--text-md);
-  font-weight: 500;
-  max-width: 70ch;
+}
+h3.label {
+  margin: 0 0 var(--s-2);
 }
 .conds {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--s-2);
-  list-style: none;
-  margin: 0 0 var(--s-5);
+  gap: 6px;
+  margin: 0;
   padding: 0;
+  list-style: none;
 }
 .joiner {
   color: var(--muted);
   font-size: var(--text-xs);
 }
-/* three figures in one bordered strip, divided by lines */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.reach {
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  margin-bottom: var(--s-4);
+  border-radius: var(--r-md);
 }
-.stats > * + * {
-  border-left: 1px solid var(--border);
+.reach__row {
+  display: grid;
+  grid-template-columns: 34px minmax(120px, auto) minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
 }
-.legend {
+.reach__row + .reach__row {
+  border-top: 1px dotted var(--border-strong);
+}
+.reach__icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+.reach__icon.sms {
+  color: var(--sms);
+}
+.reach__icon.email {
+  color: var(--email);
+}
+.pct {
+  text-align: right;
+}
+.ledger {
+  margin: 0;
+}
+.ledger__row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+  border-top: 1px dotted var(--border-strong);
+}
+dd {
+  margin: 0;
+}
+.langs {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s-1) var(--s-5);
-  margin: var(--s-2) 0 var(--s-5);
-}
-.legend span {
-  display: inline-flex;
-  align-items: center;
   gap: 6px;
+}
+.stat-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+}
+.stack-bar {
+  margin: var(--s-2) 0 var(--s-1);
 }
 .mark {
   width: 8px;
   height: 8px;
   border-radius: 2px;
-  background: var(--border-strong);
+  transform: translateY(-1px);
 }
 .mark.both {
   background: var(--accent);
@@ -159,82 +229,87 @@ const hasOffer = computed(() => !!props.segment.offer && props.segment.offer.kin
 .mark.email {
   background: var(--email);
 }
-.ledger {
-  margin: 0;
+.mark.none {
+  background: var(--border-strong);
 }
-.ledger__row {
+
+/* the model asks a question: the AI surface */
+.ask {
   display: grid;
-  grid-template-columns: 7rem minmax(0, 1fr);
   gap: var(--s-3);
-  padding: var(--s-3) 0;
-  border-top: 1px solid var(--border);
+  padding: var(--s-6);
+  border-radius: var(--r-md);
+  background: var(--ai-surface);
 }
-dt {
-  color: var(--muted);
-}
-dd {
-  margin: 0;
-}
-.langs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-}
-.langs b {
-  color: var(--fg);
-  font-weight: 600;
-}
-.hint {
-  margin: var(--s-3) 0 0;
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
-.box {
-  padding: var(--s-4);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-}
-.box--bad {
-  border-color: var(--error-line);
-  background: var(--error-bg);
-  color: var(--error);
-}
-.box__title {
+.ask__title {
   display: flex;
   align-items: center;
-  gap: var(--s-2);
+  gap: 6px;
   margin: 0;
+  color: var(--ai-chip-fg);
   font-weight: 600;
 }
-.box__text {
-  margin: var(--s-2) 0 0;
+.ask__text {
+  margin: 0;
+  font-size: var(--text-md);
 }
 .understood {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--s-2);
-  margin: var(--s-3) 0 0;
+  margin: 0;
 }
-.actions {
+.chip.ai {
+  border-color: transparent;
+  background: var(--ai-chip-bg);
+  color: var(--ai-chip-fg);
+}
+.ask__option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.ask__option > :last-child {
+  margin-left: auto;
+}
+.bad {
+  padding-left: var(--s-4);
+  border-left: 3px solid var(--error);
+}
+.bad__title {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--s-3);
-  margin-top: var(--s-4);
+  gap: 6px;
+  margin: 0 0 var(--s-2);
+  color: var(--error);
+  font-weight: 600;
 }
-@media (max-width: 640px) {
-  .stats {
-    grid-template-columns: 1fr;
+.bad__text {
+  margin: 0;
+}
+@media (max-width: 767px) {
+  .reach__row {
+    grid-template-columns: 34px minmax(0, 1fr) 48px;
   }
-  .stats > * + * {
-    border-left: none;
-    border-top: 1px solid var(--border);
+  .reach__row :deep(.ui-progress) {
+    display: none;
   }
   .ledger__row {
-    grid-template-columns: 1fr;
-    gap: 2px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-1);
+  }
+  .ask {
+    padding: var(--s-4);
+  }
+  .ask__option > :last-child {
+    width: 100%;
+    margin-left: 0;
   }
 }
 </style>

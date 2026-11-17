@@ -102,15 +102,18 @@ func TestScheduleTimeMustBeInAReasonableWindow(t *testing.T) {
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()
 	for name, at := range map[string]time.Time{
-		"in the past":       time.Now().Add(-time.Hour),
-		"within the minute": time.Now().Add(20 * time.Second),
-		"after 30 days":     time.Now().Add(31 * 24 * time.Hour),
+		"in the past":            time.Now().Add(-time.Hour),
+		"a day ago":              time.Now().Add(-24 * time.Hour),
+		"within the minute":      time.Now().Add(20 * time.Second),
+		"just after 30 days":     time.Now().Add(30*24*time.Hour + 5*time.Minute),
+		"after 31 days":          time.Now().Add(31 * 24 * time.Hour),
+		"a year ahead (a typo?)": time.Now().AddDate(1, 0, 0),
 	} {
 		at := at
 		_, err := svc.ApproveAt(ctx, id, &at)
-		var in *campaign.InputError
-		if !errors.As(err, &in) {
-			t.Errorf("%s: want InputError, got %v", name, err)
+		var sched *campaign.ScheduleError
+		if !errors.As(err, &sched) {
+			t.Errorf("%s: want ScheduleError, got %v", name, err)
 		}
 	}
 	if got := campaignStatus(t, pool, id); got != "content_ready" {
@@ -119,6 +122,13 @@ func TestScheduleTimeMustBeInAReasonableWindow(t *testing.T) {
 	ok := time.Now().Add(2 * time.Minute)
 	if _, err := svc.ApproveAt(ctx, id, &ok); err != nil {
 		t.Fatalf("two minutes ahead is fine: %v", err)
+	}
+
+	// The last allowed moment: just under 30 days ahead is still accepted.
+	other := approvableCampaign(t, svc)
+	edge := time.Now().Add(30*24*time.Hour - 5*time.Minute)
+	if res, err := svc.ApproveAt(ctx, other, &edge); err != nil || res.Status != campaign.StatusScheduled {
+		t.Fatalf("just under 30 days ahead is fine: %v %+v", err, res)
 	}
 }
 
@@ -149,8 +159,8 @@ func TestAScheduleAfterTheOffersLastDayIsRefused(t *testing.T) {
 
 	after := endOfLastDay.Add(time.Hour)
 	_, err := svc.ApproveAt(ctx, id, &after)
-	var in *campaign.InputError
-	if !errors.As(err, &in) || !strings.Contains(err.Error(), lastDay.Format("02.01.2006")) {
+	var sched *campaign.ScheduleError
+	if !errors.As(err, &sched) || !strings.Contains(err.Error(), lastDay.Format("02.01.2006")) {
 		t.Fatalf("a time after the last day: %v", err)
 	}
 	if got := campaignStatus(t, pool, id); got != "content_ready" {

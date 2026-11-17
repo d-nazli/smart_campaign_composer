@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ChevronRight, Home, LayoutList, Menu, PenSquare, X } from 'lucide-vue-next'
 import { fetchInfo, llmLabel, type AppInfo } from './api/info'
 import { pageFromHash, type Page } from './utils/dashboard'
 import { urlWithoutCampaign } from './utils/route'
@@ -10,6 +11,7 @@ import DashboardView from './views/DashboardView.vue'
 const info = ref<AppInfo | null>(null)
 const error = ref<string | null>(null)
 const page = ref<Page>(pageFromHash(window.location.hash))
+const menuOpen = ref(false)
 
 const isMock = computed(() => info.value?.llm_mode === 'mock')
 // In Claude mode a quiet badge names the model; in mock mode the badge says so plainly.
@@ -20,12 +22,14 @@ const composeKey = ref(0)
 
 // "Yeni kampanya": a clean brief. The address loses ?c= first, otherwise the page would open the old campaign again.
 function newCampaign() {
+  menuOpen.value = false
   window.history.pushState(null, '', urlWithoutCampaign(window.location.href, '#/'))
   page.value = 'compose'
   composeKey.value++
 }
 
 const onHash = () => {
+  menuOpen.value = false
   const next = pageFromHash(window.location.hash)
   // Coming back from the dashboard through a "#/" link also means a new campaign.
   if (next === 'compose' && page.value === 'dashboard') return newCampaign()
@@ -44,35 +48,62 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', onHash))
 </script>
 
 <template>
-  <header class="topbar">
-    <div class="container topbar-in">
-      <h1 class="brand">
-        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-          <rect width="32" height="32" rx="8" fill="var(--accent)" />
-          <path d="M8 21V11l8 6 8-6v10" fill="none" stroke="var(--accent-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>Campaign Composer</span>
-      </h1>
-      <nav class="nav" aria-label="Sayfalar">
-        <a href="#/" :aria-current="page === 'compose' ? 'page' : undefined" data-testid="tab-compose" @click.prevent="newCampaign">Yeni kampanya</a>
-        <a href="#/dashboard" :aria-current="page === 'dashboard' ? 'page' : undefined" data-testid="tab-dashboard">Dashboard</a>
-      </nav>
-      <div class="topbar-end">
-        <Badge
-          v-if="badge"
-          :tone="isMock ? 'warn' : 'ok'"
-          dot
-          :title="isMock ? 'Yanıtlar gerçek model yerine sahte (mock) modelden geliyor' : undefined"
-          data-testid="llm-badge"
+  <div class="shell">
+    <nav class="rail" aria-label="Sayfalar">
+      <span class="rail-mark" aria-hidden="true">CC</span>
+      <a href="#/dashboard" :aria-current="page === 'dashboard' ? 'page' : undefined" data-testid="tab-dashboard">
+        <LayoutList :size="20" aria-hidden="true" /><span>Kampanyalar</span>
+      </a>
+      <a href="#/" :aria-current="page === 'compose' ? 'page' : undefined" data-testid="tab-compose" @click.prevent="newCampaign">
+        <PenSquare :size="20" aria-hidden="true" /><span>Yeni</span>
+      </a>
+    </nav>
+
+    <div class="main-col">
+      <header class="topbar">
+        <button
+          type="button"
+          class="burger"
+          :aria-expanded="menuOpen"
+          aria-controls="mobile-menu"
+          :aria-label="menuOpen ? 'Menüyü kapat' : 'Menüyü aç'"
+          @click="menuOpen = !menuOpen"
         >
-          {{ badge }}
-        </Badge>
-        <Badge v-else-if="error" tone="danger" dot>API ulaşılamıyor</Badge>
-      </div>
+          <X v-if="menuOpen" :size="22" aria-hidden="true" /><Menu v-else :size="22" aria-hidden="true" />
+        </button>
+        <ol class="crumbs" aria-label="Konum">
+          <li><Home :size="15" aria-hidden="true" /><span class="sr-only">Ana sayfa</span></li>
+          <li>
+            <ChevronRight :size="14" aria-hidden="true" />
+            <a v-if="page === 'compose'" href="#/dashboard">Kampanyalar</a>
+            <template v-else>Kampanyalar</template>
+          </li>
+          <li v-if="page === 'compose'"><ChevronRight :size="14" aria-hidden="true" />Kampanya</li>
+        </ol>
+        <span class="product">Campaign Composer</span>
+        <div class="topbar-end">
+          <Badge
+            v-if="badge"
+            :tone="isMock ? 'warn' : 'ok'"
+            dot
+            :title="isMock ? 'Yanıtlar gerçek model yerine sahte (mock) modelden geliyor' : undefined"
+            data-testid="llm-badge"
+          >
+            {{ badge }}
+          </Badge>
+          <Badge v-else-if="error" tone="danger" dot>API ulaşılamıyor</Badge>
+        </div>
+      </header>
+
+      <nav v-if="menuOpen" id="mobile-menu" class="mobile-menu" aria-label="Sayfalar (mobil)">
+        <a href="#/dashboard" :aria-current="page === 'dashboard' ? 'page' : undefined" @click="menuOpen = false"><LayoutList :size="18" aria-hidden="true" />Kampanyalar</a>
+        <a href="#/" :aria-current="page === 'compose' ? 'page' : undefined" @click.prevent="newCampaign"><PenSquare :size="18" aria-hidden="true" />Yeni kampanya</a>
+      </nav>
+
+      <main class="container content">
+        <DashboardView v-if="page === 'dashboard'" :info="info" />
+        <ComposeView v-else :key="composeKey" :info="info" />
+      </main>
     </div>
-  </header>
-  <main class="container content">
-    <DashboardView v-if="page === 'dashboard'" :info="info" />
-    <ComposeView v-else :key="composeKey" :info="info" />
-  </main>
+  </div>
 </template>

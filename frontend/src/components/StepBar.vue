@@ -1,138 +1,151 @@
 <script setup lang="ts">
-import { Check } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { ArrowLeft, Check, ChevronRight } from 'lucide-vue-next'
 import { STEPS, type StepKey } from '../utils/steps'
 
-defineProps<{ current: StepKey; done: StepKey[]; reachable: StepKey[] }>()
+// The flow bar: a way back to the campaign list, then the steps as a breadcrumb
+// ("Brief › Kitle › …"). Steps that cannot be opened yet are greyed out. On a phone only
+// "3/5 · Mesajlar" is shown. The `end` slot holds the campaign's state (e.g. "Onaylandı").
+const props = defineProps<{ current: StepKey; done: StepKey[]; reachable: StepKey[] }>()
 const emit = defineEmits<{ go: [StepKey] }>()
+
+const at = computed(() => Math.max(0, STEPS.findIndex((s) => s.key === props.current)))
 </script>
 
 <template>
-  <nav class="steps" aria-label="Kampanya adımları">
-    <ol>
-      <li
-        v-for="(s, i) in STEPS"
-        :key="s.key"
-        :class="{ current: s.key === current, done: done.includes(s.key), future: !reachable.includes(s.key) }"
-        :aria-current="s.key === current ? 'step' : undefined"
-      >
-        <button type="button" :disabled="!reachable.includes(s.key) || s.key === current" @click="emit('go', s.key)">
-          <span class="dot" aria-hidden="true">
-            <Check v-if="done.includes(s.key)" :size="12" :stroke-width="3" />
-            <template v-else>{{ i + 1 }}</template>
-          </span>
-          <span class="label">{{ s.label }}</span>
-          <span v-if="done.includes(s.key)" class="sr-only">(tamamlandı)</span>
-        </button>
-      </li>
-    </ol>
-  </nav>
+  <div class="flowbar">
+    <a href="#/dashboard" class="flowbar__back"><ArrowLeft :size="16" aria-hidden="true" />Kampanyalar</a>
+    <span class="flowbar__divider" aria-hidden="true" />
+    <nav class="steps" aria-label="Kampanya adımları">
+      <ol>
+        <li
+          v-for="(s, i) in STEPS"
+          :key="s.key"
+          :class="{ current: s.key === current, done: done.includes(s.key), future: !reachable.includes(s.key) }"
+          :aria-current="s.key === current ? 'step' : undefined"
+        >
+          <ChevronRight v-if="i > 0" :size="14" class="sep" aria-hidden="true" />
+          <button type="button" :disabled="!reachable.includes(s.key) || s.key === current" @click="emit('go', s.key)">
+            <Check v-if="done.includes(s.key)" :size="14" :stroke-width="3" class="tick" aria-hidden="true" />
+            <span class="step-name">{{ s.label }}</span>
+            <span v-if="done.includes(s.key)" class="sr-only">(tamamlandı)</span>
+          </button>
+        </li>
+      </ol>
+    </nav>
+    <p class="flowbar__compact" aria-hidden="true">
+      <b class="num">{{ at + 1 }}/{{ STEPS.length }}</b> · {{ STEPS[at].label }}
+    </p>
+    <div v-if="$slots.end" class="flowbar__end"><slot name="end" /></div>
+  </div>
 </template>
 
 <style scoped>
-.steps {
-  margin-bottom: var(--s-6);
+.flowbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  min-height: 56px;
+  padding: var(--s-1) var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.flowbar__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.flowbar__divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
 }
 ol {
-  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   margin: 0;
   padding: 0;
-  display: flex;
-  align-items: center;
+  list-style: none;
 }
 li {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  flex: 1 1 0;
-  min-width: 0;
 }
-li:last-child {
-  flex: 0 0 auto;
-}
-/* the line between two steps fills once the step before it is done */
-li:not(:last-child)::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  margin: 0 var(--s-3);
-  background: linear-gradient(var(--accent), var(--accent)) left / 0% 100% no-repeat, var(--border-strong);
-  transition: background-size var(--t-med) var(--ease);
-}
-li.done:not(:last-child)::after {
-  background-size: 100% 100%;
+.sep {
+  margin: 0 2px;
+  color: var(--border-strong);
 }
 button {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-2);
-  padding: 4px var(--s-2) 4px 4px;
-  border: 1px solid transparent;
+  gap: 5px;
+  min-height: 40px;
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: 0;
   background: none;
-  border-radius: 999px;
   color: var(--muted);
   font-weight: 500;
-  white-space: nowrap;
 }
 button:hover:not(:disabled) {
   background: none;
-}
-button:disabled {
-  opacity: 1;
-  cursor: default;
-}
-.dot {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
-}
-.done .dot {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
+  color: var(--fg);
 }
 .done button {
   color: var(--fg);
-  cursor: pointer;
 }
-.done button:hover .label {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-/* The step being worked on stands out: filled dot with a halo, bold label on a tinted pill. */
-.current .dot {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.tick {
+  color: var(--ok);
 }
 .current button {
-  color: var(--fg);
-  font-weight: 700;
-  background: var(--accent-soft);
-  padding-right: var(--s-3);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
-.current .label {
+.current button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.future button:disabled {
+  opacity: 0.55;
+}
+.flowbar__compact {
+  display: none;
+  margin: 0;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.flowbar__compact b {
   color: var(--accent);
 }
-/* steps that cannot be opened yet fade back */
-.future {
-  opacity: 0.5;
+.flowbar__end {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-left: auto;
 }
-
-@media (max-width: 560px) {
-  /* Phone width: only the current step keeps its name. */
-  li:not(.current) .label {
+@media (max-width: 767px) {
+  .flowbar {
+    gap: var(--s-1) var(--s-2);
+    padding: var(--s-2) var(--s-3);
+  }
+  .flowbar__divider,
+  .steps {
     display: none;
   }
-  li:not(:last-child)::after {
-    margin: 0 var(--s-2);
+  .flowbar__compact {
+    display: block;
+    margin-left: auto;
+  }
+  .flowbar__end {
+    margin-left: 0;
   }
 }
 </style>

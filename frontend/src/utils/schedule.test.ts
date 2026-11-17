@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Offer } from '../types'
-import { checkSchedule, dayText, fromLocalInput, offerLastMoment, scheduleBounds, toLocalInput, untilText } from './schedule'
+import { MAX_AHEAD_MS, checkSchedule, dayText, fromLocalInput, offerLastMoment, scheduleBounds, shortWhen, toLocalInput, untilText } from './schedule'
 
 const now = new Date('2026-11-16T09:00:00Z')
 const at = (ms: number) => new Date(now.getTime() + ms)
@@ -84,5 +84,26 @@ describe('untilText', () => {
   it('says it is starting when the time has come', () => {
     expect(untilText(at(0), now)).toBe('şimdi başlıyor')
     expect(untilText(at(-HOUR), now)).toBe('şimdi başlıyor')
+  })
+})
+
+describe('shortWhen: a send time in the campaign list', () => {
+  it('reads "24 Kas 14:00" in the viewer zone', () => {
+    expect(shortWhen(new Date(2026, 10, 24, 14, 0))).toBe('24 Kas 14:00')
+    expect(shortWhen(new Date(2027, 0, 3, 9, 5))).toBe('3 Oca 09:05')
+  })
+})
+
+describe('the 30-day window (the same rule the server answers 422 for)', () => {
+  it('allows exactly up to 30 days ahead and nothing in the past', () => {
+    expect(MAX_AHEAD_MS).toBe(30 * DAY)
+    expect(checkSchedule(at(30 * DAY - MIN), undefined, now)).toBeNull()
+    expect(checkSchedule(at(30 * DAY + MIN), undefined, now)).toMatch(/30 gün/)
+    expect(checkSchedule(at(-DAY), undefined, now)).not.toBeNull()
+  })
+  it('the picker never offers a time before a minute from now or after 30 days', () => {
+    const b = scheduleBounds(undefined, now)
+    expect(b.earliest.getTime()).toBeGreaterThan(now.getTime())
+    expect(b.latest.getTime()).toBe(now.getTime() + 30 * DAY)
   })
 })

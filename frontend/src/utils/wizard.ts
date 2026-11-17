@@ -53,6 +53,6 @@ export function barAction(i: BarInput): { action: BarAction; label: string } {
       if (i.scheduling) return i.confirming ? { action: 'send', label: 'Evet, zamanla' } : { action: 'ask', label: 'Zamanla' }
       return i.confirming ? { action: 'send', label: 'Evet, gönder' } : { action: 'ask', label: 'Gönder' }
     default:
-      return { action: 'dashboard', label: "Dashboard'a git" }
+      return { action: 'dashboard', label: 'Kampanyalara git' }
   }
 }

@@ -35,97 +35,247 @@ a {
   color: var(--accent);
 }
 
-/* ---- the one column ------------------------------------------------------- */
-/* Header, wizard and dashboard all sit in this column: same width on every page. */
-.container {
-  width: 100%;
-  max-width: var(--page);
-  margin: 0 auto;
-  padding-inline: var(--s-6);
+/* ---- shell: navigation rail + top bar + one content column --------------------- */
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  min-height: 100vh;
 }
-.content {
-  padding-block: var(--s-8) 80px;
+.rail {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) 0;
+  background: var(--nav-bg);
 }
-
-/* ---- header ------------------------------------------------------------------ */
+.rail-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: var(--s-3);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-md);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.rail a {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  width: 72px;
+  padding: 8px 0 6px;
+  border-radius: var(--r-md);
+  color: var(--nav-fg);
+  font-size: 11px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.rail a:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+.rail a[aria-current='page'] {
+  background: var(--nav-active);
+  color: #fff;
+}
+.main-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 .topbar {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--border);
-}
-.topbar-in {
   height: var(--header-h);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
   gap: var(--s-4);
+  padding: 0 var(--s-6);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
-.brand {
+.burger {
+  display: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+}
+.crumbs {
   display: flex;
   align-items: center;
-  gap: var(--s-2);
-  font-size: var(--text-base);
-  font-weight: 600;
-  margin: 0;
+  gap: 4px;
   min-width: 0;
-}
-.brand-mark {
-  flex: none;
-  width: 22px;
-  height: 22px;
-}
-.brand span {
+  margin: 0;
+  padding: 0;
+  list-style: none;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
-.nav {
-  display: flex;
-  gap: var(--s-1);
-  height: 100%;
-}
-.nav a {
-  position: relative;
+.crumbs li {
   display: inline-flex;
   align-items: center;
-  padding: 0 var(--s-3);
-  color: var(--muted);
+  gap: 4px;
+}
+.crumbs li:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+.crumbs svg {
+  flex: none;
+}
+.crumbs a {
+  color: inherit;
   text-decoration: none;
-  font-weight: 500;
-  transition: color var(--t-fast) var(--ease);
 }
-.nav a:hover {
-  color: var(--fg);
-}
-.nav a[aria-current='page'] {
-  color: var(--fg);
-}
-.nav a[aria-current='page']::after {
-  content: '';
-  position: absolute;
-  left: var(--s-3);
-  right: var(--s-3);
-  bottom: -1px;
-  height: 2px;
-  background: var(--accent);
-  border-radius: 2px 2px 0 0;
+.product {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
 }
 .topbar-end {
   display: flex;
-  justify-content: flex-end;
+  gap: var(--s-2);
   min-width: 0;
+}
+.mobile-menu {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 19;
+  display: grid;
+  gap: 2px;
+  padding: var(--s-2);
+  background: var(--nav-bg);
+}
+.mobile-menu a {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 12px var(--s-3);
+  border-radius: var(--r-sm);
+  color: var(--nav-fg);
+  text-decoration: none;
+}
+.mobile-menu a[aria-current='page'] {
+  background: var(--nav-active);
+  color: #fff;
+}
+
+/* ---- the one column ------------------------------------------------------------ */
+/* The flow bar, panels and buttons of every page sit in this column: same width, same edges. */
+.container {
+  width: 100%;
+  max-width: calc(var(--page) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding-inline: var(--gutter);
+}
+.content {
+  padding-block: var(--s-6) var(--s-10);
+}
+
+/* A page title with its main action on the right. */
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.page-head h1 {
+  font-size: var(--text-xl);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.page-head > :last-child {
+  margin-left: auto;
+}
+
+/* Main column + right rail; the messages step splits 65 / 35. Below 1280px: one column. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--rail-col);
+  gap: var(--s-5);
+  align-items: start;
+}
+.split--wide {
+  grid-template-columns: minmax(0, 65fr) minmax(0, 35fr);
+}
+.split > aside {
+  position: sticky;
+  top: calc(var(--header-h) + var(--s-4));
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+/* the preview stays in view while the editor scrolls; taller than the screen, it scrolls itself */
+.split--wide > aside {
+  max-height: calc(100vh - var(--header-h) - var(--s-8));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
 }
 
 /* ---- surfaces -------------------------------------------------------------- */
-/* A panel is a bordered surface. No shadow: the line is the edge. */
 .card {
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: var(--s-6);
   background: var(--surface);
+}
+
+/* An uppercase, letter-spaced label: KPI names, table heads, section names. */
+.label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* "Label ........ value": a dotted leader between a name and its number. */
+.leader {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  padding: 3px 0;
+  font-size: var(--text-sm);
+}
+.leader__fill {
+  flex: 1;
+  min-width: 12px;
+  border-bottom: 1px dotted var(--border-strong);
+  transform: translateY(-4px);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  white-space: nowrap;
 }
 
 .muted {
@@ -170,34 +320,6 @@ button {
 button:hover:not(:disabled) {
   background: var(--surface-2);
 }
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-}
-button.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-button.link {
-  background: none;
-  border: none;
-  color: var(--accent);
-  padding: 7px 4px;
-}
-button.link:hover:not(:disabled) {
-  background: none;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-button.danger {
-  color: var(--error);
-}
-button.primary.danger {
-  color: #fff;
-  background: var(--error);
-  border-color: var(--error);
-}
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -216,13 +338,18 @@ textarea,
 input[type='text'] {
   width: 100%;
   font: inherit;
-  padding: 9px 12px;
+  padding: 12px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--fg);
+  line-height: 1.55;
   resize: vertical;
   transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+input[type='text'] {
+  height: var(--control-h);
+  padding-block: 0;
 }
 textarea::placeholder,
 input::placeholder {
@@ -256,11 +383,11 @@ label {
 /* ---- notices ---------------------------------------------------------------- */
 .notice {
   display: block;
-  border-radius: var(--r-sm);
-  padding: var(--s-2) var(--s-3);
-  margin: var(--s-3) 0;
-  font-size: var(--text-sm);
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
   border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
 }
 .notice.error {
   color: var(--error);
@@ -274,8 +401,8 @@ label {
 }
 .notice.info {
   color: var(--fg);
-  background: var(--surface-2);
-  border-color: var(--border);
+  background: var(--info-bg);
+  border-color: var(--info-line);
 }
 .notice.ok {
   color: var(--ok);
@@ -293,22 +420,47 @@ label {
   opacity: 0;
 }
 
-@media (max-width: 640px) {
-  .container {
-    padding-inline: var(--s-3);
+@media (max-width: 1279px) {
+  .split,
+  .split--wide {
+    grid-template-columns: minmax(0, 1fr);
   }
-  .topbar-in {
-    grid-template-columns: 1fr auto;
-    height: auto;
-    padding-block: var(--s-2);
+  .split > aside,
+  .split--wide > aside {
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
-  .nav {
-    grid-column: 1 / -1;
-    order: 3;
-    height: 40px;
+}
+
+@media (max-width: 767px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rail,
+  .product {
+    display: none;
+  }
+  .burger {
+    display: inline-grid;
+  }
+  .topbar {
+    gap: var(--s-2);
+    padding: 0 var(--s-4);
+  }
+  /* on a phone the address is only: home › this page */
+  .crumbs li:not(:first-child):not(:last-child) {
+    display: none;
+  }
+  .crumbs li:last-child {
+    display: block;
   }
   .content {
-    padding-block: var(--s-4) 64px;
+    padding-top: var(--s-4);
+  }
+  .page-head > :last-child {
+    width: 100%;
+    margin-left: 0;
   }
   .card {
     padding: var(--s-4);

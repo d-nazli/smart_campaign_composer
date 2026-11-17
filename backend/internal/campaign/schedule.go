@@ -51,9 +51,9 @@ func offerLastMoment(expiresAt string) (time.Time, bool) {
 func checkScheduleTime(at, now time.Time) error {
 	switch {
 	case at.Before(now.Add(minScheduleLead)):
-		return &InputError{"gönderim zamanı en az 1 dakika sonrası olmalı"}
+		return &ScheduleError{"gönderim zamanı en az 1 dakika sonrası olmalı"}
 	case at.After(now.Add(maxScheduleAhead)):
-		return &InputError{"gönderim zamanı en fazla 30 gün sonrası olabilir"}
+		return &ScheduleError{"gönderim zamanı en fazla 30 gün sonrası olabilir"}
 	}
 	return nil
 }
@@ -66,7 +66,7 @@ func checkScheduleAgainstOffer(at time.Time, o offer.Offer) error {
 	if !ok || !at.After(last) {
 		return nil
 	}
-	return &InputError{fmt.Sprintf(
+	return &ScheduleError{fmt.Sprintf(
 		"gönderim zamanı teklifin son kullanma tarihinden (%s) sonra olamaz; en geç o günün sonuna kadar bir zaman seçin",
 		offer.FormatDate(o.ExpiresAt))}
 }

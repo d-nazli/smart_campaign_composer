@@ -27,19 +27,19 @@ const shown = computed(() => fillSample(props.text))
 
 <style scoped>
 .phone {
-  margin: 0;
+  margin: 0 auto;
   width: 100%;
-  max-width: 270px;
-  padding: 9px;
-  border-radius: 34px;
-  background: #15181e;
+  max-width: 300px;
+  padding: 10px;
+  border-radius: 36px;
+  background: var(--device-frame);
   box-shadow: var(--shadow-device);
 }
 .screen {
-  min-height: 300px;
-  border-radius: 26px;
-  background: #f1f2f4;
-  color: #15181e;
+  min-height: 320px;
+  border-radius: 28px;
+  background: var(--device-screen);
+  color: var(--device-fg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -48,46 +48,46 @@ const shown = computed(() => fillSample(props.text))
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 9px 18px 4px;
-  font-size: 0.7rem;
+  padding: 10px 20px 4px;
+  font-size: 0.72rem;
   font-weight: 650;
 }
 .notch {
-  width: 64px;
-  height: 14px;
-  border-radius: 14px;
-  background: #15181e;
+  width: 68px;
+  height: 15px;
+  border-radius: 15px;
+  background: var(--device-frame);
 }
 .thread {
-  padding: 18px 12px;
+  padding: 20px 14px;
 }
 .who {
   text-align: center;
-  font-size: 0.7rem;
-  color: #5e6573;
+  font-size: 0.72rem;
+  color: var(--device-muted);
   margin-bottom: 12px;
   font-weight: 600;
 }
 .bubble {
   display: inline-block;
   max-width: 92%;
-  padding: 9px 13px;
+  padding: 10px 14px;
   border-radius: 18px 18px 18px 5px;
-  background: #dcdfe4;
-  font-size: 0.88rem;
-  line-height: 1.4;
+  background: var(--device-bubble);
+  font-size: var(--text-sm);
+  line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .bubble.empty {
   background: transparent;
-  border: 1px dashed #aeb4be;
-  color: #5e6573;
+  border: 1px dashed var(--device-dot);
+  color: var(--device-muted);
 }
 .time {
   margin: 4px 0 0 6px;
-  font-size: 0.68rem;
-  color: #5e6573;
+  font-size: 0.7rem;
+  color: var(--device-muted);
 }
 .cursor {
   display: inline-block;

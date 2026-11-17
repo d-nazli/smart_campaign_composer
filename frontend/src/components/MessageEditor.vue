@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import type { ContentField, Issue, Limits, MessageContent, VariableInfo } from '../types'
 import { checkContent } from '../utils/limits'
 import { activeField } from '../utils/preview'
+import Badge from './ui/Badge.vue'
+import Card from './ui/Card.vue'
 import CharCounter from './CharCounter.vue'
 import EmailPreview from './EmailPreview.vue'
 import PhonePreview from './PhonePreview.vue'
@@ -20,7 +22,13 @@ const props = defineProps<{
   warnings?: Issue[]
   /** The language being edited: decides which fallback word the hint names. */
   language?: string
+  /** That language's own name, shown over the previews. */
+  languageName?: string
 }>()
+
+// Layout: the "Mesajlar" panel (the wizard fills its header and the area above the fields
+// through slots: model status, notices, language tabs) and, on the right, the previews
+// of the language on screen. 65 / 35, the previews stay in view; one column below 1280px.
 const emit = defineEmits<{ 'update:modelValue': [MessageContent] }>()
 
 const check = computed(() => checkContent(props.modelValue, props.limits, props.variables))
@@ -53,132 +61,130 @@ function update(field: ContentField, value: string) {
 </script>
 
 <template>
-  <div class="editor">
-    <div class="fields">
-      <p class="muted small vars">
-        Kişiselleştirme (karakter sınırlarına sabit pay olarak sayılır):
-        <code v-for="t in tokens" :key="t.name" :title="t.hint">{{ t.token }} = {{ t.budget }}</code>
-      </p>
+  <div class="split split--wide">
+    <Card title="Mesajlar">
+      <template v-if="$slots.actions" #actions><slot name="actions" /></template>
+      <div class="editor">
+        <slot name="top" />
 
-      <div class="field">
-        <div class="row">
-          <label for="sms">SMS</label>
-          <CharCounter :used="check.smsLength" :max="limits.sms_max" variant="ring" />
+        <p v-if="tokens.length" class="vars">
+          <span class="label">Kişiselleştirme</span>
+          <code v-for="t in tokens" :key="t.name" :title="t.hint">{{ t.token }} = {{ t.budget }}</code>
+        </p>
+
+        <div class="field">
+          <div class="row">
+            <label for="sms" class="label">SMS</label>
+            <CharCounter :used="check.smsLength" :max="limits.sms_max" variant="ring" />
+          </div>
+          <textarea
+            id="sms"
+            rows="3"
+            :value="modelValue.sms_body"
+            :readonly="readonly"
+            :aria-invalid="issuesFor('sms_body').length > 0"
+            @input="update('sms_body', ($event.target as HTMLTextAreaElement).value)"
+          />
+          <p v-for="i in issuesFor('sms_body')" :key="i.message" class="issue">{{ i.message }}</p>
+          <p v-for="w in warningsFor('sms_body')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
         </div>
-        <textarea
-          id="sms"
-          rows="4"
-          :value="modelValue.sms_body"
-          :readonly="readonly"
-          :aria-invalid="issuesFor('sms_body').length > 0"
-          @input="update('sms_body', ($event.target as HTMLTextAreaElement).value)"
-        />
-        <p v-for="i in issuesFor('sms_body')" :key="i.message" class="issue">{{ i.message }}</p>
-        <p v-for="w in warningsFor('sms_body')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
-      </div>
 
-      <div class="field">
-        <div class="row">
-          <label for="subject">E-posta konusu</label>
-          <CharCounter :used="check.subjectLength" :max="limits.subject_max" />
+        <div class="field">
+          <div class="row">
+            <label for="subject" class="label">E-posta konusu</label>
+            <CharCounter :used="check.subjectLength" :max="limits.subject_max" />
+          </div>
+          <input
+            id="subject"
+            type="text"
+            :value="modelValue.email_subject"
+            :readonly="readonly"
+            :aria-invalid="issuesFor('email_subject').length > 0"
+            @input="update('email_subject', ($event.target as HTMLInputElement).value)"
+          />
+          <p v-for="i in issuesFor('email_subject')" :key="i.message" class="issue">{{ i.message }}</p>
+          <p v-for="w in warningsFor('email_subject')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
         </div>
-        <input
-          id="subject"
-          type="text"
-          :value="modelValue.email_subject"
-          :readonly="readonly"
-          :aria-invalid="issuesFor('email_subject').length > 0"
-          @input="update('email_subject', ($event.target as HTMLInputElement).value)"
-        />
-        <p v-for="i in issuesFor('email_subject')" :key="i.message" class="issue">{{ i.message }}</p>
-        <p v-for="w in warningsFor('email_subject')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
-      </div>
 
-      <div class="field">
-        <div class="row"><label for="body">E-posta metni</label></div>
-        <textarea
-          id="body"
-          rows="9"
-          :value="modelValue.email_body"
-          :readonly="readonly"
-          :aria-invalid="issuesFor('email_body').length > 0"
-          @input="update('email_body', ($event.target as HTMLTextAreaElement).value)"
-        />
-        <p v-for="i in issuesFor('email_body')" :key="i.message" class="issue">{{ i.message }}</p>
-        <p v-for="w in warningsFor('email_body')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
-      </div>
-    </div>
+        <div class="field">
+          <div class="row"><label for="body" class="label">E-posta metni</label></div>
+          <textarea
+            id="body"
+            rows="8"
+            :value="modelValue.email_body"
+            :readonly="readonly"
+            :aria-invalid="issuesFor('email_body').length > 0"
+            @input="update('email_body', ($event.target as HTMLTextAreaElement).value)"
+          />
+          <p v-for="i in issuesFor('email_body')" :key="i.message" class="issue">{{ i.message }}</p>
+          <p v-for="w in warningsFor('email_body')" :key="w.message" class="warning" role="status">⚠ {{ w.message }}</p>
+        </div>
 
-    <aside class="previews" aria-label="Önizleme">
-      <p class="muted small cap">Önizleme: kişi adı yerine örnek olarak “Elif” kullanılır.</p>
-      <PhonePreview :text="modelValue.sms_body" :typing="writing === 'sms_body'" />
-      <EmailPreview
-        :subject="modelValue.email_subject"
-        :body="modelValue.email_body"
-        :typing-in="writing === 'email_subject' || writing === 'email_body' ? writing : null"
-      />
+        <slot name="bottom" />
+      </div>
+    </Card>
+
+    <aside aria-label="Önizleme">
+      <Card title="Önizleme">
+        <template v-if="languageName" #actions><Badge>{{ languageName }}</Badge></template>
+        <div class="previews">
+          <PhonePreview :text="modelValue.sms_body" :typing="writing === 'sms_body'" />
+          <EmailPreview
+            :subject="modelValue.email_subject"
+            :body="modelValue.email_body"
+            :typing-in="writing === 'email_subject' || writing === 'email_body' ? writing : null"
+          />
+        </div>
+      </Card>
     </aside>
   </div>
 </template>
 
 <style scoped>
 .editor {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
-  gap: 28px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
 }
 .field {
-  margin-bottom: 18px;
+  display: grid;
+  gap: 6px;
 }
 .row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
-  min-height: 24px;
-}
-label {
-  font-weight: 600;
-}
-textarea[readonly],
-input[readonly] {
-  background: var(--surface-2);
+  min-height: 40px;
 }
 [aria-invalid='true'] {
   border-color: var(--error) !important;
 }
 .issue {
   color: var(--error);
-  font-size: 0.85rem;
-  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  margin: 0;
 }
 .warning {
   color: var(--warn);
-  font-size: 0.85rem;
-  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  margin: 0;
+}
+.vars {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.vars .label {
+  margin-right: 4px;
 }
 .vars code {
-  margin: 0 4px;
+  cursor: help;
 }
 .previews {
   display: grid;
-  gap: 18px;
+  gap: var(--s-5);
   justify-items: center;
-  position: sticky;
-  top: 76px;
-}
-.cap {
-  margin: 0;
-  justify-self: start;
-}
-
-@media (max-width: 860px) {
-  .editor {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .previews {
-    position: static;
-  }
 }
 </style>

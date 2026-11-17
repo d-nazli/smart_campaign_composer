@@ -123,7 +123,7 @@ export function briefTitle(brief: string, max: number): string {
   return short.charAt(0).toLocaleUpperCase('tr-TR') + short.slice(1)
 }
 
-export type BadgeTone = 'neutral' | 'accent' | 'ok' | 'warn' | 'danger'
+export type BadgeTone = 'neutral' | 'accent' | 'plan' | 'ok' | 'warn' | 'danger'
 
 /** The badge of a table row: a short word and its colour. Unfinished campaigns are all just "Taslak". */
 export function statusBadge(c: Pick<CampaignSummary, 'status' | 'segment_status'>): { text: string; tone: BadgeTone } {
@@ -135,7 +135,7 @@ export function statusBadge(c: Pick<CampaignSummary, 'status' | 'segment_status'
     case 'approved':
       return { text: 'Onaylandı', tone: 'accent' }
     case 'scheduled':
-      return { text: 'Zamanlandı', tone: 'accent' }
+      return { text: 'Zamanlandı', tone: 'plan' }
     case 'cancelled':
       return { text: 'İptal edildi', tone: 'neutral' }
     case 'failed':
