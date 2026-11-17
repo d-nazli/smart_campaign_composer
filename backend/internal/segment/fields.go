@@ -220,3 +220,13 @@ const (
 	SMSReachableSQL   = "(sms_consent AND phone IS NOT NULL)"
 	EmailReachableSQL = "(email_consent AND email IS NOT NULL)"
 )
+
+// The address a message actually goes to, normalized. Two customer records with
+// the same phone (or the same email, ignoring case and surrounding spaces) are
+// one recipient on that channel: a campaign sends the address one message, not
+// one per record. Counting and enqueueing both use these expressions, so the
+// number on the screen is the number queued.
+const (
+	SMSAddressSQL   = "btrim(phone)"
+	EmailAddressSQL = "lower(btrim(email))"
+)

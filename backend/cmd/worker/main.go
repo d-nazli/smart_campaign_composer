@@ -45,7 +45,8 @@ func main() {
 	providerURL := config.Env("PROVIDER_URL", "http://localhost:8090")
 	w := worker.New(queue.NewPG(pool), worker.NewHTTPSender(providerURL, cfg.RequestTimeout), policy, clock.Real{}, log, cfg)
 	log.Info("worker started", "provider_url", providerURL, "rate_per_second", cfg.RatePerSecond,
-		"concurrency", cfg.Concurrency, "max_attempts", cfg.Policy.MaxAttempts)
+		"concurrency", cfg.Concurrency, "max_attempts", cfg.Policy.MaxAttempts,
+		"budget_first_name", policy.Budget("first_name"), "budget_city", policy.Budget("city"))
 
 	go func() {
 		if err := w.Run(ctx); err != nil && ctx.Err() == nil {

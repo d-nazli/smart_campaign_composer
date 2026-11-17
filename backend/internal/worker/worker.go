@@ -186,6 +186,13 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		return
 	}
 	text := w.policy.RenderContent(tmpl, content.Recipient{FirstName: d.FirstName, City: d.City, Language: lang})
+	// Measured once more as it will be sent: a message over 160 / 80 never
+	// leaves, whatever the configuration. Retrying cannot shorten it: final.
+	if reason := content.RenderedProblem(d.Channel, text); reason != "" {
+		w.record(func(c context.Context, now time.Time) error { return w.q.Fail(c, d.ID, reason, now) })
+		log.Error("not sent: message breaks a limit after personalization", "reason", reason)
+		return
+	}
 	msg := Message{To: to, Body: text.SMSBody}
 	if d.Channel == "email" {
 		msg = Message{To: to, Subject: text.EmailSubject, Body: text.EmailBody}

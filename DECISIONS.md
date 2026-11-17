@@ -444,6 +444,23 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Bileşen testleri:** `@vue/test-utils` + `jsdom` eklendi; her bileşen dosya başına `// @vitest-environment jsdom` ile test edilir, saf mantık Node'da kalır. Backend'e dokunulmadı.
 - **Yan düzeltme:** dashboard'da reddedilen iptalin hata mesajı, hemen ardından gelen liste yenilemesi tarafından siliniyordu; artık ayrı bir alanda kalır.
 
+## D79 — "Aynı kişiye iki kez gitmez" adres düzeyinde de geçerli · `Kesin (kullanıcı kararı)`
+- **Sorun:** `UNIQUE(campaign_id, user_id, channel)` kayıt düzeyinde koruyordu. Aynı kişinin iki müşteri kaydı varsa (aynı telefon ya da aynı e-posta) adres iki mesaj alırdı; `users` tablosunda adres tekil değil (gerçek veride de çoğu zaman değildir).
+- **Karar:** kuyruğa alma kanal başına **adres** başına tek teslimat oluşturur (`SELECT DISTINCT ON (adres) … ORDER BY adres, id`: en küçük id'li kayıt alıcı olur). Adres normalleştirilir: telefon `btrim(phone)`, e-posta `lower(btrim(email))` (`segment.SMSAddressSQL` / `EmailAddressSQL`, tek yerde).
+- Ekrandaki "SMS / e-posta ile ulaşılabilir" sayıları da `count(DISTINCT adres)`: gösterilen sayı = kuyruğa giren sayı. "Eşleşen" ve "iki kanaldan ulaşılabilir" kayıt sayısı olarak kalır.
+- Hem "hemen gönder" hem zamanlanmış başlatma aynı `enqueueAudience`'ı kullanır. Test: bir kişinin iki kopya kaydı (biri büyük harfli, boşluklu e-postayla) eklenince kuyruğa giren sayı değişmez, kişiye kanal başına bir teslimat düşer.
+- **Sınır:** tekilleştirme kuyruğa alma anındaki adrese göre yapılır; worker gönderim anında kişinin güncel adresini okur (D55). Onaydan sonra iki kaydın adresi aynı hale getirilirse ikisi de gider. Kabul edildi.
+
+## D80 — Uzunluk: en kötü durum bütçesi + göndermeden önce son ölçüm · `Kesin (kullanıcı kararı)`
+- Değişkenler doğrulamada en kötü durum bütçesiyle sayılır (önceki kural, değişmedi). **Worker da aynı bütçeyi kullanır:** `VARIABLE_BUDGET_*` artık compose'da worker'a da verilir (önce yalnız api'deydi; api'de bütçe düşürülünce worker varsayılan 20 ile render eder, 18'e göre doğrulanmış SMS 160'ı aşabilirdi). Worker açılışta kullandığı bütçeleri log'a yazar.
+- **Son ölçüm:** worker render ettiği metni sağlayıcıya göndermeden önce bir kez daha sayar (`content.RenderedProblem`: SMS ≤160, konu ≤80 ve tek satır, gövde ≤5000). Aşan mesaj **gönderilmez**, teslimat deneme harcamadan kalıcı `failed` olur, sebep `last_error`'da ("message too long: sms is 162 characters…"). Dashboard bunu `too_long` koduyla "Kişiselleştirme sonrası karakter sınırını aştığı için gönderilmedi" diye gösterir. Kısaltma yapılmaz: kesilmiş bir metin teklifi ya da kodu düşürebilir.
+- Test: api bütçesi 18, worker bütçesi 20 iken 20 harfli isim → SMS 162 / konu 82 olurdu; sağlayıcıya hiç istek gitmez, iki teslimat `failed` + sebep; kısa isimli alıcının mesajları gider. Sınır testleri: 160/161, 80/81, satır sonu.
+
+## D81 — Hız sınırı tek worker varsayar · `Kesin (kullanıcı kararı: kodlanmıyor)`
+- Kanal başına 100/sn sınırı worker sürecindeki pacer ile uygulanır (D54, varsayılan 90/sn). Pacer süreç içidir: **iki worker çalışırsa** her biri 90/sn gönderir ve kanal toplamı 180/sn olur. Mock sağlayıcı yine 100/sn'de 429 döner, mesaj kaybolmaz ama sınır istemci tarafında artık garanti değildir.
+- **Varsayım:** compose tek worker çalıştırır; ölçeklemek kapsam dışı. Çoklu worker gerekirse sınır paylaşılan bir yerde tutulmalı (ör. Postgres'te kanal başına saniyelik kota satırı ya da Redis token bucket) ve pacer oradan slot almalı. Kuyruk (`SKIP LOCKED`) ve idempotency zaten çoklu worker'a hazır; tek eksik bu.
+- README'deki "worker tek replica (hız sınırı süreç içi)" notu bu kararın kısa hâlidir.
+
 ---
 
 ## Açık / onay bekleyenler

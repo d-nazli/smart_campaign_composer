@@ -86,6 +86,75 @@ func TestApproveQueuesExactlyTheReachableAudience(t *testing.T) {
 	}
 }
 
+// One person, two customer records (same phone; the same email written with
+// other capitals and spaces): the campaign sends that address ONE message per
+// channel, and the reachable count on the screen already says so.
+func TestTwoRecordsWithTheSameAddressGetOneMessage(t *testing.T) {
+	svc, pool := newService(t, mock.New(0))
+	ctx := context.Background()
+
+	// A first campaign shows who is reachable on both channels.
+	first := approvableCampaign(t, svc)
+	firstRes, err := svc.Approve(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT user_id FROM deliveries WHERE campaign_id=$1
+		GROUP BY user_id HAVING count(*) = 2 ORDER BY user_id LIMIT 1`, first).Scan(&userID); err != nil {
+		t.Fatalf("no recipient reachable on both channels: %v", err)
+	}
+	// Two more records of the same person: they match the same rule.
+	for _, emailExpr := range []string{"email", "'  ' || upper(email) || ' '"} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO users (first_name, last_name, email, phone, city, sms_consent, email_consent,
+			                   last_cart_add_at, last_order_at, order_count, total_spent, created_at, language, gender, birth_date)
+			SELECT first_name, last_name, `+emailExpr+`, phone, city, sms_consent, email_consent,
+			       last_cart_add_at, last_order_at, order_count, total_spent, created_at, language, gender, birth_date
+			FROM users WHERE id=$1`, userID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	second := approvableCampaign(t, svc)
+	shown, err := svc.Get(ctx, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.Approve(ctx, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Queued != firstRes.Queued {
+		t.Fatalf("duplicate records added messages: first %+v, second %+v", firstRes.Queued, res.Queued)
+	}
+	if aud := shown.Segment.Audience; aud.SMSReachable != res.Queued.SMS || aud.EmailReachable != res.Queued.Email {
+		t.Fatalf("screen promised sms=%d email=%d, queued %+v", aud.SMSReachable, aud.EmailReachable, res.Queued)
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT d.channel, count(*) FROM deliveries d JOIN users u ON u.id = d.user_id
+		JOIN users orig ON orig.id = $2
+		WHERE d.campaign_id = $1 AND u.phone = orig.phone
+		GROUP BY d.channel`, second, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perChannel := map[string]int{}
+	for rows.Next() {
+		var ch string
+		var n int
+		if err := rows.Scan(&ch, &n); err != nil {
+			t.Fatal(err)
+		}
+		perChannel[ch] = n
+	}
+	rows.Close()
+	if perChannel["sms"] != 1 || perChannel["email"] != 1 {
+		t.Fatalf("the person's three records got %v deliveries, want one per channel", perChannel)
+	}
+}
+
 func TestApprovingTwiceDoesNotQueueTwice(t *testing.T) {
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)

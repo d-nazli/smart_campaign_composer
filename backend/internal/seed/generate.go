@@ -253,7 +253,7 @@ func (g *gen) assignContacts(users []User) {
 		users[idx].Phone = nil
 	}
 	for k, idx := range perm[nNull : nNull+nBad] {
-		v := invalidPhones[k%len(invalidPhones)]
+		v := invalidContact(invalidPhones[k%len(invalidPhones)], users[idx].ID)
 		users[idx].Phone = &v
 	}
 	// Emails: independent permutation, same sizes.
@@ -262,9 +262,16 @@ func (g *gen) assignContacts(users []User) {
 		users[idx].Email = nil
 	}
 	for k, idx := range perm[nNull : nNull+nBad] {
-		v := invalidEmails[k%len(invalidEmails)]
+		v := invalidContact(invalidEmails[k%len(invalidEmails)], users[idx].ID)
 		users[idx].Email = &v
 	}
+}
+
+// invalidContact makes a malformed value unique to its user ("12345-17"): bad
+// data is rarely identical, and identical addresses are one recipient (D79),
+// which would hide some of the malformed contacts. The suffix keeps it invalid.
+func invalidContact(pattern string, id int64) string {
+	return fmt.Sprintf("%s-%d", pattern, id)
 }
 
 func firstWord(s string) string {

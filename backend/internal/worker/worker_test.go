@@ -630,3 +630,71 @@ func TestAMissingLanguageTextIsNeverReplacedByAnotherLanguage(t *testing.T) {
 		t.Fatalf("the delivery should wait for its text: %v", c)
 	}
 }
+
+// The api validated the template with a SMALLER first_name allowance (18) than
+// the worker renders with (20): a 20-letter name would push the SMS to 162 and
+// the subject to 82 characters. The worker measures again and does not send
+// it; the delivery fails for good with the reason. A short name still goes out.
+func TestAMessageOverTheLimitAfterPersonalizationIsNeverSent(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	var id int64
+	if err := pool.QueryRow(ctx, `INSERT INTO campaigns (brief, status) VALUES ('b', 'approved') RETURNING id`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	narrow, err := content.NewPolicy(map[string]int{"first_name": 18})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := content.Content{
+		SMSBody:      "{{first_name}}" + strings.Repeat("a", 142),
+		EmailSubject: "{{first_name}}" + strings.Repeat("b", 62),
+		EmailBody:    "Merhaba {{first_name}}",
+	}
+	if _, rep := narrow.Validate(tmpl); !rep.OK || rep.SMSLength != 160 || rep.SubjectLength != 80 {
+		t.Fatalf("the template must be exactly at the limits for an 18-character name: %+v", rep)
+	}
+	for _, lang := range []string{"tr", "en", "de"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, language, sms_body, email_subject, email_body, source)
+			VALUES ($1, $2, $3, $4, $5, 'llm')`, id, lang, tmpl.SMSBody, tmpl.EmailSubject, tmpl.EmailBody); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var longID, shortID int64
+	if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE sms_consent AND email_consent AND phone ~ '^\+90[0-9]{10}$'
+		AND email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' ORDER BY id LIMIT 1`).Scan(&longID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE sms_consent AND email_consent AND phone ~ '^\+90[0-9]{10}$'
+		AND email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' AND id > $1 ORDER BY id LIMIT 1`, longID).Scan(&shortID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET first_name = CASE WHEN id=$1 THEN 'Abdurrahmanşerifxxxx' ELSE 'Ali' END
+		WHERE id IN ($1, $2)`, longID, shortID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO deliveries (campaign_id, user_id, channel)
+		SELECT $1, u, ch FROM unnest(ARRAY[$2::bigint, $3::bigint]) u, unnest(ARRAY['sms', 'email']) ch`, id, longID, shortID); err != nil {
+		t.Fatal(err)
+	}
+
+	clk := fakeClock()
+	tp := newProvider(t, quiet(), clk)
+	w := newWorker(t, queue.NewPG(pool), tp.URL, clk, testConfig()) // default allowance: 20
+	drain(t, w, pool, clk)
+
+	for _, r := range tp.requests() {
+		if utf8.RuneCountInString(r.Body) > 160 && r.Channel == "sms" || utf8.RuneCountInString(r.Subject) > 80 {
+			t.Fatalf("an over-long message reached the provider: %+v", r)
+		}
+	}
+	if got := len(tp.requests()); got != 2 {
+		t.Fatalf("provider got %d requests, want only the short name's sms and email", got)
+	}
+	if n := scalar(t, pool, `SELECT count(*) FROM deliveries WHERE campaign_id=$1 AND user_id=$2
+		AND status='failed' AND attempts=0 AND last_error LIKE 'message too long%'`, id, longID); n != 2 {
+		t.Fatalf("%d of the long name's deliveries failed with the reason, want 2", n)
+	}
+	if n := scalar(t, pool, `SELECT count(*) FROM deliveries WHERE campaign_id=$1 AND user_id=$2 AND status='sent'`, id, shortID); n != 2 {
+		t.Fatalf("the short name's messages were not sent (%d)", n)
+	}
+}

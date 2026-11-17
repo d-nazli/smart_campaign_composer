@@ -4,6 +4,7 @@ const TEXT: Record<string, string> = {
   rejected: 'Sağlayıcı alıcıyı reddetti (geçersiz numara ya da adres)',
   gave_up: 'Tekrar denemeler tükendi, sağlayıcı yanıt vermedi',
   too_old: 'Çok uzun beklediği için gönderilmedi',
+  too_long: 'Kişiselleştirme sonrası karakter sınırını aştığı için gönderilmedi',
   other: 'Başka bir nedenle gönderilemedi',
 }
 

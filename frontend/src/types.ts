@@ -117,7 +117,7 @@ export interface ChannelProgress {
   skipped: number
 }
 
-/** Why some deliveries failed: a code from the API (rejected, gave_up, too_old, other). */
+/** Why some deliveries failed: a code from the API (rejected, gave_up, too_old, too_long, other). */
 export interface FailureReason {
   channel: 'sms' | 'email'
   reason: string

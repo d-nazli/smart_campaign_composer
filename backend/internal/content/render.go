@@ -1,6 +1,7 @@
 package content
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -25,6 +26,35 @@ func (p Policy) Render(template string, r Recipient) string {
 		}
 		return val
 	})
+}
+
+// TooLongPrefix starts the reason stored for a message that was not sent
+// because its rendered text breaks a limit (the dashboard groups by it).
+const TooLongPrefix = "message too long"
+
+// RenderedProblem measures a rendered message right before it is sent, as the
+// last line of defence behind Validate + budgets: if the sender's budgets ever
+// differ from the ones the template was validated with, the limit still holds.
+// channel is "sms" or "email". It returns "" when the message may be sent,
+// otherwise the reason (starting with TooLongPrefix).
+func RenderedProblem(channel string, c Content) string {
+	switch channel {
+	case "sms":
+		if n := utf8.RuneCountInString(c.SMSBody); n > SMSMaxRunes {
+			return fmt.Sprintf("%s: sms is %d characters after personalization, limit %d", TooLongPrefix, n, SMSMaxRunes)
+		}
+	case "email":
+		if n := utf8.RuneCountInString(c.EmailSubject); n > SubjectMaxRunes {
+			return fmt.Sprintf("%s: email subject is %d characters after personalization, limit %d", TooLongPrefix, n, SubjectMaxRunes)
+		}
+		if strings.ContainsAny(c.EmailSubject, "\n\r\u0085  ") {
+			return TooLongPrefix + ": email subject is not a single line after personalization"
+		}
+		if n := utf8.RuneCountInString(c.EmailBody); n > EmailBodyMaxRunes {
+			return fmt.Sprintf("%s: email body is %d characters after personalization, limit %d", TooLongPrefix, n, EmailBodyMaxRunes)
+		}
+	}
+	return ""
 }
 
 // RenderContent renders all three fields.

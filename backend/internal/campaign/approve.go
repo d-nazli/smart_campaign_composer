@@ -164,19 +164,21 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 		Warnings: s.warningsFor(set, rule.Offer.Normalize())}, nil
 }
 
-// enqueueAudience creates one delivery per reachable recipient and channel for
-// everyone the rule matches. Used by sending now and by the scheduler, so both
-// queue exactly the same way. now is the creation time of the rows (the retry
-// age is counted from it).
+// enqueueAudience creates one delivery per reachable ADDRESS and channel for
+// everyone the rule matches: two customer records with the same phone (or
+// email) get one message, sent to the record with the lowest id. Used by
+// sending now and by the scheduler, so both queue exactly the same way. now is
+// the creation time of the rows (the retry age is counted from it).
 func enqueueAudience(ctx context.Context, tx pgx.Tx, id int64, compiled segment.Compiled, now time.Time) (Queued, error) {
-	enqueue := func(channel, reachable string) (int, error) {
+	enqueue := func(channel, reachable, address string) (int, error) {
 		args := append(append([]any{}, compiled.Args...), id, now)
 		n := len(args)
 		tag, err := tx.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO deliveries (campaign_id, user_id, channel, created_at, next_attempt_at, updated_at)
-			SELECT $%d, id, '%s', $%d, $%d, $%d FROM users WHERE %s AND %s
+			SELECT DISTINCT ON (%s) $%d, id, '%s', $%d, $%d, $%d FROM users WHERE %s AND %s
+			ORDER BY %s, id
 			ON CONFLICT (campaign_id, user_id, channel) DO NOTHING`,
-			n-1, channel, n, n, n, compiled.Where, reachable), args...)
+			address, n-1, channel, n, n, n, compiled.Where, reachable, address), args...)
 		if err != nil {
 			return 0, fmt.Errorf("enqueue %s: %w", channel, err)
 		}
@@ -184,10 +186,10 @@ func enqueueAudience(ctx context.Context, tx pgx.Tx, id int64, compiled segment.
 	}
 	var q Queued
 	var err error
-	if q.SMS, err = enqueue("sms", segment.SMSReachableSQL); err != nil {
+	if q.SMS, err = enqueue("sms", segment.SMSReachableSQL, segment.SMSAddressSQL); err != nil {
 		return Queued{}, err
 	}
-	if q.Email, err = enqueue("email", segment.EmailReachableSQL); err != nil {
+	if q.Email, err = enqueue("email", segment.EmailReachableSQL, segment.EmailAddressSQL); err != nil {
 		return Queued{}, err
 	}
 	return q, nil

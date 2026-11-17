@@ -43,7 +43,8 @@ type LanguageProgress struct {
 // FailureReason is one group of failed deliveries. Reason is a stable code, not
 // the raw provider text: "rejected" (the provider refused the recipient or the
 // message, so a retry cannot help), "gave_up" (retries ran out), "too_old"
-// (waited too long to be worth sending), "other".
+// (waited too long to be worth sending), "too_long" (the personalised text broke
+// the 160 / 80 limit and was not sent), "other".
 type FailureReason struct {
 	Channel string `json:"channel"`
 	Reason  string `json:"reason"`
@@ -168,7 +169,8 @@ func (s *Service) addLanguages(ctx context.Context, ids []int64, out map[int64]*
 func (s *Service) addFailures(ctx context.Context, ids []int64, out map[int64]*DeliveryView) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT campaign_id, channel,
-		       CASE WHEN last_error LIKE 'delivery too old%' THEN 'too_old'
+		       CASE WHEN last_error LIKE 'message too long%' THEN 'too_long'
+		            WHEN last_error LIKE 'delivery too old%' THEN 'too_old'
 		            WHEN last_error LIKE 'gave up after%' THEN 'gave_up'
 		            WHEN last_error ~ 'http 4[0-9][0-9]' THEN 'rejected'
 		            ELSE 'other' END AS reason,

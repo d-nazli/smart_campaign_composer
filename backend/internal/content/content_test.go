@@ -293,3 +293,28 @@ func TestRenderedMessagesNeverExceedLimitsForAnySeedUser(t *testing.T) {
 		t.Fatal("the seed must contain users whose first name exceeds the budget")
 	}
 }
+
+// The last check before sending: exactly at the limit passes, one over fails
+// with a reason the dashboard can group.
+func TestRenderedProblemIsTheLastLineOfDefence(t *testing.T) {
+	for _, tc := range []struct {
+		name, channel string
+		c             Content
+		bad           bool
+	}{
+		{"sms at 160", "sms", Content{SMSBody: strings.Repeat("ş", 160)}, false},
+		{"sms at 161", "sms", Content{SMSBody: strings.Repeat("ş", 161)}, true},
+		{"subject at 80", "email", Content{EmailSubject: strings.Repeat("ğ", 80), EmailBody: "x"}, false},
+		{"subject at 81", "email", Content{EmailSubject: strings.Repeat("ğ", 81), EmailBody: "x"}, true},
+		{"subject with a line break", "email", Content{EmailSubject: "a\nb", EmailBody: "x"}, true},
+		{"sms limit does not apply to email", "email", Content{SMSBody: strings.Repeat("a", 500), EmailSubject: "a", EmailBody: "x"}, false},
+	} {
+		got := RenderedProblem(tc.channel, tc.c)
+		if (got != "") != tc.bad {
+			t.Errorf("%s: problem %q, want bad=%v", tc.name, got, tc.bad)
+		}
+		if got != "" && !strings.HasPrefix(got, TooLongPrefix) {
+			t.Errorf("%s: reason %q must start with %q", tc.name, got, TooLongPrefix)
+		}
+	}
+}

@@ -101,6 +101,10 @@ services:
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
       WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-}
       WORKER_REQUEST_TIMEOUT_MS: ${WORKER_REQUEST_TIMEOUT_MS:-}
+      # The SAME allowances the api validates templates with: the worker renders
+      # with them and measures every message again before sending it.
+      VARIABLE_BUDGET_FIRST_NAME: ${VARIABLE_BUDGET_FIRST_NAME:-}
+      VARIABLE_BUDGET_CITY: ${VARIABLE_BUDGET_CITY:-}
     networks: [app]
     depends_on:
       migrate: { condition: service_completed_successfully }

@@ -44,6 +44,9 @@ func Compile(r Rule, now time.Time) (Compiled, error) {
 }
 
 // Audience is how many people a rule reaches, after consent and contact data.
+// SMSReachable and EmailReachable count distinct addresses (see SMSAddressSQL):
+// that is how many messages each channel sends. Matched and BothReachable
+// count customer records.
 type Audience struct {
 	Matched        int `json:"matched"`
 	SMSReachable   int `json:"sms_reachable"`
@@ -60,8 +63,8 @@ type Querier interface {
 // reached on each channel (consent given AND a phone/email on file).
 func CountAudience(ctx context.Context, db Querier, c Compiled) (Audience, error) {
 	q := `SELECT count(*),
-	             count(*) FILTER (WHERE ` + SMSReachableSQL + `),
-	             count(*) FILTER (WHERE ` + EmailReachableSQL + `),
+	             count(DISTINCT ` + SMSAddressSQL + `) FILTER (WHERE ` + SMSReachableSQL + `),
+	             count(DISTINCT ` + EmailAddressSQL + `) FILTER (WHERE ` + EmailReachableSQL + `),
 	             count(*) FILTER (WHERE ` + SMSReachableSQL + ` AND ` + EmailReachableSQL + `)
 	      FROM users WHERE ` + c.Where
 	var a Audience
