@@ -58,6 +58,12 @@ type MessageRequest struct {
 	// Theme is what the copy is about and how it should sound, read from the
 	// brief by code (brief.ThemeOf). Empty fields mean "nothing special".
 	Theme Theme
+	// Variant is the A/B variant being written ("" or "A", or "B"). Avoid is
+	// the other variant's text when there is one (Variant B is written with
+	// Variant A's text in view): the new text must say the same offer in
+	// different words; code rejects a copy of it.
+	Variant string
+	Avoid   *content.Content
 }
 
 // TranslateRequest asks for the source text in one target locale.
@@ -72,6 +78,8 @@ type TranslateRequest struct {
 	Brief string
 	Offer offer.Offer
 	Theme Theme
+	// Variant is the A/B variant the source text belongs to ("" or "A", or "B").
+	Variant string
 }
 
 // Theme steers the copy. It never changes who receives the campaign.

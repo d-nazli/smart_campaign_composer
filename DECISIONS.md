@@ -606,6 +606,23 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Kullanıcı kararı: varsayılan kaos aynı kalsın (retry/429 demoda görünsün); tavan README'de yazılı.
 - Ölçüm `make bench`'e taşındı (`bench` build tag'i, `make test`'e dahil değil, yalnız geçici test DB'leri): hatasız ve varsayılan kaoslu provider için kanal başına çağrı/sn, kabul/sn, en yoğun 1 sn penceresi, gerçek 429; pencere >100 ya da gerçek 429 olursa başarısız. `BENCH_RATES=97,100` ile 97: pik 98, 429 yok; 100: pik 101, gerçek 429. `make test`'te kalan kural testi: `TestRealPaceNeverTriggersTheProvidersRateLimit`.
 
+## D102 — A/B varyantları: yalnız A ve B, her varyantın kendi kaynağı ve çevirileri · `Kesin (kullanıcı kararı)`
+- **Kaynak:** Insider One Experiment (e-posta A/B) ekranı. Bilerek alınmayanlar (kullanıcı kararı): kazanan seçimi, test havuzu / oran ayarı, üçüncü varyant, açılma/tıklama ölçümü. Bu proje yalnız üretir ve gönderir; etki ölçümü başka projenin işi.
+- **Şema (`00012_ab_variants.sql`):** `campaign_contents.variant` (`'A'|'B'`, CHECK) ve birincil anahtar `(campaign_id, variant, locale)`; `deliveries.variant` (CHECK, kuyruğa alınırken yazılır) ve `(campaign_id, variant, channel, status)` index'i; `llm_generations.variant` (B denemeleri de denetim kaydına girer); `campaigns.variant_counts` JSONB (B yokken NULL). Eski kampanyalar A olur; `Down` B satırlarını silip eski anahtara döner.
+- **Varyant başına senkronizasyon:** çevirinin `source_version`'ı kendi varyantının tr-TR satırına bakar. A değişince yalnız A'nın çevirileri güncel değil olur. Elle yalnız tr-TR düzenlenir (D97 her varyant için geçerli).
+- **B'nin üretimi:** B için önce A gerekir. Model A'nın metnini `<variant_a>` içinde görür ve "aynı teklif, farklı açılış/konu/SMS" istenir; A'yı tekrar yazarsa bu bir doğrulama problemidir (`DuplicateVariantProblem`) ve onarım döngüsüne geri gider. B hazır şablona **düşmez**: şablon A'nın aynısı olabilir; başarısız B hiçbir şey kaydetmez, hata gösterilir. Mock B için ifade bankalarında başka bir noktadan başlar (`variantSeed`), A'yla aynı çıkarsa ilerler; çevirilerde de aynı kaydırmayı kullanır, böylece B'nin en/de metni de A'nınkinden farklıdır.
+- **API:** akış `?variant=B`; `PUT /content` ve `POST /translations` gövdesinde `variant`; `DELETE /variants/B` (A silinemez, 400). Onay sonrası B eklenemez/silinemez (409).
+
+## D103 — Bölünme: kuyruğa alırken hash ile, locale'den bağımsız · `Kesin (kullanıcı kararı)`
+- Varyant `md5("<kampanya>:<kişi>")`'nin ilk baytının tek/çift olmasıyla belirlenir (SQL: `get_byte(decode(md5(...),'hex'),0) % 2`; Go: `campaign.AssignVariant`, test ikisinin aynı sonucu verdiğini denetler). `hashtext` kullanılmadı: Postgres'in iç fonksiyonu, sürümler arasında değişebilir.
+- Locale hesaba girmez; kişi önce varyantını, sonra o varyantın **kendi locale'indeki** metnini alır (worker içerik anahtarı `(kampanya, varyant, locale)`; tam eşleşme kuralı D95 aynen). İki kanal aynı varyanttadır; `UNIQUE(campaign_id, user_id, channel)` korunur: tek kişi, tek varyant, tek kez. Adres başına tek mesaj (D79) aynen: adresin alıcısı en küçük id'li kayıttır, varyant onun varyantıdır.
+- Rastgele değil hash: tekrar onay, çökme sonrası yeniden kuyruğa alma ve zamanlanmış başlatma aynı kişiyi aynı varyanta koyar; test edilebilir. Bedeli: oran tam %50 değil, yaklaşık %50 (küçük kitlede belirgin sapma). Ekranda kural (%50 / %50) ve gerçek sayılar birlikte gösterilir.
+- Sayılar `countByVariant` ile kuyruğa almanın aynı filtreleriyle sayılır (B yazıldığında, onayda ve zamanlanmış başlangıçta yeniden): onay yanıtındaki `variants` = kuyruktaki satırlar (testli).
+
+## D104 — Onay ve gönderim ekranında varyantlar · `Kesin (kullanıcı kararı)`
+- **Onay:** herhangi bir varyantta eksik/güncel olmayan çeviri → 409 `stale_translations` (`details.variants` hangi varyantın hangi locale'i beklediğini söyler; `missing`/`stale` A'nın, eski istemciler için). B = A → 422 `variant_duplicate` (kayıtta ve onayda; harf büyüklüğü ve boşluk sayılmaz; üç alan birden aynıysa). Kalite uyarıları varyant adıyla gelir.
+- **Arayüz:** Mesajlar kartında `Varyant A | Varyant B ⋮ | +` sekmeleri (⋮: Yeniden üret, Sil; silme onay penceresiyle). Dikkat isteyen varyantın sekmesinde nokta, yazılanında dönen ikon. Taslaklar varyant başına tutulur: A'daki kaydedilmemiş düzenleme B'ye bakınca kaybolmaz; "Çevir ve göster" iki varyantı da kaydedip çevirir. Onay kartında %50 / %50 çubuğu ve varyant başına kişi/SMS/e-posta; gönderim raporunun en altında varyant karşılaştırma tablosu (kişi, SMS, e-posta, başarısız, toplam). Açıklama cümlesi yok (D90).
+
 ---
 
 ## Açık / onay bekleyenler

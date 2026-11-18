@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"smartcampaign/internal/content"
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/offer"
 )
@@ -51,6 +52,9 @@ type Call struct {
 	Offer    offer.Offer
 	// Locale is the locale written (messages: the source; translate: the target).
 	Locale string
+	// Variant is the A/B variant written ("" = A); Avoid the text it must not repeat.
+	Variant string
+	Avoid   *content.Content
 }
 
 // Client implements llm.Client.
@@ -125,7 +129,8 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 
 func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta func(string)) (llm.Output, error) {
 	c.mu.Lock()
-	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Locale: req.Locale.Code})
+	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Locale: req.Locale.Code,
+		Variant: req.Variant, Avoid: req.Avoid})
 	step := next(c.messages, &c.msgIdx)
 	c.mu.Unlock()
 	return c.play(ctx, step, func() string { return smartMessagesFor(req) }, onDelta)
@@ -133,7 +138,8 @@ func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta f
 
 func (c *Client) Translate(ctx context.Context, req llm.TranslateRequest, onDelta func(string)) (llm.Output, error) {
 	c.mu.Lock()
-	c.calls = append(c.calls, Call{Kind: "translate", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Locale: req.Target.Code})
+	c.calls = append(c.calls, Call{Kind: "translate", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Locale: req.Target.Code,
+		Variant: req.Variant})
 	step := Step{Kind: Smart}
 	if steps, ok := c.translations[req.Target.Code]; ok {
 		idx := c.trIdx[req.Target.Code]

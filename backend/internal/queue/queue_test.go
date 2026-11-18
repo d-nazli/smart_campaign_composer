@@ -314,7 +314,7 @@ func TestFinishCompletesACampaignWithNoRecipients(t *testing.T) {
 
 func TestContentReturnsTheFrozenTemplatesWithTheLocalesWords(t *testing.T) {
 	f := setup(t, 0, 0)
-	tmpl, err := f.q.Content(ctx, f.campaign, "tr-TR")
+	tmpl, err := f.q.Content(ctx, f.campaign, "A", "tr-TR")
 	c := tmpl.Content
 	if err != nil || c.SMSBody != "sms {{first_name}}" || c.EmailSubject != "konu" || c.EmailBody != "govde" {
 		t.Fatalf("%+v %v", c, err)
@@ -322,11 +322,35 @@ func TestContentReturnsTheFrozenTemplatesWithTheLocalesWords(t *testing.T) {
 	if tmpl.Fallbacks["first_name"] != "değerli müşterimiz" {
 		t.Fatalf("fallbacks = %v", tmpl.Fallbacks)
 	}
-	if _, err := f.q.Content(ctx, 424242, "tr-TR"); !errors.Is(err, queue.ErrNoContent) {
+	if _, err := f.q.Content(ctx, 424242, "A", "tr-TR"); !errors.Is(err, queue.ErrNoContent) {
 		t.Fatalf("unknown campaign: %v", err)
 	}
-	if _, err := f.q.Content(ctx, f.campaign, "fr-FR"); !errors.Is(err, queue.ErrNoContent) {
+	if _, err := f.q.Content(ctx, f.campaign, "A", "fr-FR"); !errors.Is(err, queue.ErrNoContent) {
 		t.Fatalf("a locale without a text: %v", err)
+	}
+}
+
+// Each variant has its own text; a delivery's variant is kept on the row and
+// returned by Claim.
+func TestContentAndClaimFollowTheVariant(t *testing.T) {
+	f := setup(t, 1, 0)
+	if _, err := f.pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, variant, locale, sms_body, email_subject, email_body, source)
+		VALUES ($1,'B','tr-TR','b sms','b konu','b govde','llm')`, f.campaign); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE deliveries SET variant='B' WHERE campaign_id=$1`, f.campaign); err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.q.Content(ctx, f.campaign, "B", "tr-TR")
+	if err != nil || b.Content.SMSBody != "b sms" {
+		t.Fatalf("B: %+v %v", b.Content, err)
+	}
+	if a, _ := f.q.Content(ctx, f.campaign, "A", "tr-TR"); a.Content.SMSBody != "sms {{first_name}}" {
+		t.Fatalf("A: %+v", a.Content)
+	}
+	got, err := f.q.Claim(ctx, "sms", 10, time.Minute, f.now)
+	if err != nil || len(got) != 1 || got[0].Variant != "B" {
+		t.Fatalf("claim: %+v %v", got, err)
 	}
 }
 

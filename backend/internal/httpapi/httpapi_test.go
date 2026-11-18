@@ -671,3 +671,135 @@ func TestScheduleAndCancelOverHTTP(t *testing.T) {
 		t.Fatalf("cancel a started campaign: %d %s", resp.StatusCode, body)
 	}
 }
+
+// ---- A/B variants ----------------------------------------------------------------
+
+type variantBody struct {
+	Variants []string `json:"variants"`
+	Content  struct {
+		SMSBody string `json:"sms_body"`
+	} `json:"content"`
+	VariantB *struct {
+		Content struct {
+			SMSBody      string `json:"sms_body"`
+			EmailSubject string `json:"email_subject"`
+			EmailBody    string `json:"email_body"`
+		} `json:"content"`
+		Pending   []string `json:"pending_locales"`
+		Duplicate bool     `json:"duplicate"`
+	} `json:"variant_b"`
+	VariantCounts map[string]struct{ People int } `json:"variant_counts"`
+}
+
+func getVariants(t *testing.T, srv *httptest.Server, id int64) variantBody {
+	t.Helper()
+	resp, body := do(t, "GET", fmt.Sprintf("%s/api/campaigns/%d", srv.URL, id), nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: %d %s", resp.StatusCode, body)
+	}
+	var v variantBody
+	if err := json.Unmarshal(body, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func stream(t *testing.T, srv *httptest.Server, id int64, query string) []event {
+	t.Helper()
+	resp, err := http.Post(fmt.Sprintf("%s/api/campaigns/%d/messages/stream%s", srv.URL, id, query), "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("stream%s: %d %s", query, resp.StatusCode, b)
+	}
+	return readEvents(t, resp.Body)
+}
+
+// Variant B over HTTP: written with ?variant=B, edited with "variant": "B",
+// refused when it is Variant A again (422 variant_duplicate), its stale
+// translations named at approval (409), removed with DELETE.
+func TestVariantsOverHTTP(t *testing.T) {
+	srv := newServer(t, mock.New(0))
+	id := createCampaign(t, srv)
+	base := fmt.Sprintf("%s/api/campaigns/%d", srv.URL, id)
+
+	// B before A: a plain JSON conflict, nothing streamed.
+	if resp, body := do(t, "POST", base+"/messages/stream?variant=B", nil); resp.StatusCode != 409 || !strings.Contains(string(body), "invalid_state") {
+		t.Fatalf("B before A: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "POST", base+"/messages/stream?variant=C", nil); resp.StatusCode != 400 {
+		t.Fatalf("variant C: %d %s", resp.StatusCode, body)
+	}
+	stream(t, srv, id, "")
+	if v := getVariants(t, srv, id); len(v.Variants) != 1 || v.VariantB != nil {
+		t.Fatalf("A only: %+v", v)
+	}
+	events := stream(t, srv, id, "?variant=B")
+	if last := events[len(events)-1]; last.Name != "done" || last.Data["variant"] != "B" {
+		t.Fatalf("last event %+v", last)
+	}
+	v := getVariants(t, srv, id)
+	if len(v.Variants) != 2 || v.VariantB == nil || v.VariantB.Content.SMSBody == v.Content.SMSBody || len(v.VariantB.Pending) != 0 {
+		t.Fatalf("with B: %+v", v)
+	}
+	if v.VariantCounts["A"].People == 0 || v.VariantCounts["B"].People == 0 {
+		t.Fatalf("counts %+v", v.VariantCounts)
+	}
+
+	// B = A is refused.
+	resp, body := do(t, "PUT", base+"/content", map[string]any{"variant": "B", "sms_body": v.Content.SMSBody,
+		"email_subject": getField(t, srv, id, "email_subject"), "email_body": getField(t, srv, id, "email_body")})
+	if resp.StatusCode != 422 || !strings.Contains(string(body), `"variant_duplicate"`) {
+		t.Fatalf("B = A: %d %s", resp.StatusCode, body)
+	}
+
+	// Editing B makes B's translations stale; approval names them under "B".
+	b := v.VariantB.Content
+	resp, body = do(t, "PUT", base+"/content", map[string]any{"variant": "B", "sms_body": b.SMSBody + " Hemen bak!",
+		"email_subject": b.EmailSubject, "email_body": b.EmailBody})
+	if resp.StatusCode != 200 {
+		t.Fatalf("edit B: %d %s", resp.StatusCode, body)
+	}
+	resp, body = do(t, "POST", base+"/approve", nil)
+	var refusal struct {
+		Error struct {
+			Code    string
+			Details struct {
+				Stale    []string
+				Variants map[string]struct{ Stale []string }
+			}
+		}
+	}
+	_ = json.Unmarshal(body, &refusal)
+	if resp.StatusCode != 409 || refusal.Error.Code != "stale_translations" || len(refusal.Error.Details.Stale) != 0 ||
+		len(refusal.Error.Details.Variants["B"].Stale) == 0 {
+		t.Fatalf("approve: %d %s", resp.StatusCode, body)
+	}
+	resp, body = do(t, "POST", base+"/translations", map[string]any{"variant": "B", "locales": refusal.Error.Details.Variants["B"].Stale})
+	if resp.StatusCode != 200 {
+		t.Fatalf("translate B: %d %s", resp.StatusCode, body)
+	}
+	if v := getVariants(t, srv, id); len(v.VariantB.Pending) != 0 {
+		t.Fatalf("B pending %v", v.VariantB.Pending)
+	}
+
+	// Turning the test off.
+	if resp, body := do(t, "DELETE", base+"/variants/A", nil); resp.StatusCode != 400 {
+		t.Fatalf("delete A: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "DELETE", base+"/variants/B", nil); resp.StatusCode != 200 || !strings.Contains(string(body), `"variants":["A"]`) {
+		t.Fatalf("delete B: %d %s", resp.StatusCode, body)
+	}
+}
+
+func getField(t *testing.T, srv *httptest.Server, id int64, field string) string {
+	t.Helper()
+	_, body := do(t, "GET", fmt.Sprintf("%s/api/campaigns/%d", srv.URL, id), nil)
+	var v struct{ Content map[string]any }
+	_ = json.Unmarshal(body, &v)
+	s, _ := v.Content[field].(string)
+	return s
+}

@@ -70,7 +70,35 @@ func smartMessagesFor(req llm.MessageRequest) string {
 	if th.Topic == "" && th.Occasion == "" && len(th.Tones) == 0 {
 		th = brief.ThemeOf(req.Brief, k.lang) // a caller that did not read the theme
 	}
-	return toJSON(k.write(req.Policy, req.Offer.Normalize(), th, seedOf(req.Brief)))
+	o := req.Offer.Normalize()
+	seed := seedOf(req.Brief) + variantSeed(req.Variant)
+	c := k.write(req.Policy, o, th, seed)
+	// Variant B must not be Variant A again: like a model that reads A, the
+	// mock moves on through its phrase banks until the text differs.
+	for i := 1; req.Avoid != nil && sameWords(c, *req.Avoid) && i <= 64; i++ {
+		c = k.write(req.Policy, o, th, seed+i*variantStep)
+	}
+	return toJSON(c)
+}
+
+// variantStep moves a seed far enough through the phrase banks that the text
+// changes (the SMS uses the seed, the email seed/7).
+const variantStep = 7919
+
+// variantSeed shifts the phrase-bank position for Variant B, so B gets other
+// sentences than A in the source and in every translation.
+func variantSeed(variant string) int {
+	if variant == "B" {
+		return variantStep
+	}
+	return 0
+}
+
+// sameWords is true when two texts are the same word for word (case and
+// whitespace aside), the rule the backend applies to Variant B.
+func sameWords(a, b content.Content) bool {
+	norm := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+	return norm(a.SMSBody) == norm(b.SMSBody) && norm(a.EmailSubject) == norm(b.EmailSubject) && norm(a.EmailBody) == norm(b.EmailBody)
 }
 
 // PseudoPrefix marks a mock translation that is only a copy of the source.
@@ -86,7 +114,7 @@ func PseudoPrefix(code string) string { return "[" + code + "] " }
 func smartTranslate(req llm.TranslateRequest) string {
 	if k, ok := kitFor(req.Target.Lang()); ok && req.Target.Lang() != req.SourceLocale.Lang() {
 		th := brief.ThemeOf(req.Brief, k.lang)
-		c := k.write(req.Policy, req.Offer.Normalize(), th, seedOf(req.Brief))
+		c := k.write(req.Policy, req.Offer.Normalize(), th, seedOf(req.Brief)+variantSeed(req.Variant))
 		if norm, rep := req.Policy.Validate(c); rep.OK && len(content.ConsistentWith(req.SourceLocale, req.Source, req.Target, norm)) == 0 {
 			return toJSON(norm)
 		}

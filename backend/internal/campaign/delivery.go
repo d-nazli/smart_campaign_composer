@@ -37,6 +37,19 @@ type DeliveryView struct {
 	// and how many of them were sent: in the locale the message was written in,
 	// or (not claimed yet) the person's locale now.
 	Locales map[string]LocaleProgress `json:"locales,omitempty"`
+	// Variants compares Variant A and B (only for a campaign sent with B).
+	Variants []VariantProgress `json:"variants,omitempty"`
+}
+
+// VariantProgress is one variant's share of a campaign's deliveries: how many
+// people it went to, the SMS and e-mail queued and sent, and how many of its
+// deliveries failed (both channels).
+type VariantProgress struct {
+	Variant string         `json:"variant"`
+	People  int            `json:"people"`
+	SMS     LocaleProgress `json:"sms"`
+	Email   LocaleProgress `json:"email"`
+	Failed  int            `json:"failed"`
 }
 
 // LocaleProgress is one locale's share of a campaign's deliveries.
@@ -145,7 +158,37 @@ func (s *Service) deliveryProgressFor(ctx context.Context, ids []int64) (map[int
 	if err := s.addLocales(ctx, ids, out); err != nil {
 		return nil, err
 	}
+	if err := s.addVariants(ctx, ids, out); err != nil {
+		return nil, err
+	}
 	return out, s.addFailures(ctx, ids, out)
+}
+
+// addVariants fills DeliveryView.Variants for the campaigns that have
+// deliveries of Variant B (a campaign without B shows no comparison).
+func (s *Service) addVariants(ctx context.Context, ids []int64, out map[int64]*DeliveryView) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT campaign_id, variant, count(DISTINCT user_id),
+		       count(*) FILTER (WHERE channel = 'sms'), count(*) FILTER (WHERE channel = 'sms' AND status = 'sent'),
+		       count(*) FILTER (WHERE channel = 'email'), count(*) FILTER (WHERE channel = 'email' AND status = 'sent'),
+		       count(*) FILTER (WHERE status = 'failed')
+		FROM deliveries
+		WHERE campaign_id = ANY($1)
+		  AND campaign_id IN (SELECT campaign_id FROM deliveries WHERE campaign_id = ANY($1) AND variant = 'B')
+		GROUP BY 1, 2 ORDER BY 1, 2`, ids)
+	if err != nil {
+		return fmt.Errorf("delivery variants: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var p VariantProgress
+		if err := rows.Scan(&id, &p.Variant, &p.People, &p.SMS.Total, &p.SMS.Sent, &p.Email.Total, &p.Email.Sent, &p.Failed); err != nil {
+			return fmt.Errorf("delivery variants: %w", err)
+		}
+		out[id].Variants = append(out[id].Variants, p)
+	}
+	return rows.Err()
 }
 
 // addLocales fills DeliveryView.Locales.

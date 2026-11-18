@@ -65,6 +65,7 @@ function update(field: ContentField, value: string) {
   <div class="split split--wide">
     <Card title="Mesajlar" :flush="!!$slots.locales">
       <template v-if="$slots.actions" #actions><slot name="actions" /></template>
+      <slot name="tabs" />
       <div :class="{ msg: !!$slots.locales }">
       <div v-if="$slots.locales" class="msg__locales"><slot name="locales" /></div>
       <div class="editor">

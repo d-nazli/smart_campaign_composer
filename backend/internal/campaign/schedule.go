@@ -205,14 +205,28 @@ func (s *Scheduler) startNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	q, err := enqueueAudience(ctx, tx, id, compiled, now)
+	var ab bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM campaign_contents WHERE campaign_id=$1 AND variant='B')`, id).Scan(&ab); err != nil {
+		return false, fmt.Errorf("read variants: %w", err)
+	}
+	var variants map[string]VariantCount
+	if ab {
+		if variants, err = countByVariant(ctx, tx, compiled, id); err != nil {
+			return false, err
+		}
+	}
+	variantsJSON, err := variantCountsJSON(variants)
+	if err != nil {
+		return false, err
+	}
+	q, err := enqueueAudience(ctx, tx, id, compiled, now, ab)
 	if err != nil {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE campaigns SET status='approved', matched=$2, sms_reachable=$3, email_reachable=$4, both_reachable=$5,
-		       locale_counts=$6, materialized_at=$7, updated_at=$7
-		WHERE id=$1`, id, aud.Matched, aud.SMSReachable, aud.EmailReachable, aud.BothReachable, countsJSON, now); err != nil {
+		       locale_counts=$6, materialized_at=$7, updated_at=$7, variant_counts=$8
+		WHERE id=$1`, id, aud.Matched, aud.SMSReachable, aud.EmailReachable, aud.BothReachable, countsJSON, now, variantsJSON); err != nil {
 		return false, fmt.Errorf("start campaign: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -248,19 +262,30 @@ func (s *Scheduler) cannotStart(ctx context.Context, tx pgx.Tx, id int64, ruleJS
 	if err != nil {
 		return "", err
 	}
+	// The locales checked are those up to date in every variant (a stale text
+	// outside the approved audience is never sent).
 	have := map[string]bool{ls.Source().Code: true}
-	if src, ok := stored[ls.Source().Code]; ok {
-		for code, tr := range stored {
+	if src, ok := stored[VariantA][ls.Source().Code]; ok {
+		for code, tr := range stored[VariantA] {
 			if !isStale(src, tr) {
-				have[code] = true // a stale text outside the approved audience is never sent
+				have[code] = true
 			}
 		}
+	}
+	if srcB, ok := stored[VariantB][ls.Source().Code]; ok {
+		for code := range have {
+			if tr, ok := stored[VariantB][code]; !ok || isStale(srcB, tr) {
+				delete(have, code)
+			}
+		}
+		have[ls.Source().Code] = true
 	}
 	if _, err := checkContents(ctx, tx, s.policy, ls, id, ls.Ordered(have)); err != nil {
 		var inv *InvalidContentError
 		var st *StateError
 		var stale *StaleTranslationsError
-		if errors.As(err, &inv) || errors.As(err, &st) || errors.As(err, &stale) {
+		var dup *DuplicateVariantError
+		if errors.As(err, &inv) || errors.As(err, &st) || errors.As(err, &stale) || errors.As(err, &dup) {
 			return "kayıtlı mesajlar gönderime uygun değil: " + err.Error(), nil
 		}
 		return "", err

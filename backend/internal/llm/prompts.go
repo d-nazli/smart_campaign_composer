@@ -157,7 +157,18 @@ func MessagesUserPromptFor(req MessageRequest) string {
 	} else {
 		s += "\n\nThe brief promises no offer: do not mention any discount."
 	}
+	if req.Avoid != nil {
+		s += "\n\n" + variantNote(*req.Avoid)
+	}
 	return s
+}
+
+// variantNote asks for Variant B of an A/B test, showing Variant A.
+func variantNote(a content.Content) string {
+	raw, _ := json.Marshal(a)
+	return "This is Variant B of an A/B test. Variant A is below. Write a clearly different text: a different opening and hook, " +
+		"a different email subject and a different SMS sentence, with exactly the same offer, terms and facts and under the same rules. " +
+		"Code rejects a copy of Variant A.\n<variant_a>\n" + string(raw) + "\n</variant_a>"
 }
 
 // themeLine writes the theme as one line: "special day: Kadınlar Günü; topic:

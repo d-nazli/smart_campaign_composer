@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AlertTriangle, Clock, Send, Users } from 'lucide-vue-next'
-import type { Issue, LocaleInfo, Segment } from '../types'
+import type { Issue, LocaleInfo, Segment, Variant, VariantCount } from '../types'
 import { sentenceCase } from '../utils/dashboard'
 import { describeOffer } from '../utils/formatOffer'
 import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
 import { quickTimes, scheduleBounds, toLocalInput } from '../utils/schedule'
+import { splitShares } from '../utils/variants'
 import AnimatedNumber from './AnimatedNumber.vue'
 import Badge from './ui/Badge.vue'
 import Card from './ui/Card.vue'
@@ -33,6 +34,8 @@ const props = defineProps<{
   when: string
   /** Why the chosen time cannot be used (null when it can). */
   scheduleError: string | null
+  /** With Variant B: how many people (and SMS / e-mails) each variant gets. */
+  variants?: Record<Variant, VariantCount>
 }>()
 const emit = defineEmits<{ 'update:mode': ['now' | 'later']; 'update:when': [string] }>()
 
@@ -60,6 +63,9 @@ const people = computed(() => {
 const offer = computed(() => describeOffer(props.segment.offer))
 const spoken = computed(() => localeSummary(props.segment.locales, props.locales ?? FALLBACK_LOCALES))
 const later = computed(() => props.mode === 'later' && !props.frozen)
+// The A/B split: the bar shows the 50 / 50 rule, the table what it gives with this audience.
+const split = computed(() => splitShares(props.variants))
+const splitLabel = 'Varyant A yüzde 50, Varyant B yüzde 50'
 </script>
 
 <template>
@@ -105,6 +111,36 @@ const later = computed(() => props.mode === 'later' && !props.frozen)
             <dt class="label">Kitle</dt>
             <dd>{{ sentenceCase(segment.explanation) }}</dd>
           </div>
+          <div v-if="split.length" class="ledger__row" data-testid="approval-split">
+            <dt class="label">A/B bölünmesi</dt>
+            <dd class="split-ab">
+              <div class="split-ab__bar" role="img" :aria-label="splitLabel">
+                <span v-for="s in split" :key="s.variant" class="split-ab__part" :class="`split-ab__part--${s.variant}`" :style="{ flexGrow: 1 }">
+                  <b>{{ s.variant }}</b><span class="num">%50</span>
+                </span>
+              </div>
+              <div class="split-ab__wrap">
+                <table class="split-ab__table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Varyant</th>
+                      <th scope="col" class="r">Kişi</th>
+                      <th scope="col" class="r">SMS</th>
+                      <th scope="col" class="r">E-posta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="s in split" :key="s.variant" :data-testid="`split-${s.variant}`">
+                      <th scope="row"><i class="split-ab__key" :class="`split-ab__part--${s.variant}`" aria-hidden="true" />Varyant {{ s.variant }}</th>
+                      <td class="r num"><b>{{ s.count.people.toLocaleString('tr-TR') }}</b></td>
+                      <td class="r num">{{ s.count.sms.toLocaleString('tr-TR') }}</td>
+                      <td class="r num">{{ s.count.email.toLocaleString('tr-TR') }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </dd>
+          </div>
           <div v-if="spoken.length" class="ledger__row">
             <dt class="label">Locale</dt>
             <dd class="locs" data-testid="approval-locales">
@@ -125,8 +161,8 @@ const later = computed(() => props.mode === 'later' && !props.frozen)
       </RailCard>
       <RailCard v-if="warnings.length" tone="warn" title="Uyarılar" :icon="AlertTriangle">
         <ul class="warnings" aria-label="Uyarılar">
-          <li v-for="w in warnings" :key="(w.locale ?? '') + w.field + w.code + w.message">
-            <span><strong v-if="w.locale">{{ w.locale }}</strong> {{ w.message }}</span>
+          <li v-for="w in warnings" :key="(w.variant ?? '') + (w.locale ?? '') + w.field + w.code + w.message">
+            <span><strong v-if="w.variant">Varyant {{ w.variant }} · </strong><strong v-if="w.locale">{{ w.locale }}</strong> {{ w.message }}</span>
           </li>
         </ul>
       </RailCard>
@@ -191,6 +227,68 @@ dd {
 }
 .mark.email {
   background: var(--email);
+}
+.split-ab {
+  display: grid;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.split-ab__bar {
+  display: flex;
+  gap: 2px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.split-ab__part {
+  display: flex;
+  flex-basis: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--s-3);
+  font-size: var(--text-sm);
+}
+.split-ab__part--A {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.split-ab__part--B {
+  background: var(--chart-3);
+  color: var(--nav-bg);
+}
+.split-ab__wrap {
+  overflow-x: auto;
+}
+.split-ab__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.split-ab__table th,
+.split-ab__table td {
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+.split-ab__table thead th {
+  border-top: none;
+  color: var(--muted);
+  font-weight: 500;
+}
+.split-ab__table tbody th {
+  font-weight: 500;
+}
+.split-ab__table .r {
+  text-align: right;
+  padding-left: var(--s-4);
+}
+.split-ab__key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: var(--s-2);
+  border-radius: 2px;
 }
 .warnings {
   display: grid;

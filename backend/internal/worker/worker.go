@@ -187,7 +187,7 @@ func (w *Worker) runChannel(ctx context.Context, ch string) {
 
 // process sends one delivery and records what happened.
 func (w *Worker) process(ctx context.Context, d queue.Delivery) {
-	log := w.log.With("delivery", d.ID, "campaign", d.CampaignID, "channel", d.Channel)
+	log := w.log.With("delivery", d.ID, "campaign", d.CampaignID, "channel", d.Channel, "variant", d.Variant)
 
 	// Consent and contact data are checked again now: the person may have
 	// opted out after the campaign was approved.
@@ -200,9 +200,10 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		return
 	}
 
-	// Exact locale match only: a person whose locale has no text gets nothing
-	// (never another locale's text).
-	tmpl, err := w.template(ctx, d.CampaignID, d.Locale)
+	// The person's own variant (decided when queued), in their own locale. Exact
+	// locale match only: a person whose locale has no text in that variant gets
+	// nothing (never another locale's or the other variant's text).
+	tmpl, err := w.template(ctx, d.CampaignID, d.Variant, d.Locale)
 	if errors.Is(err, queue.ErrNoContent) {
 		w.record(func(c context.Context, now time.Time) error {
 			return w.q.Skip(c, d.ID, NoLocaleContent+": "+d.Locale, now)
@@ -282,21 +283,25 @@ func (w *Worker) recipient(d queue.Delivery) (string, bool) {
 // campaign has no text in the recipient's locale.
 const NoLocaleContent = "no content for locale"
 
-// contentKey identifies one locale's text of one campaign.
+// contentKey identifies one locale's text of one variant of one campaign.
 type contentKey struct {
 	campaign int64
+	variant  string
 	locale   string
 }
 
-func (w *Worker) template(ctx context.Context, campaignID int64, code string) (queue.Template, error) {
-	key := contentKey{campaignID, code}
+func (w *Worker) template(ctx context.Context, campaignID int64, variant, code string) (queue.Template, error) {
+	if variant == "" {
+		variant = "A"
+	}
+	key := contentKey{campaignID, variant, code}
 	w.mu.Lock()
 	c, ok := w.contents[key]
 	w.mu.Unlock()
 	if ok {
 		return c, nil
 	}
-	c, err := w.q.Content(ctx, campaignID, code)
+	c, err := w.q.Content(ctx, campaignID, variant, code)
 	if err != nil {
 		return queue.Template{}, err
 	}

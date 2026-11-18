@@ -16,17 +16,20 @@ import (
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/locale"
 	"smartcampaign/internal/offer"
+	"smartcampaign/internal/segment"
 )
 
-// A campaign's text exists once per locale. The source locale (tr-TR) is
-// written first; every other locale is a translation of it. The source row
-// counts its versions and each translation remembers the source version it was
-// made from: a translation made from an older version is not up to date
-// ("stale") and the campaign cannot be approved until it is translated again
-// A campaign is written in the source locale and in every locale that has at
-// least one reachable person in its audience. Only the source is edited by a
-// person: a translation is always the translator's output for the current
-// source, so every locale says what the source says (D97).
+// A campaign's text exists once per variant and locale. Each variant's source
+// locale (tr-TR) is written first; every other locale is a translation of that
+// variant's source. The source row counts its versions and each translation
+// remembers the source version it was made from: a translation made from an
+// older version is not up to date ("stale") and the campaign cannot be approved
+// until it is translated again. A campaign is written in the source locale and
+// in every locale that has at least one reachable person in its audience. Only
+// the source is edited by a person: a translation is always the translator's
+// output for the current source, so every locale says what the source says
+// (D97). Variant B, when there is one, is a second text with the same offer
+// that must not be Variant A again (D102).
 
 // maxParallelTranslations bounds the model calls running at once.
 const maxParallelTranslations = 4
@@ -49,21 +52,23 @@ type queryer interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// loadContents returns the stored text of a campaign by locale code.
-func loadContents(ctx context.Context, q queryer, campaignID int64) (map[string]storedContent, error) {
+// loadContents returns the stored text of a campaign by variant and locale
+// code (stored["A"]["tr-TR"]). Variant A is always in the map, even before it
+// has a text; B only when it has one.
+func loadContents(ctx context.Context, q queryer, campaignID int64) (map[string]map[string]storedContent, error) {
 	rows, err := q.Query(ctx, `
-		SELECT locale, sms_body, email_subject, email_body, source, version, coalesce(source_version, 0), source_text, updated_at
+		SELECT variant, locale, sms_body, email_subject, email_body, source, version, coalesce(source_version, 0), source_text, updated_at
 		FROM campaign_contents WHERE campaign_id=$1`, campaignID)
 	if err != nil {
 		return nil, fmt.Errorf("load content: %w", err)
 	}
 	defer rows.Close()
-	out := map[string]storedContent{}
+	out := map[string]map[string]storedContent{VariantA: {}}
 	for rows.Next() {
-		var code string
+		var variant, code string
 		var sc storedContent
 		var srcText []byte
-		if err := rows.Scan(&code, &sc.SMSBody, &sc.EmailSubject, &sc.EmailBody, &sc.Source, &sc.Version, &sc.SourceVersion, &srcText, &sc.UpdatedAt); err != nil {
+		if err := rows.Scan(&variant, &code, &sc.SMSBody, &sc.EmailSubject, &sc.EmailBody, &sc.Source, &sc.Version, &sc.SourceVersion, &srcText, &sc.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("load content: %w", err)
 		}
 		if len(srcText) > 0 {
@@ -73,12 +78,25 @@ func loadContents(ctx context.Context, q queryer, campaignID int64) (map[string]
 			}
 			sc.SourceText = &c
 		}
-		out[code] = sc
+		if out[variant] == nil {
+			out[variant] = map[string]storedContent{}
+		}
+		out[variant][code] = sc
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("load content: %w", err)
 	}
 	return out, nil
+}
+
+// campaignVariants lists the variants that have a source text: always A, plus
+// B when it was written.
+func campaignVariants(stored map[string]map[string]storedContent, srcCode string) []string {
+	out := []string{VariantA}
+	if _, ok := stored[VariantB][srcCode]; ok {
+		out = append(out, VariantB)
+	}
+	return out
 }
 
 // campaignLocales is the source locale and every locale with at least one
@@ -96,7 +114,7 @@ func campaignLocales(ls content.Locales, counts map[string]int) []string {
 // isStale reports whether a translation was made from an older source version.
 func isStale(src, tr storedContent) bool { return tr.SourceVersion < src.Version }
 
-// pendingLocales lists the campaign's translations that are missing or stale.
+// pendingLocales lists one variant's translations that are missing or stale.
 func pendingLocales(ls content.Locales, required []string, stored map[string]storedContent) (missing, stale []string) {
 	src, hasSource := stored[ls.Source().Code]
 	for _, code := range required {
@@ -166,14 +184,28 @@ func (e Events) serialized() Events {
 	return out
 }
 
-// GenerateMessages writes the source text with the LLM, streaming it while it
-// is produced, and then translates it into the campaign's other locales in
-// parallel. The source text is parsed and validated; if it breaks a limit the
-// model is asked to fix it, up to 3 attempts. If it still fails, or the model is
-// unavailable or refuses, a built-in source template that respects every limit
-// is stored and reported through Events.Fallback. A translation that fails is
-// reported through Events.Failed and keeps what it had (stale or missing).
+// GenerateMessages writes Variant A (see GenerateVariant).
 func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) error {
+	return s.GenerateVariant(ctx, id, VariantA, ev)
+}
+
+// GenerateVariant writes one variant's source text with the LLM, streaming it
+// while it is produced, and then translates it into the campaign's other
+// locales in parallel. The source text is parsed and validated; if it breaks a
+// limit the model is asked to fix it, up to 3 attempts.
+//
+// Variant A: if it still fails, or the model is unavailable or refuses, a
+// built-in source template that respects every limit is stored and reported
+// through Events.Fallback.
+//
+// Variant B needs Variant A first and is written to differ from it: the model
+// sees A's text, and an answer that repeats A is rejected like any other broken
+// answer. B never falls back to the template (the template could be A's text
+// again): a B that cannot be written is an error and nothing is stored.
+//
+// A translation that fails is reported through Events.Failed and keeps what it
+// had (stale or missing).
+func (s *Service) GenerateVariant(ctx context.Context, id int64, variant string, ev Events) error {
 	row, err := s.loadRow(ctx, s.pool, id)
 	if err != nil {
 		return err
@@ -186,13 +218,25 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 		return err
 	}
 	src := ls.Source()
+	var avoid *content.Content
+	if variant == VariantB {
+		stored, err := loadContents(ctx, s.pool, id)
+		if err != nil {
+			return err
+		}
+		a, ok := stored[VariantA][src.Code]
+		if !ok {
+			return &StateError{"Varyant B için önce Varyant A'nın mesajları üretilmeli"}
+		}
+		avoid = &a.Content
+	}
 	ev = ev.serialized()
 
 	genCtx, cancel := context.WithTimeout(ctx, messagesTimeout)
 	defer cancel()
 	promised := rowOffer(row)
 
-	c, err := s.generateSource(genCtx, id, row, promised, src, ev)
+	c, err := s.generateSource(genCtx, id, row, promised, src, variant, avoid, ev)
 	source := SourceLLM
 	reason := ""
 	if err != nil {
@@ -201,6 +245,9 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 		}
 		if errors.Is(err, context.Canceled) {
 			return err
+		}
+		if variant == VariantB {
+			return s.generationError(err, "Varyant B üretilemedi")
 		}
 		var refusal *llm.RefusalError
 		var auth *llm.AuthError
@@ -224,9 +271,14 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 	if !rep.OK {
 		return fmt.Errorf("source text violates the limits after validation (misconfigured budgets?): %v", rep.Messages())
 	}
-	version, err := s.writeSource(ctx, id, norm, source)
+	version, err := s.writeSource(ctx, id, variant, norm, source)
 	if err != nil {
 		return err
+	}
+	if variant == VariantB {
+		if err := s.storeVariantCounts(ctx, id, row); err != nil {
+			return err
+		}
 	}
 	if source == SourceFallback {
 		s.markFallback(id, src.Code)
@@ -244,32 +296,70 @@ func (s *Service) GenerateMessages(ctx context.Context, id int64, ev Events) err
 			targets = append(targets, code)
 		}
 	}
-	s.translateAll(genCtx, id, row, promised, ls, norm, version, targets, ev)
+	s.translateAll(genCtx, id, row, promised, ls, variant, norm, version, targets, ev)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	return nil
 }
 
-// generateSource runs the ask-validate-repair loop for the source text.
-func (s *Service) generateSource(ctx context.Context, id int64, row *campaignRow, promised offer.Offer, src content.Locale, ev Events) (content.Content, error) {
+// storeVariantCounts counts how many people each variant reaches with the
+// campaign's rule now, for the approval screen (recounted at approval).
+func (s *Service) storeVariantCounts(ctx context.Context, id int64, row *campaignRow) error {
+	rule, err := segment.Parse(string(row.segmentRule))
+	if err != nil {
+		return fmt.Errorf("stored rule is corrupt: %w", err)
+	}
+	compiled, err := segment.Compile(rule, time.Now())
+	if err != nil {
+		return fmt.Errorf("compile stored rule: %w", err)
+	}
+	counts, err := countByVariant(ctx, s.pool, compiled, id)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(counts)
+	if err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE campaigns SET variant_counts=$2, updated_at=now() WHERE id=$1`, id, raw); err != nil {
+		return fmt.Errorf("store variant counts: %w", err)
+	}
+	return nil
+}
+
+// generateSource runs the ask-validate-repair loop for one variant's source text.
+func (s *Service) generateSource(ctx context.Context, id int64, row *campaignRow, promised offer.Offer, src content.Locale,
+	variant string, avoid *content.Content, ev Events) (content.Content, error) {
 	var scanner *llm.FieldStream
 	return llm.Repair(ctx, maxAttempts,
 		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
 			scanner = llm.NewFieldStream(content.FieldSMSBody, content.FieldEmailSubject, content.FieldEmailBody)
 			return s.llm.Messages(ctx, llm.MessageRequest{
 				Brief: row.brief, Explanation: row.explanation, Offer: promised, Policy: s.policy, Previous: prev,
-				Locale: src, Theme: briefs.ThemeOf(row.brief, src.Lang()),
+				Locale: src, Theme: briefs.ThemeOf(row.brief, src.Lang()), Variant: variant, Avoid: avoid,
 			}, deltas(scanner, src.Code, ev))
 		},
-		func(raw string) (content.Content, []string) { return s.validateMessages(raw, promised) },
-		hooks(s, id, "messages", src.Code, ev),
+		func(raw string) (content.Content, []string) { return s.validateVariant(raw, promised, avoid) },
+		hooks(s, id, "messages", src.Code, variant, ev),
 	)
 }
 
-// translateAll translates the source text into the targets, a few at a time.
+// validateVariant is validateMessages plus, for Variant B, "not A again".
+func (s *Service) validateVariant(raw string, promised offer.Offer, avoid *content.Content) (content.Content, []string) {
+	c, problems := s.validateMessages(raw, promised)
+	if len(problems) == 0 && avoid != nil && sameText(c, *avoid) {
+		return c, []string{DuplicateVariantProblem}
+	}
+	return c, problems
+}
+
+// DuplicateVariantProblem is the feedback to a model that wrote Variant A again.
+const DuplicateVariantProblem = "Varyant B, Varyant A ile aynı: farklı bir açılış, farklı bir e-posta konusu ve farklı bir SMS cümlesi yaz (teklif ve rakamlar aynı kalsın)"
+
+// translateAll translates one variant's source text into the targets, a few at a time.
 func (s *Service) translateAll(ctx context.Context, id int64, row *campaignRow, promised offer.Offer, ls content.Locales,
-	src content.Content, version int, targets []string, ev Events) {
+	variant string, src content.Content, version int, targets []string, ev Events) {
 	sem := make(chan struct{}, maxParallelTranslations)
 	var wg sync.WaitGroup
 	for _, code := range targets {
@@ -282,8 +372,8 @@ func (s *Service) translateAll(ctx context.Context, id int64, row *campaignRow, 
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if err := s.translateOne(ctx, id, row, promised, ls.Source(), src, version, target, ev); err != nil {
-				s.log.Warn("translation failed", "campaign_id", id, "locale", code, "error", err)
+			if err := s.translateOne(ctx, id, row, promised, ls.Source(), variant, src, version, target, ev); err != nil {
+				s.log.Warn("translation failed", "campaign_id", id, "variant", variant, "locale", code, "error", err)
 				if ev.Failed != nil {
 					ev.Failed(code, translationFailure(err))
 				}
@@ -296,26 +386,26 @@ func (s *Service) translateAll(ctx context.Context, id int64, row *campaignRow, 
 // translateOne runs the ask-validate-repair loop for one locale and stores the
 // result, unless the source changed meanwhile.
 func (s *Service) translateOne(ctx context.Context, id int64, row *campaignRow, promised offer.Offer,
-	srcLocale content.Locale, src content.Content, version int, target content.Locale, ev Events) error {
+	srcLocale content.Locale, variant string, src content.Content, version int, target content.Locale, ev Events) error {
 	var scanner *llm.FieldStream
 	c, err := llm.Repair(ctx, maxAttempts,
 		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
 			scanner = llm.NewFieldStream(content.FieldSMSBody, content.FieldEmailSubject, content.FieldEmailBody)
 			return s.llm.Translate(ctx, llm.TranslateRequest{
 				Source: src, SourceLocale: srcLocale, Target: target, Policy: s.policy, Previous: prev,
-				Brief: row.brief, Offer: promised, Theme: briefs.ThemeOf(row.brief, srcLocale.Lang()),
+				Brief: row.brief, Offer: promised, Theme: briefs.ThemeOf(row.brief, srcLocale.Lang()), Variant: variant,
 			}, deltas(scanner, target.Code, ev))
 		},
 		func(raw string) (content.Content, []string) {
 			return s.validateTranslation(raw, srcLocale, src, target)
 		},
-		hooks(s, id, "translate", target.Code, ev),
+		hooks(s, id, "translate", target.Code, variant, ev),
 	)
 	if err != nil {
 		return err
 	}
 	norm, rep := s.policy.Validate(c)
-	if err := s.writeTranslation(ctx, id, srcLocale.Code, target.Code, norm, version); err != nil {
+	if err := s.writeTranslation(ctx, id, variant, srcLocale.Code, target.Code, norm, version); err != nil {
 		return err
 	}
 	if ev.Validated != nil {
@@ -335,7 +425,7 @@ func deltas(scanner *llm.FieldStream, code string, ev Events) func(string) {
 	}
 }
 
-func hooks(s *Service, id int64, kind, code string, ev Events) llm.Hooks {
+func hooks(s *Service, id int64, kind, code, variant string, ev Events) llm.Hooks {
 	return llm.Hooks{
 		OnAttempt: func(n, max int) {
 			if ev.Attempt != nil {
@@ -347,7 +437,7 @@ func hooks(s *Service, id int64, kind, code string, ev Events) llm.Hooks {
 				ev.Retry(code, next, problems)
 			}
 		},
-		OnLog: s.recorder(id, kind, code),
+		OnLog: s.recorder(id, kind, code, variant),
 	}
 }
 
@@ -419,10 +509,16 @@ func translationFailure(err error) string {
 
 // ---- translate on request -------------------------------------------------
 
-// Translate translates the source text again into the given locales of the
-// campaign (the "Yeniden çevir" and "Çevir ve göster" buttons). The returned
-// view lists the locales whose translation failed (TranslationFailures).
+// Translate translates Variant A again (see TranslateVariant).
 func (s *Service) Translate(ctx context.Context, id int64, locales []string) (*View, error) {
+	return s.TranslateVariant(ctx, id, VariantA, locales)
+}
+
+// TranslateVariant translates one variant's source text again into the given
+// locales of the campaign (the "Yeniden çevir" and "Çevir ve göster" buttons).
+// Only that variant's translations change. The returned view lists the locales
+// whose translation failed (TranslationFailures).
+func (s *Service) TranslateVariant(ctx context.Context, id int64, variant string, locales []string) (*View, error) {
 	row, err := s.loadRow(ctx, s.pool, id)
 	if err != nil {
 		return nil, err
@@ -438,8 +534,11 @@ func (s *Service) Translate(ctx context.Context, id int64, locales []string) (*V
 	if err != nil {
 		return nil, err
 	}
-	src, ok := stored[ls.Source().Code]
+	src, ok := stored[variant][ls.Source().Code]
 	if !ok {
+		if variant == VariantB {
+			return nil, &StateError{"Varyant B yok; önce üretilmeli"}
+		}
 		return nil, &StateError{"önce kaynak metin (" + ls.Source().Code + ") üretilmeli"}
 	}
 	if len(locales) == 0 {
@@ -469,7 +568,7 @@ func (s *Service) Translate(ctx context.Context, id int64, locales []string) (*V
 	defer cancel()
 	failures := map[string]string{}
 	var mu sync.Mutex
-	s.translateAll(genCtx, id, row, rowOffer(row), ls, src.Content, src.Version, targets, Events{
+	s.translateAll(genCtx, id, row, rowOffer(row), ls, variant, src.Content, src.Version, targets, Events{
 		Failed: func(code, reason string) { mu.Lock(); defer mu.Unlock(); failures[code] = reason },
 	})
 	if ctx.Err() != nil {
@@ -487,21 +586,28 @@ func (s *Service) Translate(ctx context.Context, id int64, locales []string) (*V
 
 // ---- manual edit ----------------------------------------------------------
 
-// SaveContent edits the source locale's text.
+// SaveContent edits Variant A's source text.
 func (s *Service) SaveContent(ctx context.Context, id int64, c content.Content) (*View, error) {
 	ls, err := s.loadLocales(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return s.SaveContents(ctx, id, map[string]content.Content{ls.Source().Code: c})
+	return s.SaveVariantContents(ctx, id, VariantA, map[string]content.Content{ls.Source().Code: c})
 }
 
-// SaveContents stores a text edited by a person. Only the source locale can be
-// edited: a translation is written by the translator alone (D97), so any other
-// locale is refused. The text must satisfy every limit; invalid content is
-// rejected, never truncated. A changed source gets a new version, which makes
-// every translation stale until it is translated again.
+// SaveContents edits Variant A (see SaveVariantContents).
 func (s *Service) SaveContents(ctx context.Context, id int64, edits map[string]content.Content) (*View, error) {
+	return s.SaveVariantContents(ctx, id, VariantA, edits)
+}
+
+// SaveVariantContents stores a text edited by a person. Only the source locale
+// can be edited: a translation is written by the translator alone (D97), so any
+// other locale is refused. The text must satisfy every limit; invalid content is
+// rejected, never truncated. A changed source gets a new version, which makes
+// that variant's translations stale until they are translated again (the other
+// variant's stay as they are). Variant B must exist already (it is written by
+// the model first) and the two variants may not become the same text.
+func (s *Service) SaveVariantContents(ctx context.Context, id int64, variant string, edits map[string]content.Content) (*View, error) {
 	row, err := s.loadRow(ctx, s.pool, id)
 	if err != nil {
 		return nil, err
@@ -539,8 +645,15 @@ func (s *Service) SaveContents(ctx context.Context, id int64, edits map[string]c
 	if err != nil {
 		return nil, err
 	}
-	if cur, has := stored[srcLocale.Code]; has && cur.Content == norm {
+	cur, has := stored[variant][srcLocale.Code]
+	if variant == VariantB && !has {
+		return nil, &StateError{"Varyant B yok; önce üretilmeli"}
+	}
+	if has && cur.Content == norm {
 		return s.Get(ctx, id) // saving text unchanged does not turn model output into "edited"
+	}
+	if other, ok := stored[otherVariant(variant)][srcLocale.Code]; ok && sameText(norm, other.Content) {
+		return nil, &DuplicateVariantError{}
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -549,11 +662,11 @@ func (s *Service) SaveContents(ctx context.Context, id int64, edits map[string]c
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO campaign_contents (campaign_id, locale, sms_body, email_subject, email_body, source, version)
-		VALUES ($1,$2,$3,$4,$5,'edited',1)
-		ON CONFLICT (campaign_id, locale) DO UPDATE
-		   SET sms_body=$3, email_subject=$4, email_body=$5, source='edited', version=campaign_contents.version+1, updated_at=now()`,
-		id, srcLocale.Code, norm.SMSBody, norm.EmailSubject, norm.EmailBody); err != nil {
+		INSERT INTO campaign_contents (campaign_id, variant, locale, sms_body, email_subject, email_body, source, version)
+		VALUES ($1,$2,$3,$4,$5,$6,'edited',1)
+		ON CONFLICT (campaign_id, variant, locale) DO UPDATE
+		   SET sms_body=$4, email_subject=$5, email_body=$6, source='edited', version=campaign_contents.version+1, updated_at=now()`,
+		id, variant, srcLocale.Code, norm.SMSBody, norm.EmailSubject, norm.EmailBody); err != nil {
 		return nil, fmt.Errorf("store content: %w", err)
 	}
 	if err := advance(ctx, tx, id, srcLocale.Code); err != nil {
@@ -565,9 +678,44 @@ func (s *Service) SaveContents(ctx context.Context, id int64, edits map[string]c
 	return s.Get(ctx, id)
 }
 
-// writeSource stores the source text and returns its version: a new version
-// when the text changed (every translation becomes stale), the same otherwise.
-func (s *Service) writeSource(ctx context.Context, id int64, c content.Content, source string) (int, error) {
+// DeleteVariant removes Variant B with its translations: the campaign goes
+// back to one text and everyone gets Variant A. Variant A cannot be removed.
+func (s *Service) DeleteVariant(ctx context.Context, id int64, variant string) (*View, error) {
+	if variant != VariantB {
+		return nil, &InputError{"Varyant A silinemez; her kampanyanın bir metni olmalı"}
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	var status string
+	err = tx.QueryRow(ctx, `SELECT status FROM campaigns WHERE id=$1 FOR UPDATE`, id).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load campaign: %w", err)
+	}
+	if status != StatusSegmentReady && status != StatusContentReady {
+		return nil, &StateError{fmt.Sprintf("kampanya %q durumunda; varyant silinemez", status)}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM campaign_contents WHERE campaign_id=$1 AND variant='B'`, id); err != nil {
+		return nil, fmt.Errorf("delete variant: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE campaigns SET variant_counts=NULL, updated_at=now() WHERE id=$1`, id); err != nil {
+		return nil, fmt.Errorf("delete variant: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
+// writeSource stores one variant's source text and returns its version: a new
+// version when the text changed (that variant's translations become stale), the
+// same otherwise.
+func (s *Service) writeSource(ctx context.Context, id int64, variant string, c content.Content, source string) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -579,14 +727,14 @@ func (s *Service) writeSource(ctx context.Context, id int64, c content.Content, 
 	}
 	var version int
 	err = tx.QueryRow(ctx, `
-		INSERT INTO campaign_contents (campaign_id, locale, sms_body, email_subject, email_body, source, version)
-		VALUES ($1,$2,$3,$4,$5,$6,1)
-		ON CONFLICT (campaign_id, locale) DO UPDATE
-		   SET sms_body=$3, email_subject=$4, email_body=$5, source=$6, updated_at=now(),
+		INSERT INTO campaign_contents (campaign_id, variant, locale, sms_body, email_subject, email_body, source, version)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,1)
+		ON CONFLICT (campaign_id, variant, locale) DO UPDATE
+		   SET sms_body=$4, email_subject=$5, email_body=$6, source=$7, updated_at=now(),
 		       version = campaign_contents.version + CASE
-		           WHEN (campaign_contents.sms_body, campaign_contents.email_subject, campaign_contents.email_body) = ($3, $4, $5) THEN 0 ELSE 1 END
+		           WHEN (campaign_contents.sms_body, campaign_contents.email_subject, campaign_contents.email_body) = ($4, $5, $6) THEN 0 ELSE 1 END
 		RETURNING version`,
-		id, ls.Source().Code, c.SMSBody, c.EmailSubject, c.EmailBody, source).Scan(&version)
+		id, variant, ls.Source().Code, c.SMSBody, c.EmailSubject, c.EmailBody, source).Scan(&version)
 	if err != nil {
 		return 0, fmt.Errorf("store content: %w", err)
 	}
@@ -596,9 +744,10 @@ func (s *Service) writeSource(ctx context.Context, id int64, c content.Content, 
 	return version, tx.Commit(ctx)
 }
 
-// writeTranslation stores one translation made from source version `version`.
-// Nothing is stored when the source has moved on since (errSourceChanged).
-func (s *Service) writeTranslation(ctx context.Context, id int64, srcCode, code string, c content.Content, version int) error {
+// writeTranslation stores one translation of a variant made from that
+// variant's source version `version`. Nothing is stored when the source has
+// moved on since (errSourceChanged).
+func (s *Service) writeTranslation(ctx context.Context, id int64, variant, srcCode, code string, c content.Content, version int) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -608,7 +757,10 @@ func (s *Service) writeTranslation(ctx context.Context, id int64, srcCode, code 
 	var status string
 	err = tx.QueryRow(ctx, `
 		SELECT cc.version, c.status FROM campaign_contents cc JOIN campaigns c ON c.id = cc.campaign_id
-		WHERE cc.campaign_id=$1 AND cc.locale=$2 FOR SHARE OF cc`, id, srcCode).Scan(&current, &status)
+		WHERE cc.campaign_id=$1 AND cc.variant=$2 AND cc.locale=$3 FOR SHARE OF cc`, id, variant, srcCode).Scan(&current, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errSourceChanged // the variant was removed meanwhile
+	}
 	if err != nil {
 		return fmt.Errorf("read source version: %w", err)
 	}
@@ -619,25 +771,26 @@ func (s *Service) writeTranslation(ctx context.Context, id int64, srcCode, code 
 		return errSourceChanged
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO campaign_contents (campaign_id, locale, sms_body, email_subject, email_body, source, version, source_version, source_text)
-		VALUES ($1,$2,$3,$4,$5,'translated',1,$6,(SELECT jsonb_build_object('sms_body', s.sms_body, 'email_subject', s.email_subject, 'email_body', s.email_body) FROM campaign_contents s WHERE s.campaign_id=$1 AND s.locale=$7))
-		ON CONFLICT (campaign_id, locale) DO UPDATE
-		   SET sms_body=$3, email_subject=$4, email_body=$5, source='translated', source_version=$6,
+		INSERT INTO campaign_contents (campaign_id, variant, locale, sms_body, email_subject, email_body, source, version, source_version, source_text)
+		VALUES ($1,$2,$3,$4,$5,$6,'translated',1,$7,(SELECT jsonb_build_object('sms_body', s.sms_body, 'email_subject', s.email_subject, 'email_body', s.email_body)
+		                                            FROM campaign_contents s WHERE s.campaign_id=$1 AND s.variant=$2 AND s.locale=$8))
+		ON CONFLICT (campaign_id, variant, locale) DO UPDATE
+		   SET sms_body=$4, email_subject=$5, email_body=$6, source='translated', source_version=$7,
 		       source_text=EXCLUDED.source_text, version=campaign_contents.version+1, updated_at=now()`,
-		id, code, c.SMSBody, c.EmailSubject, c.EmailBody, version, srcCode)
+		id, variant, code, c.SMSBody, c.EmailSubject, c.EmailBody, version, srcCode)
 	if err != nil {
 		return fmt.Errorf("store translation: %w", err)
 	}
 	return tx.Commit(ctx)
 }
 
-// advance moves the campaign from segment_ready to content_ready once it has a
-// source text (whether every translation is ready is checked at approval).
+// advance moves the campaign from segment_ready to content_ready once Variant A
+// has a source text (whether every translation is ready is checked at approval).
 func advance(ctx context.Context, tx pgx.Tx, id int64, srcCode string) error {
 	if _, err := tx.Exec(ctx, `
 		UPDATE campaigns SET status='content_ready', updated_at=now()
 		WHERE id=$1 AND status='segment_ready'
-		  AND EXISTS (SELECT 1 FROM campaign_contents WHERE campaign_id=$1 AND locale=$2)`, id, srcCode); err != nil {
+		  AND EXISTS (SELECT 1 FROM campaign_contents WHERE campaign_id=$1 AND variant='A' AND locale=$2)`, id, srcCode); err != nil {
 		return fmt.Errorf("advance campaign: %w", err)
 	}
 	return nil

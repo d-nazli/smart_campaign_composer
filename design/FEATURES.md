@@ -191,9 +191,10 @@ Kaynak: `frontend/src` (Vue 3 + TypeScript + Vite). vue-router ve Pinia yok; dur
 | GET | `/api/info` | `fetchInfo` (`src/api/info.ts`) | F05, F06, F07, F46–F48, F53, F105 (locale tablosu, kaynak locale, limitler, değişkenler, LLM modu/modeli) |
 | POST | `/api/campaigns` (gövde `{brief}`) | `createCampaign` (`src/api/campaigns.ts`) | F23, F26, F36 |
 | GET | `/api/campaigns/{id}` | `getCampaign` | F12, F13, F39 (üretim sonrası), F72 (onay sonrası), F77 (iptal hatası sonrası), F86 (1 sn yoklama) |
-| PUT | `/api/campaigns/{id}/content` (gövde `{locales:{<kod>:{sms_body,email_subject,email_body}}}`) | `saveContent` | F51, F60 |
-| POST | `/api/campaigns/{id}/translations` (gövde `{locales}`) | `translateCampaign` | F60, F112 |
-| POST | `/api/campaigns/{id}/messages/stream` (SSE, `Accept: text/event-stream`) | `streamPost` (`src/api/sse.ts`) via `useGenerationStream` | F39–F43 |
+| PUT | `/api/campaigns/{id}/content` (gövde `{locales:{<kod>:{sms_body,email_subject,email_body}}, variant?}`) | `saveContent` | F51, F60, F119 |
+| POST | `/api/campaigns/{id}/translations` (gövde `{locales, variant?}`) | `translateCampaign` | F60, F112, F119 |
+| POST | `/api/campaigns/{id}/messages/stream[?variant=B]` (SSE, `Accept: text/event-stream`) | `streamPost` (`src/api/sse.ts`) via `useGenerationStream` | F39–F43, F118 |
+| DELETE | `/api/campaigns/{id}/variants/B` | `deleteVariant` | F118 |
 | POST | `/api/campaigns/{id}/approve` (gövde yok veya `{scheduled_at}`) | `approveCampaign` | F72, F73, F80 |
 | POST | `/api/campaigns/{id}/cancel` | `cancelCampaign` | F77, F103, F104 |
 | GET | `/api/campaigns?limit=100` | `listCampaigns` | F90–F104 |
@@ -345,3 +346,8 @@ Notu olmayan maddeler olduğu gibi çalışıyor; notlu maddeler yeni yerini ya 
 - [x] F112 Yeniden çevir (her çeviride tek düğme)
 - [x] F115 Güncellik sayacı ve onay kilidi
 - [x] F116 Locale'e göre önizleme ve yön
+- [x] F117 Varyant sekmeleri `Varyant A | Varyant B ⋮ | +` (A/B bonusu, D102–D104)
+- [x] F118 Varyant B üret / yeniden üret / sil (silme onay penceresiyle)
+- [x] F119 Varyant başına taslak, güncellik ve "B, A ile aynı" hatası
+- [x] F120 Onayda %50 / %50 çubuğu ve varyant başına kişi sayısı
+- [x] F121 Gönderimde varyant karşılaştırma tablosu (kişi, SMS, e-posta, başarısız)

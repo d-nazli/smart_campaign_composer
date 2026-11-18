@@ -57,15 +57,33 @@ func (e *InvalidContentError) Error() string { return "content does not satisfy 
 
 // StaleTranslationsError means the campaign has translations that are missing
 // or made from an older source text: it cannot be approved until they are
-// translated again (or marked up to date).
+// translated again. Missing and Stale are Variant A's; Variants has every
+// variant's lists (A and, with Variant B, B), so the screen knows which
+// variant waits for which locale.
 type StaleTranslationsError struct {
-	Missing []string
-	Stale   []string
+	Missing  []string
+	Stale    []string
+	Variants map[string]PendingLocales
+}
+
+// PendingLocales is one variant's translations that are missing or stale.
+type PendingLocales struct {
+	Missing []string `json:"missing"`
+	Stale   []string `json:"stale"`
 }
 
 func (e *StaleTranslationsError) Error() string {
+	if b, ok := e.Variants[VariantB]; ok && len(b.Missing)+len(b.Stale) > 0 {
+		return fmt.Sprintf("çeviriler hazır değil: A eksik %v, güncel değil %v; B eksik %v, güncel değil %v", e.Missing, e.Stale, b.Missing, b.Stale)
+	}
 	return fmt.Sprintf("çeviriler hazır değil: eksik %v, güncel değil %v", e.Missing, e.Stale)
 }
+
+// DuplicateVariantError means Variant B would be the same text as Variant A
+// (D102): an A/B test of one text measures nothing.
+type DuplicateVariantError struct{}
+
+func (e *DuplicateVariantError) Error() string { return "Varyant B, Varyant A ile aynı" }
 
 // ReadOnlyTranslationError means a request tried to write a translation's
 // text: only the source locale is edited by a person (D97).

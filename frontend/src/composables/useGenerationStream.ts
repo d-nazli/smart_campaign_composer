@@ -3,19 +3,20 @@ import { ApiError } from '../api/http'
 import { streamPost } from '../api/sse'
 import { initialState, reduce, startedState, type StreamState } from './streamState'
 
-/** Starts message generation for a campaign and exposes the live state. */
+/** Starts message generation for a campaign (Variant A, or B) and exposes the live state. */
 export function useGenerationStream() {
   const state = ref<StreamState>(initialState())
   let controller: AbortController | null = null
 
-  async function start(campaignId: number): Promise<void> {
+  async function start(campaignId: number, variant: 'A' | 'B' = 'A'): Promise<void> {
     controller?.abort()
     const mine = new AbortController()
     controller = mine
     state.value = startedState()
 
+    const query = variant === 'B' ? '?variant=B' : ''
     try {
-      await streamPost(`/api/campaigns/${campaignId}/messages/stream`, mine.signal, (ev) => {
+      await streamPost(`/api/campaigns/${campaignId}/messages/stream${query}`, mine.signal, (ev) => {
         if (controller === mine) state.value = reduce(state.value, ev)
       })
       // The server closed the stream without a final event: treat as an error.

@@ -43,6 +43,7 @@ func New(svc *campaign.Service, info Info, ready func(context.Context) error, me
 	mux.HandleFunc("POST /api/campaigns/{id}/messages/stream", a.streamMessages)
 	mux.HandleFunc("PUT /api/campaigns/{id}/content", a.putContent)
 	mux.HandleFunc("POST /api/campaigns/{id}/translations", a.translate)
+	mux.HandleFunc("DELETE /api/campaigns/{id}/variants/{variant}", a.deleteVariant)
 	mux.HandleFunc("POST /api/campaigns/{id}/approve", a.approve)
 	mux.HandleFunc("POST /api/campaigns/{id}/cancel", a.cancel)
 	if metricsHandler != nil {
@@ -139,25 +140,36 @@ func (a *api) putContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Either one text (the source locale's: {"sms_body": ...}) or several
-	// ({"locales": {"tr-TR": {...}, "en-GB": {...}}}).
+	// ({"locales": {"tr-TR": {...}, "en-GB": {...}}}). "variant": "B" edits
+	// Variant B; without it Variant A.
 	var body struct {
 		content.Content
 		Locales map[string]content.Content `json:"locales"`
+		Variant string                     `json:"variant"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	var v *campaign.View
-	var err error
-	if body.Locales != nil {
+	variant, err := campaign.ParseVariant(body.Variant)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	edits := body.Locales
+	if edits != nil {
 		if body.Content != (content.Content{}) {
 			writeError(w, http.StatusBadRequest, "invalid_input", "ya tek metin ya da locales gönderin, ikisini birden değil", nil)
 			return
 		}
-		v, err = a.svc.SaveContents(r.Context(), id, body.Locales)
 	} else {
-		v, err = a.svc.SaveContent(r.Context(), id, body.Content)
+		ls, err := a.svc.Locales(r.Context())
+		if err != nil {
+			a.fail(w, r, err)
+			return
+		}
+		edits = map[string]content.Content{ls.Source().Code: body.Content}
 	}
+	v, err := a.svc.SaveVariantContents(r.Context(), id, variant, edits)
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -175,11 +187,36 @@ func (a *api) translate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Locales []string `json:"locales"`
+		Variant string   `json:"variant"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	v, err := a.svc.Translate(r.Context(), id, body.Locales)
+	variant, err := campaign.ParseVariant(body.Variant)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	v, err := a.svc.TranslateVariant(r.Context(), id, variant, body.Locales)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// deleteVariant removes Variant B (the A/B test is turned off).
+func (a *api) deleteVariant(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	variant, err := campaign.ParseVariant(r.PathValue("variant"))
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	v, err := a.svc.DeleteVariant(r.Context(), id, variant)
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -232,10 +269,16 @@ func (a *api) streamMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srcCode := ls.Source().Code
+	// ?variant=B writes Variant B (Variant A must exist); without it Variant A.
+	variant, err := campaign.ParseVariant(r.URL.Query().Get("variant"))
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
 	s := newSSE(w, r.Context())
 	defer s.close()
 
-	err = a.svc.GenerateMessages(r.Context(), id, campaign.Events{
+	err = a.svc.GenerateVariant(r.Context(), id, variant, campaign.Events{
 		Attempt: func(code string, n, max int) {
 			s.send("attempt", map[string]any{"locale": code, "n": n, "max": max})
 		},
@@ -271,7 +314,7 @@ func (a *api) streamMessages(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	s.send("done", map[string]string{"status": campaign.StatusContentReady})
+	s.send("done", map[string]string{"status": campaign.StatusContentReady, "variant": variant})
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -323,6 +366,7 @@ func classify(err error) (string, int, string, any) {
 		gen     *campaign.GenerationError
 		stale   *campaign.StaleTranslationsError
 		ro      *campaign.ReadOnlyTranslationError
+		dup     *campaign.DuplicateVariantError
 	)
 	switch {
 	case errors.Is(err, campaign.ErrNotFound):
@@ -332,8 +376,13 @@ func classify(err error) (string, int, string, any) {
 	case errors.As(err, &sched):
 		return "invalid_schedule", http.StatusUnprocessableEntity, sched.Message, nil
 	case errors.As(err, &stale):
-		return "stale_translations", http.StatusConflict, "güncel olmayan veya eksik çeviri var; önce çevrilmeli",
-			map[string]any{"missing": nonNil(stale.Missing), "stale": nonNil(stale.Stale)}
+		details := map[string]any{"missing": nonNil(stale.Missing), "stale": nonNil(stale.Stale)}
+		if len(stale.Variants) > 0 {
+			details["variants"] = stale.Variants
+		}
+		return "stale_translations", http.StatusConflict, "güncel olmayan veya eksik çeviri var; önce çevrilmeli", details
+	case errors.As(err, &dup):
+		return "variant_duplicate", http.StatusUnprocessableEntity, dup.Error(), nil
 	case errors.As(err, &ro):
 		return "translation_read_only", http.StatusUnprocessableEntity, ro.Error(), map[string]any{"locale": ro.Locale}
 	case errors.As(err, &state):

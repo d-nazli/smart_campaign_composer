@@ -33,6 +33,9 @@ type Delivery struct {
 	// the delivery): a person who changed it after the campaign was approved
 	// gets the new one, if the campaign has a text in it.
 	Locale string
+	// Variant is the campaign variant ("A" or "B") the person was given when
+	// the delivery was queued; it never changes.
+	Variant string
 }
 
 // Template is a campaign's frozen text in one locale, with that locale's
@@ -68,9 +71,9 @@ type Queue interface {
 	Observe(ctx context.Context, id int64, latency time.Duration) error
 	// Finish marks campaigns with nothing left to send as completed.
 	Finish(ctx context.Context, now time.Time) (int, error)
-	// Content returns the (frozen) message templates of a campaign in one
-	// locale, or ErrNoContent.
-	Content(ctx context.Context, campaignID int64, locale string) (Template, error)
+	// Content returns the (frozen) message templates of one variant of a
+	// campaign in one locale, or ErrNoContent.
+	Content(ctx context.Context, campaignID int64, variant, locale string) (Template, error)
 }
 
 // PG is the Postgres implementation.
@@ -95,9 +98,9 @@ func (q *PG) Claim(ctx context.Context, channel string, limit int, lease time.Du
 		), claimed AS (
 			UPDATE deliveries d SET status = 'sending', locked_until = $4, updated_at = $2, locale = u.locale
 			FROM due, users u WHERE d.id = due.id AND u.id = d.user_id
-			RETURNING d.id, d.campaign_id, d.user_id, d.channel, d.attempts, d.created_at
+			RETURNING d.id, d.campaign_id, d.user_id, d.channel, d.attempts, d.created_at, d.variant
 		)
-		SELECT c.id, c.campaign_id, c.user_id, c.channel, c.attempts, c.created_at,
+		SELECT c.id, c.campaign_id, c.user_id, c.channel, c.attempts, c.created_at, c.variant,
 		       u.first_name, u.city, coalesce(u.phone, ''), coalesce(u.email, ''), u.sms_consent, u.email_consent, u.locale
 		FROM claimed c JOIN users u ON u.id = c.user_id
 		ORDER BY c.id`, channel, now, limit, now.Add(lease))
@@ -110,7 +113,7 @@ func (q *PG) Claim(ctx context.Context, channel string, limit int, lease time.Du
 	var campaigns []int64
 	for rows.Next() {
 		var d Delivery
-		if err := rows.Scan(&d.ID, &d.CampaignID, &d.UserID, &d.Channel, &d.Attempts, &d.CreatedAt,
+		if err := rows.Scan(&d.ID, &d.CampaignID, &d.UserID, &d.Channel, &d.Attempts, &d.CreatedAt, &d.Variant,
 			&d.FirstName, &d.City, &d.Phone, &d.Email, &d.SMSConsent, &d.EmailConsent, &d.Locale); err != nil {
 			return nil, fmt.Errorf("claim: %w", err)
 		}
@@ -182,13 +185,13 @@ func (q *PG) Finish(ctx context.Context, now time.Time) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
-func (q *PG) Content(ctx context.Context, campaignID int64, locale string) (Template, error) {
+func (q *PG) Content(ctx context.Context, campaignID int64, variant, locale string) (Template, error) {
 	var t Template
 	var fallbacks []byte
 	err := q.pool.QueryRow(ctx, `
 		SELECT cc.sms_body, cc.email_subject, cc.email_body, l.fallbacks
 		FROM campaign_contents cc JOIN locales l ON l.code = cc.locale
-		WHERE cc.campaign_id=$1 AND cc.locale=$2`, campaignID, locale).
+		WHERE cc.campaign_id=$1 AND cc.variant=$2 AND cc.locale=$3`, campaignID, variant, locale).
 		Scan(&t.Content.SMSBody, &t.Content.EmailSubject, &t.Content.EmailBody, &fallbacks)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Template{}, ErrNoContent

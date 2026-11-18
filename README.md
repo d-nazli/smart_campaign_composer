@@ -104,6 +104,32 @@ Insider One'ın Localization yapısı örnek alındı (D92–D97).
   sayılar/tarihler aynı. Kişi yalnız kendi locale'inin metnini alır; metin yoksa başka locale'e düşülmez.
 - Mock LLM: `en-*` ve `de-*` için kendi kalıp setiyle yazar; diğer locale'lerde kaynak metni `[fr-FR] ` önekiyle döner.
 
+## A/B varyantları (bonus)
+
+Insider One'ın e-posta Experiment ekranı örnek alındı (D102–D104). Kapsam bilerek dar: **yalnız A ve B**, oran %50 / %50
+sabit, **kazanan seçimi yok**, açılma/tıklama ölçümü yok (bu proje yalnız üretir ve gönderir).
+
+- Mesajlar kartının üstünde **Varyant A | Varyant B ⋮ | +** sekmeleri. Her kampanyanın A'sı vardır. **+** B'yi üretir: model
+  (ya da mock) A'nın metnini görerek aynı teklifi farklı sözlerle yazar. B'nin **⋮** menüsü: **Yeniden üret**, **Sil**.
+  B silinince herkes A'yı alır.
+- Her varyantın **kendi tr-TR kaynağı ve kendi çevirileri** vardır; elle yalnız tr-TR düzenlenir. A değişince yalnız A'nın
+  çevirileri güncel değil olur, B'ninkiler olduğu gibi kalır (ve tersi).
+- **B, A'nın aynısı olamaz** (harf büyüklüğü ve boşluk sayılmaz, üç alan birden aynıysa): kayıtta ve onayda
+  **422 `variant_duplicate`**. Model A'yı tekrar yazarsa bu bir doğrulama hatasıdır, model düzeltmeye geri gönderilir.
+  B üretilemezse hazır şablona düşülmez (şablon A'nın aynısı olabilirdi): hata gösterilir, hiçbir şey kaydedilmez.
+- Her varyant ve her locale aynı kontrollerden geçer (160/80, `{{first_name}}`, rakamlar). Herhangi bir varyantta güncel
+  olmayan çeviri varken onay **409 `stale_translations`**; yanıtın `details.variants` alanı hangi varyantın hangi locale'i
+  beklediğini söyler.
+- **Bölünme:** kişi kuyruğa alınırken `md5("<kampanya>:<kişi>")`'nin ilk baytı çiftse A, tekse B. Locale hesaba girmez;
+  kişi önce varyantını alır, sonra o varyantın **kendi locale'indeki** metnini. Bir kişinin iki kanalı aynı varyanttadır ve
+  `UNIQUE(campaign_id, user_id, channel)` yine geçerlidir: tek kişi, tek varyant, tek kez. Zamanlanmış kampanya, başladığı
+  anda aynı kuralla bölünür. Bölünme yaklaşık %50'dir; küçük kitlede sapma görülür, ekranda gerçek sayılar yazar.
+- **Onay** ekranında %50 / %50 çubuğu ve varyant başına kişi / SMS / e-posta; **Gönderim** ekranının en altında
+  varyant karşılaştırma tablosu: kişi, SMS, e-posta, başarısız ve toplam.
+- API: `POST /api/campaigns/{id}/messages/stream?variant=B`, `PUT /content` ve `POST /translations` gövdesinde
+  `"variant": "B"`, `DELETE /api/campaigns/{id}/variants/B`. `GET` yanıtında `variants`, `variant_b`, `variant_counts`;
+  gönderim ilerlemesinde `delivery.variants`.
+
 ## Brief'te özel gün, cinsiyet, birleşik ve kademeli teklif
 
 Aşağıdaki kurallar mock modunda kural okuyucusunun kurallarıdır. Gerçek Claude modunda aynı kurallar Claude'a prompt'ta

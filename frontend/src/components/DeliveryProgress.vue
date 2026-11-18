@@ -6,6 +6,7 @@ import { channelAverage, deliveryTotals, duration } from '../utils/dashboard'
 import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
 import { failureText, mergeFailures } from '../utils/failures'
 import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
+import { comparisonRows } from '../utils/variants'
 import Badge from './ui/Badge.vue'
 import HalfDonut from './ui/HalfDonut.vue'
 import KpiGroup from './ui/KpiGroup.vue'
@@ -78,6 +79,9 @@ const outcome = computed(() => [
   ...(totals.value.skipped > 0 ? [{ key: 'skipped', text: 'Atlandı (izin geri çekildi ya da adres yok)', value: totals.value.skipped, color: SKIPPED_COLOR }] : []),
 ])
 const arcs = computed(() => outcome.value.map((o) => ({ value: o.value, color: o.color })))
+// Variant A against Variant B (only for a campaign sent with B): sent / queued per channel.
+const comparison = computed(() => comparisonRows(props.delivery.variants))
+const sentOf = (p: { total: number; sent: number }) => (finished.value || p.sent === p.total ? count(p.sent) : `${count(p.sent)} / ${count(p.total)}`)
 const ringLabel = computed(
   () => `Gönderim sonucu: ${count(totals.value.total)} mesajın ${count(totals.value.sent)} tanesi başarılı, ${count(failedTotal.value)} tanesi başarısız (%${pct(failedTotal.value)})`,
 )
@@ -164,6 +168,34 @@ const ringLabel = computed(
         </div>
       </section>
     </div>
+
+    <section v-if="comparison.length" class="panel" data-testid="variant-comparison">
+      <h3 class="label">Varyant karşılaştırma · %50 / %50</h3>
+      <div class="speed-wrap">
+        <table class="speed">
+          <thead>
+            <tr>
+              <th scope="col">Varyant</th>
+              <th scope="col" class="r">Kişi</th>
+              <th scope="col" class="r">SMS</th>
+              <th scope="col" class="r">E-posta</th>
+              <th scope="col" class="r">Başarısız</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in comparison" :key="r.label" :class="{ total: r.label === 'Toplam' }" :data-testid="`compare-${r.label === 'Toplam' ? 'total' : r.variant}`">
+              <th scope="row">
+                <i v-if="r.label !== 'Toplam'" class="vkey" :class="`vkey--${r.variant}`" aria-hidden="true" />{{ r.label }}
+              </th>
+              <td class="r num"><b>{{ count(r.people) }}</b></td>
+              <td class="r num">{{ sentOf(r.sms) }}</td>
+              <td class="r num">{{ sentOf(r.email) }}</td>
+              <td class="r num" :class="{ bad: r.failed > 0 }">{{ count(r.failed) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <p v-if="finished" class="notice ok done" role="status"><CheckCircle2 :size="16" aria-hidden="true" />Gönderim tamamlandı.</p>
   </div>
@@ -252,6 +284,25 @@ h3.label {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.speed tr.total {
+  background: var(--surface-2);
+}
+.speed tr.total th {
+  font-weight: 600;
+}
+.vkey {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: var(--s-2);
+  border-radius: 2px;
+}
+.vkey--A {
+  background: var(--accent);
+}
+.vkey--B {
+  background: var(--chart-3);
 }
 .done {
   display: flex;

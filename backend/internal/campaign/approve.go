@@ -55,6 +55,9 @@ type ApproveResult struct {
 	// Locales is how many people receive each locale (reachable on at least
 	// one channel), counted at approval time.
 	Locales map[string]int `json:"locales,omitempty"`
+	// Variants is how many people (and SMS / e-mail deliveries) each variant
+	// gets, counted at approval time; only for a campaign with Variant B.
+	Variants map[string]VariantCount `json:"variants,omitempty"`
 }
 
 // Approve freezes the campaign and enqueues one delivery per reachable
@@ -146,19 +149,33 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 		return nil, err
 	}
 
+	// With Variant B everyone is split between A and B; the counts are stored
+	// for the screens (for a scheduled campaign they are an estimate).
+	ab := len(set) > 1
+	var variants map[string]VariantCount
+	if ab {
+		if variants, err = countByVariant(ctx, tx, compiled, id); err != nil {
+			return nil, err
+		}
+	}
+	variantsJSON, err := variantCountsJSON(variants)
+	if err != nil {
+		return nil, err
+	}
+
 	if at != nil {
 		// A message that goes out after the offer has ended would promise something
 		// that no longer exists; the person must pick a time inside the offer.
 		if err := checkScheduleAgainstOffer(*at, rule.Offer); err != nil {
 			return nil, err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2 WHERE id=$1`, id, countsJSON); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2, variant_counts=$3 WHERE id=$1`, id, countsJSON, variantsJSON); err != nil {
 			return nil, fmt.Errorf("store locale counts: %w", err)
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("commit approval: %w", err)
 		}
-		return &ApproveResult{ID: id, Status: StatusScheduled, ScheduledAt: at,
+		return &ApproveResult{ID: id, Status: StatusScheduled, ScheduledAt: at, Variants: variants,
 			Warnings: s.warningsFor(set, ls, rule.Offer.Normalize())}, nil
 	}
 
@@ -168,19 +185,27 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 	if err != nil {
 		return nil, err
 	}
-	q, err := enqueueAudience(ctx, tx, id, compiled, now)
+	q, err := enqueueAudience(ctx, tx, id, compiled, now, ab)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2 WHERE id=$1`, id, countsJSON); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2, variant_counts=$3 WHERE id=$1`, id, countsJSON, variantsJSON); err != nil {
 		return nil, fmt.Errorf("store locale counts: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit approval: %w", err)
 	}
 
-	return &ApproveResult{ID: id, Status: StatusApproved, Queued: q, Audience: &aud, Locales: counts,
+	return &ApproveResult{ID: id, Status: StatusApproved, Queued: q, Audience: &aud, Locales: counts, Variants: variants,
 		Warnings: s.warningsFor(set, ls, rule.Offer.Normalize())}, nil
+}
+
+// variantCountsJSON is the variant_counts column: NULL without Variant B.
+func variantCountsJSON(counts map[string]VariantCount) ([]byte, error) {
+	if counts == nil {
+		return nil, nil
+	}
+	return json.Marshal(counts)
 }
 
 // enqueueAudience creates one delivery per reachable ADDRESS and channel for
@@ -188,16 +213,24 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 // email) get one message, sent to the record with the lowest id. Used by
 // sending now and by the scheduler, so both queue exactly the same way. now is
 // the creation time of the rows (the retry age is counted from it).
-func enqueueAudience(ctx context.Context, tx pgx.Tx, id int64, compiled segment.Compiled, now time.Time) (Queued, error) {
+//
+// ab: the campaign has Variant B, so every delivery gets the variant of its
+// person (variantSQL: a hash of campaign and person, the same for both
+// channels, blind to the locale); without B every delivery is Variant A.
+func enqueueAudience(ctx context.Context, tx pgx.Tx, id int64, compiled segment.Compiled, now time.Time, ab bool) (Queued, error) {
 	enqueue := func(channel, reachable, address string) (int, error) {
 		args := append(append([]any{}, compiled.Args...), id, now)
 		n := len(args)
+		variant := "'A'"
+		if ab {
+			variant = variantSQL(fmt.Sprintf("$%d", n-1))
+		}
 		tag, err := tx.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO deliveries (campaign_id, user_id, channel, created_at, next_attempt_at, updated_at)
-			SELECT DISTINCT ON (%s) $%d, id, '%s', $%d, $%d, $%d FROM users WHERE %s AND %s
+			INSERT INTO deliveries (campaign_id, user_id, channel, variant, created_at, next_attempt_at, updated_at)
+			SELECT DISTINCT ON (%s) $%d, id, '%s', %s, $%d, $%d, $%d FROM users WHERE %s AND %s
 			ORDER BY %s, id
 			ON CONFLICT (campaign_id, user_id, channel) DO NOTHING`,
-			address, n-1, channel, n, n, n, compiled.Where, reachable, address), args...)
+			address, n-1, channel, variant, n, n, n, compiled.Where, reachable, address), args...)
 		if err != nil {
 			return 0, fmt.Errorf("enqueue %s: %w", channel, err)
 		}
@@ -214,38 +247,63 @@ func enqueueAudience(ctx context.Context, tx pgx.Tx, id int64, compiled segment.
 	return q, nil
 }
 
-// checkContents loads the text of the given locales and checks it as sending
-// requires: the source and every translation present, every translation made
-// from the current source (else StaleTranslationsError), each within the
-// limits and every translation saying what the source says.
-func checkContents(ctx context.Context, q queryer, policy content.Policy, ls content.Locales, id int64, required []string) (map[string]content.Content, error) {
+// checkContents loads the text of the given locales, in every variant, and
+// checks it as sending requires: each variant's source and every translation
+// present, every translation made from its variant's current source (else
+// StaleTranslationsError), Variant B not the same text as A
+// (DuplicateVariantError), each within the limits and every translation saying
+// what its source says. The result is the text by variant and locale.
+func checkContents(ctx context.Context, q queryer, policy content.Policy, ls content.Locales, id int64, required []string) (map[string]map[string]content.Content, error) {
 	stored, err := loadContents(ctx, q, id)
 	if err != nil {
 		return nil, err
 	}
 	srcLocale := ls.Source()
-	src, ok := stored[srcLocale.Code]
-	if !ok {
+	if _, ok := stored[VariantA][srcLocale.Code]; !ok {
 		return nil, &StateError{"kaynak metin (" + srcLocale.Code + ") yok; önce mesajlar üretilmeli"}
 	}
-	if missing, stale := pendingLocales(ls, required, stored); len(missing)+len(stale) > 0 {
-		return nil, &StaleTranslationsError{Missing: missing, Stale: stale}
+	variants := campaignVariants(stored, srcLocale.Code)
+	pending := map[string]PendingLocales{}
+	waiting := false
+	for _, v := range variants {
+		missing, stale := pendingLocales(ls, required, stored[v])
+		pending[v] = PendingLocales{Missing: nonNilList(missing), Stale: nonNilList(stale)}
+		waiting = waiting || len(missing)+len(stale) > 0
 	}
-	set := map[string]content.Content{}
+	if waiting {
+		a := pending[VariantA]
+		return nil, &StaleTranslationsError{Missing: nilIfEmpty(a.Missing), Stale: nilIfEmpty(a.Stale), Variants: pending}
+	}
+	if len(variants) > 1 && sameText(stored[VariantA][srcLocale.Code].Content, stored[VariantB][srcLocale.Code].Content) {
+		return nil, &DuplicateVariantError{}
+	}
+	set := map[string]map[string]content.Content{}
 	var issues []content.Issue
-	for _, code := range required {
-		l, _ := ls.Get(code)
-		c := stored[code].Content
-		set[code] = c
-		if _, rep := policy.Validate(c); !rep.OK {
-			for _, i := range rep.Issues {
-				i.Locale = code
-				issues = append(issues, i)
+	for _, v := range variants {
+		set[v] = map[string]content.Content{}
+		src := stored[v][srcLocale.Code]
+		mark := func(i content.Issue) content.Issue {
+			if v == VariantB {
+				i.Variant = VariantB
 			}
-			continue
+			return i
 		}
-		if !l.IsSource {
-			issues = append(issues, content.ConsistentWith(srcLocale, src.Content, l, c)...)
+		for _, code := range required {
+			l, _ := ls.Get(code)
+			c := stored[v][code].Content
+			set[v][code] = c
+			if _, rep := policy.Validate(c); !rep.OK {
+				for _, i := range rep.Issues {
+					i.Locale = code
+					issues = append(issues, mark(i))
+				}
+				continue
+			}
+			if !l.IsSource {
+				for _, i := range content.ConsistentWith(srcLocale, src.Content, l, c) {
+					issues = append(issues, mark(i))
+				}
+			}
 		}
 	}
 	if len(issues) > 0 {
@@ -254,13 +312,34 @@ func checkContents(ctx context.Context, q queryer, policy content.Policy, ls con
 	return set, nil
 }
 
-// warningsFor collects the soft issues of the source text (the Turkish offer
-// checks; translations are held to the source by checkContents).
-func (s *Service) warningsFor(set map[string]content.Content, ls content.Locales, o offer.Offer) []content.Issue {
+func nonNilList(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
+}
+
+func nilIfEmpty(l []string) []string {
+	if len(l) == 0 {
+		return nil
+	}
+	return l
+}
+
+// warningsFor collects the soft issues of each variant's source text (the
+// Turkish offer checks; translations are held to the source by checkContents).
+func (s *Service) warningsFor(set map[string]map[string]content.Content, ls content.Locales, o offer.Offer) []content.Issue {
 	out := []content.Issue{} // never nil: the API sends [] rather than null
-	if c, ok := set[ls.Source().Code]; ok {
+	for _, v := range Variants {
+		c, ok := set[v][ls.Source().Code]
+		if !ok {
+			continue
+		}
 		for _, i := range s.policy.Quality(c, o) {
 			i.Locale = ls.Source().Code
+			if v == VariantB {
+				i.Variant = VariantB
+			}
 			out = append(out, i)
 		}
 	}
@@ -294,9 +373,12 @@ func (s *Service) alreadyApprovedOrRefuse(ctx context.Context, id int64) (*Appro
 		return nil, err
 	}
 	if stored, err := loadContents(ctx, s.pool, id); err == nil {
-		set := map[string]content.Content{}
-		for code, sc := range stored {
-			set[code] = sc.Content
+		set := map[string]map[string]content.Content{}
+		for v, byLocale := range stored {
+			set[v] = map[string]content.Content{}
+			for code, sc := range byLocale {
+				set[v][code] = sc.Content
+			}
 		}
 		warnings = s.warningsFor(set, ls, rowOffer(row))
 	}

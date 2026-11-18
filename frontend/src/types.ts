@@ -31,6 +31,37 @@ export interface Issue {
   limit?: number
   /** Set when the issue belongs to one locale of the campaign. */
   locale?: LocaleCode
+  /** "B" when the issue belongs to Variant B (absent: Variant A). */
+  variant?: Variant
+}
+
+/** An A/B variant of a campaign. Every campaign has A; B is optional. */
+export type Variant = 'A' | 'B'
+
+/** How many people one variant reaches: people on at least one channel, SMS and e-mail deliveries. */
+export interface VariantCount {
+  people: number
+  sms: number
+  email: number
+}
+
+/** One variant's texts, like the top-level fields of Campaign for Variant A. */
+export interface VariantView {
+  content?: StoredContent
+  translations?: Record<LocaleCode, StoredContent>
+  pending_locales: LocaleCode[]
+  mismatches: Issue[]
+  /** The same text as Variant A: the campaign cannot be approved. */
+  duplicate: boolean
+}
+
+/** One variant's share of a campaign's deliveries. */
+export interface VariantProgress {
+  variant: Variant
+  people: number
+  sms: { total: number; sent: number }
+  email: { total: number; sent: number }
+  failed: number
 }
 
 export interface Report {
@@ -162,6 +193,8 @@ export interface DeliveryProgress {
   failures?: FailureReason[]
   /** Messages (SMS and email together) per locale: how many go there and how many were sent. */
   locales?: Record<LocaleCode, { total: number; sent: number }>
+  /** Variant A against Variant B (only for a campaign sent with B). */
+  variants?: VariantProgress[]
 }
 
 export interface ApproveResult {
@@ -175,6 +208,8 @@ export interface ApproveResult {
   audience?: Audience
   /** How many people receive each locale. */
   locales?: Record<LocaleCode, number>
+  /** How many people each variant gets (with Variant B only). */
+  variants?: Record<Variant, VariantCount>
   warnings: Issue[]
 }
 
@@ -198,6 +233,12 @@ export interface Campaign {
   mismatches?: Issue[]
   /** Only in the answer to a translate request: the locales that could not be translated, with why. */
   translation_failures?: Record<LocaleCode, string>
+  /** ["A"], or ["A", "B"] once Variant B was written. content / translations / pending_locales / mismatches are Variant A's. */
+  variants?: Variant[]
+  /** Variant B's texts (absent without B). */
+  variant_b?: VariantView
+  /** How many people each variant reaches (with Variant B only). */
+  variant_counts?: Record<Variant, VariantCount>
   /** Present once the campaign has been approved. */
   delivery?: DeliveryProgress
   /** When a scheduled campaign starts; why it could not start. */

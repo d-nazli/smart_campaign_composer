@@ -1,4 +1,4 @@
-import type { ApproveResult, Campaign, CampaignSummary, LocaleCode, MessageContent } from '../types'
+import type { ApproveResult, Campaign, CampaignSummary, LocaleCode, MessageContent, Variant } from '../types'
 import { requestJSON } from './http'
 
 export function createCampaign(brief: string): Promise<Campaign> {
@@ -9,14 +9,19 @@ export function getCampaign(id: number): Promise<Campaign> {
   return requestJSON<Campaign>(`/api/campaigns/${id}`)
 }
 
-/** Saves the edited source text (only the source is edited by hand). A changed source makes every translation stale. */
-export function saveContent(id: number, locales: Record<LocaleCode, MessageContent>): Promise<Campaign> {
-  return requestJSON<Campaign>(`/api/campaigns/${id}/content`, { method: 'PUT', body: JSON.stringify({ locales }) })
+/** Saves a variant's edited source text (only the source is edited by hand). A changed source makes that variant's translations stale. */
+export function saveContent(id: number, locales: Record<LocaleCode, MessageContent>, variant: Variant = 'A'): Promise<Campaign> {
+  return requestJSON<Campaign>(`/api/campaigns/${id}/content`, { method: 'PUT', body: JSON.stringify({ locales, variant }) })
 }
 
-/** Translates the source again into the locales (translations are never written by hand). */
-export function translateCampaign(id: number, locales: LocaleCode[]): Promise<Campaign> {
-  return requestJSON<Campaign>(`/api/campaigns/${id}/translations`, { method: 'POST', body: JSON.stringify({ locales }) })
+/** Translates a variant's source again into the locales (translations are never written by hand). */
+export function translateCampaign(id: number, locales: LocaleCode[], variant: Variant = 'A'): Promise<Campaign> {
+  return requestJSON<Campaign>(`/api/campaigns/${id}/translations`, { method: 'POST', body: JSON.stringify({ locales, variant }) })
+}
+
+/** Removes Variant B: everyone gets Variant A. */
+export function deleteVariant(id: number, variant: Variant = 'B'): Promise<Campaign> {
+  return requestJSON<Campaign>(`/api/campaigns/${id}/variants/${variant}`, { method: 'DELETE' })
 }
 
 /** Approves the campaign and queues the sending. Safe to repeat: a second call reports the same queue. */

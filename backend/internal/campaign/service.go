@@ -135,6 +135,13 @@ type View struct {
 	// TranslationFailures names the locales a translate request could not
 	// translate, with the reason (only in the answer to that request).
 	TranslationFailures map[string]string `json:"translation_failures,omitempty"`
+	// Variants are the campaign's variants: ["A"], or ["A", "B"] once Variant B
+	// was written. Content, Translations, Pending and Mismatches above are
+	// Variant A's; VariantB holds the same for B (absent without B).
+	// VariantCounts is how many people each variant reaches (with B only).
+	Variants      []string                `json:"variants"`
+	VariantB      *VariantView            `json:"variant_b,omitempty"`
+	VariantCounts map[string]VariantCount `json:"variant_counts,omitempty"`
 	// Delivery is present once the campaign has been approved.
 	Delivery *DeliveryView `json:"delivery,omitempty"`
 	// ScheduledAt is when a scheduled campaign starts (set from approval on).
@@ -142,6 +149,17 @@ type View struct {
 	ScheduledAt   *time.Time `json:"scheduled_at,omitempty"`
 	ScheduleError string     `json:"schedule_error,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
+}
+
+// VariantView is one variant's text, like the top-level fields of View for
+// Variant A. Duplicate is true when it is the same text as Variant A (the
+// campaign cannot be approved then).
+type VariantView struct {
+	Content      *ContentView            `json:"content,omitempty"`
+	Translations map[string]*ContentView `json:"translations,omitempty"`
+	Pending      []string                `json:"pending_locales"`
+	Mismatches   []content.Issue         `json:"mismatches"`
+	Duplicate    bool                    `json:"duplicate"`
 }
 
 // ---- create (brief -> segment -> audience) --------------------------------
@@ -162,7 +180,7 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	genCtx, cancel := context.WithTimeout(ctx, segmentTimeout)
 	defer cancel()
 
-	rule, err := briefs.ResolveSegmentWith(genCtx, s.llm, brief, llm.Hooks{OnLog: s.recorder(id, "segment", "")}, s.segmentMode)
+	rule, err := briefs.ResolveSegmentWith(genCtx, s.llm, brief, llm.Hooks{OnLog: s.recorder(id, "segment", "", VariantA)}, s.segmentMode)
 	if err != nil {
 		return nil, s.generationError(err, "Kitle kuralı üretilemedi")
 	}
@@ -229,6 +247,7 @@ type campaignRow struct {
 	emailReachable *int
 	bothReachable  *int
 	localeCounts   []byte
+	variantCounts  []byte
 	scheduledAt    *time.Time
 	scheduleError  string
 	createdAt      time.Time
@@ -240,10 +259,10 @@ func (s *Service) loadRow(ctx context.Context, q interface {
 	var r campaignRow
 	err := q.QueryRow(ctx, `
 		SELECT id, brief, name, status, segment_status, segment_rule, explanation, question,
-		       matched, sms_reachable, email_reachable, both_reachable, locale_counts, scheduled_at, schedule_error, created_at
+		       matched, sms_reachable, email_reachable, both_reachable, locale_counts, variant_counts, scheduled_at, schedule_error, created_at
 		FROM campaigns WHERE id=$1`, id).
 		Scan(&r.id, &r.brief, &r.name, &r.status, &r.segmentStatus, &r.segmentRule, &r.explanation, &r.question,
-			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.localeCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt)
+			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.localeCounts, &r.variantCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -290,7 +309,36 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	v.Mismatches = []content.Issue{}
+	a := s.variantView(ls, r, v.Locales, stored[VariantA])
+	v.Content, v.Translations, v.Pending, v.Mismatches = a.Content, a.Translations, a.Pending, a.Mismatches
+	v.Variants = campaignVariants(stored, srcLocale.Code)
+	if len(v.Variants) > 1 {
+		b := s.variantView(ls, r, v.Locales, stored[VariantB])
+		if a.Content != nil && b.Content != nil {
+			b.Duplicate = sameText(a.Content.Content, b.Content.Content)
+		}
+		v.VariantB = &b
+		if len(r.variantCounts) > 0 {
+			_ = json.Unmarshal(r.variantCounts, &v.VariantCounts)
+		}
+	}
+	switch r.status {
+	case StatusApproved, StatusSending, StatusCompleted:
+		d, err := s.deliveryProgress(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		v.Delivery = d
+	}
+	return v, nil
+}
+
+// variantView builds one variant's texts: the source, the translations (with
+// staleness and what changed), the locales still waiting and the up-to-date
+// translations that do not say what the source says.
+func (s *Service) variantView(ls content.Locales, r *campaignRow, required []string, stored map[string]storedContent) VariantView {
+	srcLocale := ls.Source()
+	vv := VariantView{Mismatches: []content.Issue{}}
 	src, hasSource := stored[srcLocale.Code]
 	for _, l := range ls.All() {
 		sc, ok := stored[l.Code]
@@ -302,7 +350,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 		_, cv.Report = s.policy.Validate(cv.Content)
 		if l.IsSource {
 			cv.Report.Warnings = s.policy.Quality(cv.Content, rowOffer(r))
-			v.Content = cv
+			vv.Content = cv
 			continue
 		}
 		cv.Report.Warnings = []content.Issue{}
@@ -311,28 +359,20 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 			if cv.Stale {
 				cv.SourceText = sc.SourceText
 			} else {
-				v.Mismatches = append(v.Mismatches, content.ConsistentWith(srcLocale, src.Content, l, sc.Content)...)
+				vv.Mismatches = append(vv.Mismatches, content.ConsistentWith(srcLocale, src.Content, l, sc.Content)...)
 			}
 		}
-		if v.Translations == nil {
-			v.Translations = map[string]*ContentView{}
+		if vv.Translations == nil {
+			vv.Translations = map[string]*ContentView{}
 		}
-		v.Translations[l.Code] = cv
+		vv.Translations[l.Code] = cv
 	}
-	missing, stale := pendingLocales(ls, v.Locales, stored)
-	v.Pending = ls.Ordered(toSet(append(missing, stale...)))
-	if v.Pending == nil {
-		v.Pending = []string{}
+	missing, stale := pendingLocales(ls, required, stored)
+	vv.Pending = ls.Ordered(toSet(append(missing, stale...)))
+	if vv.Pending == nil {
+		vv.Pending = []string{}
 	}
-	switch r.status {
-	case StatusApproved, StatusSending, StatusCompleted:
-		d, err := s.deliveryProgress(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		v.Delivery = d
-	}
-	return v, nil
+	return vv
 }
 
 // validateMessages parses the model's JSON strictly and applies the content
@@ -388,7 +428,7 @@ func rowOffer(r *campaignRow) offer.Offer {
 // recorder writes every attempt (valid or not) to llm_generations. It must work
 // even when the request context was cancelled, hence WithoutCancel.
 // code is the locale written; "" for the segment step (stored as the source).
-func (s *Service) recorder(campaignID int64, kind, code string) func(llm.AttemptLog) {
+func (s *Service) recorder(campaignID int64, kind, code, variant string) func(llm.AttemptLog) {
 	return func(a llm.AttemptLog) {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), auditWriteBudget)
 		defer cancel()
@@ -404,11 +444,11 @@ func (s *Service) recorder(campaignID int64, kind, code string) func(llm.Attempt
 		}
 		_, err := s.pool.Exec(ctx, `
 			INSERT INTO llm_generations (campaign_id, kind, attempt, mode, model, valid, problems, raw_output,
-			                             input_tokens, output_tokens, latency_ms, error, refused, locale)
+			                             input_tokens, output_tokens, latency_ms, error, refused, locale, variant)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-			        coalesce(nullif($14, ''), (SELECT code FROM locales WHERE is_source)))`,
+			        coalesce(nullif($14, ''), (SELECT code FROM locales WHERE is_source)), $15)`,
 			campaignID, kind, a.N, s.llm.Mode(), s.llm.Model(), a.Valid, problems, strings.ToValidUTF8(raw, ""),
-			a.Usage.InputTokens, a.Usage.OutputTokens, a.Latency.Milliseconds(), errText, isRefusal(a.Err), code)
+			a.Usage.InputTokens, a.Usage.OutputTokens, a.Latency.Milliseconds(), errText, isRefusal(a.Err), code, variant)
 		if err != nil {
 			s.log.Error("could not record LLM attempt", "campaign_id", campaignID, "error", err)
 		}
@@ -427,7 +467,7 @@ func (s *Service) markFallback(campaignID int64, code string) {
 	defer cancel()
 	_, err := s.pool.Exec(ctx, `
 		UPDATE llm_generations SET fell_back = true
-		WHERE id = (SELECT max(id) FROM llm_generations WHERE campaign_id = $1 AND kind = 'messages' AND locale = $2)`, campaignID, code)
+		WHERE id = (SELECT max(id) FROM llm_generations WHERE campaign_id = $1 AND kind = 'messages' AND locale = $2 AND variant = 'A')`, campaignID, code)
 	if err != nil {
 		s.log.Error("could not mark LLM fallback", "campaign_id", campaignID, "error", err)
 	}

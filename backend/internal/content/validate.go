@@ -48,6 +48,9 @@ type Issue struct {
 	// Locale is set when the issue belongs to one locale of a campaign (empty
 	// for the single-text checks of Validate).
 	Locale string `json:"locale,omitempty"`
+	// Variant is "B" when the issue belongs to a campaign's Variant B (empty
+	// means Variant A, or a single text).
+	Variant string `json:"variant,omitempty"`
 }
 
 // Report is the outcome of Validate. SMSLength and SubjectLength are the

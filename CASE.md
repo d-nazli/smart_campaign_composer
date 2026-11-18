@@ -96,7 +96,7 @@ Frontend Vue.js, backend Go veya PHP. Veritabanı, kuyruk ve kütüphaneler seni
 ## Bonus (isteğe bağlı)
 
 - [x] Zamanlanmış gönderim
-- [ ] A/B varyantları
+- [x] A/B varyantları
 - [x] Kullanıcının diline göre içerik
 - [ ] CI pipeline
 

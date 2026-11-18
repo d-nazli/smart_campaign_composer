@@ -730,3 +730,83 @@ func TestAMessageOverTheLimitAfterPersonalizationIsNeverSent(t *testing.T) {
 		t.Fatalf("the short name's messages were not sent (%d)", n)
 	}
 }
+
+// ---- A/B variants ----------------------------------------------------------------
+
+// With Variant B every person gets the text of their own variant (decided when
+// queued) in their own locale, and each delivery once.
+func TestEveryRecipientGetsTheirVariantInTheirLocale(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	policy, err := content.NewPolicy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := campaign.NewService(pool, mock.New(0), policy, log)
+	v, err := svc.Create(ctx, "Son 7 günde sepete ürün ekleyip almayanlara %15 indirim hatırlatması gönder")
+	if err != nil || v.Segment.Status != "ok" {
+		t.Fatalf("create: %v %+v", err, v)
+	}
+	if err := svc.GenerateMessages(ctx, v.ID, campaign.Events{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.GenerateVariant(ctx, v.ID, campaign.VariantB, campaign.Events{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	clk := fakeClock()
+	tp := newProvider(t, quiet(), clk)
+	w := newWorker(t, queue.NewPG(pool), tp.URL, clk, testConfig())
+	drain(t, w, pool, clk)
+
+	// The text of every (variant, locale), by delivery id.
+	type key struct{ variant, locale string }
+	texts := map[key]string{}
+	rows, err := pool.Query(ctx, `SELECT variant, locale, sms_body FROM campaign_contents WHERE campaign_id=$1`, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k key
+		var sms string
+		if err := rows.Scan(&k.variant, &k.locale, &sms); err != nil {
+			t.Fatal(err)
+		}
+		texts[k] = sms
+	}
+	rows.Close()
+	contains := func(body, tmpl string) bool {
+		for _, piece := range strings.Split(tmpl, "{{first_name}}") {
+			if p := strings.TrimSpace(piece); p != "" && !strings.Contains(body, p) {
+				return false
+			}
+		}
+		return true
+	}
+	seen := map[string]int{}
+	perVariant := map[string]int{}
+	for _, r := range tp.requests() {
+		if r.Channel != "sms" {
+			continue
+		}
+		seen[r.Key]++
+		var variant, code string
+		if err := pool.QueryRow(ctx, `SELECT variant, locale FROM deliveries WHERE id=$1::bigint`, r.Key).Scan(&variant, &code); err != nil {
+			t.Fatal(err)
+		}
+		own, other := texts[key{variant, code}], texts[key{map[string]string{"A": "B", "B": "A"}[variant], code}]
+		if !contains(r.Body, own) || (own != other && contains(r.Body, other)) {
+			t.Fatalf("delivery %s (%s, %s) got %q, its text is %q", r.Key, variant, code, r.Body, own)
+		}
+		perVariant[variant]++
+	}
+	for k, n := range seen {
+		if n != 1 {
+			t.Fatalf("delivery %s sent %d times", k, n)
+		}
+	}
+	if perVariant["A"] == 0 || perVariant["B"] == 0 {
+		t.Fatalf("sent per variant %v", perVariant)
+	}
+}
