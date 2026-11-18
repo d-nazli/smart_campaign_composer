@@ -51,10 +51,10 @@ describe('DashboardView', () => {
     expect(v.get('a.name').text()).toBe('Anneler gününe özel indirim')
   })
 
-  it('has no summary tiles; one line counts the campaigns being sent', async () => {
+  it('has no summary tiles and no campaign count above the list', async () => {
     const v = await mountIt()
-    for (const id of ['summary', 'total-sent', 'total-failed', 'total-pending', 'rate']) expect(v.find(`[data-testid="${id}"]`).exists()).toBe(false)
-    expect(v.get('[data-testid="active"]').text()).toBe('Şu an aktif gönderim: 1 kampanya')
+    for (const id of ['summary', 'total-sent', 'total-failed', 'total-pending', 'rate', 'active']) expect(v.find(`[data-testid="${id}"]`).exists()).toBe(false)
+    expect(v.text()).not.toContain('aktif gönderim')
   })
 
   it('shows the speed of a sending campaign per channel, measured between refreshes', async () => {
@@ -86,7 +86,6 @@ describe('DashboardView', () => {
     list.mockResolvedValue([done])
     const v = await mountIt()
     expect(v.get('[data-testid="speed"]').text()).toBe("ort. 4/sn, 27 sn'de bitti")
-    expect(v.get('[data-testid="active"]').text()).toContain('0 kampanya')
   })
 
   it('shows an empty state with a way to start when there are no campaigns', async () => {

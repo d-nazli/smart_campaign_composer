@@ -90,7 +90,6 @@ onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
 })
 
-const active = computed(() => (campaigns.value ?? []).filter(isSending).length)
 // Live speed per sending campaign and channel (needs two readings).
 const rates = computed(() => {
   const out: Record<number, ChannelRates> = {}
@@ -118,10 +117,6 @@ const newCampaign = () => (window.location.hash = '#/')
     <p v-if="error" class="notice error" role="alert">Liste güncellenemedi ({{ error }}). Gösterilen bilgi eski olabilir.</p>
     <p v-if="cancelError" class="notice error" role="alert" data-testid="cancel-error">Gönderim iptal edilemedi: {{ cancelError }}</p>
 
-    <p v-if="campaigns && campaigns.length > 0" class="active num" data-testid="active">
-      Şu an aktif gönderim: <strong>{{ active }}</strong> kampanya
-    </p>
-
     <p v-if="campaigns === null && !error" class="muted">Yükleniyor…</p>
     <div v-else-if="campaigns && campaigns.length === 0" class="empty" data-testid="empty">
       <span class="empty__icon" aria-hidden="true"><Inbox :size="22" /></span>
@@ -144,14 +139,6 @@ const newCampaign = () => (window.location.hash = '#/')
 .dash {
   display: grid;
   gap: var(--s-5);
-}
-.active {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
-.active strong {
-  color: var(--fg);
 }
 .empty {
   display: grid;

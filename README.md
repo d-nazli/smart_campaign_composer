@@ -71,7 +71,7 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 2. Onay, izin vermiş ve telefon/e-postası kayıtlı herkesi kanal başına bir kez kuyruğa alır (`deliveries`). Aynı onayı iki
    kez (hatta aynı anda) göndermek çift kayıt üretmez. Aynı telefonu ya da e-postayı paylaşan iki müşteri kaydı da o
    adrese **tek mesaj** alır (ekrandaki "ulaşılabilir" sayıları adres sayısıdır).
-3. `worker` kuyruğu kanal başına **90 mesaj/sn** (`WORKER_RATE_PER_SEC`) hızla boşaltır. Provider'ın 429/5xx/zaman aşımı
+3. `worker` kuyruğu kanal başına **97 çağrı/sn** (`WORKER_RATE_PER_SEC`) hızla boşaltır. Provider'ın 429/5xx/zaman aşımı
    cevaplarında yeniden dener (429'da o mesaj `Retry-After` kadar bekler; 429'lar art arda gelirse kanal da bekletilir; 5xx'te üstel bekleme + jitter, en fazla 5
    deneme). Aynı mesaj aynı `Idempotency-Key` ile gittiği için provider "kabul ettim ama hata döndüm" durumunda bile
    tek teslimat yapar. Geçersiz telefon/e-posta (`invalid_recipient`) yeniden denenmez, `failed` olur.
@@ -79,7 +79,14 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 
 Varsayılan provider kaosu %3 rastgele 429 enjekte eder. Tek bir 429 yalnız kendi mesajını bekletir; bir saniyede 10 ve daha
 fazla 429 gelirse (provider gerçekten sınırlıyor demektir) kanal `Retry-After` kadar durur. Ölçülen hız kanal başına
-~90 çağrı/sn (~80 kabul/sn, geri kalanı kaos yüzünden yeniden denenir); 100/sn hiçbir zaman aşılmaz.
+~97 çağrı/sn; hiçbir 1 sn penceresinde 100 çağrı aşılmaz. Kaos kapalıyken kabul edilen hız ~96/sn; varsayılan
+kaosla ~85/sn, çünkü çağrıların ~%10'u hata alıp yeniden deneniyor. 100 çağrı/sn'de bile bu kaosla kabul edilen hızın
+tavanı ~89,6/sn'dir (D101).
+
+Hızı ölçmek için **`make bench`** (~30 sn, `make test`'e dahil değil): worker ve mock provider gerçek saatle, iki kanal
+birlikte çalışır; kanal başına çağrı/sn, kabul/sn, en yoğun 1 sn penceresi ve gerçek 429 sayısı tablo olarak yazılır. Bir
+pencerede 100'den fazla çağrı ya da gerçek 429 olursa komut başarısız olur. Yalnızca geçici test veritabanları kullanır, çalışan
+sisteme kayıt bırakmaz. Başka hızları denemek için: `make bench BENCH_RATES=95,97,100` (100'de kural kırılır; 97'nin nedeni bu).
 
 ## Kullanıcının locale'ine göre içerik (bonus)
 

@@ -26,7 +26,7 @@ type Config struct {
 	Concurrency   int           // senders per channel (64)
 	BatchSize     int           // rows claimed at once, at most (20)
 	Lease         time.Duration // how long a claimed row is ours (30s)
-	RatePerSecond int           // per channel, strictly paced (90)
+	RatePerSecond int           // per channel, strictly paced (97)
 	Poll          time.Duration // idle wait between claims (200ms)
 	// RequestTimeout is how long one provider call may take (5s). It stays below
 	// the provider's 10s "hang" mode so a hanging call becomes a retry, not a stall.
@@ -34,10 +34,13 @@ type Config struct {
 	Policy         RetryPolicy
 }
 
-// DefaultConfig is the production setting.
+// DefaultConfig is the production setting. The rate is 97, not 100: the time
+// between a pacer slot and the moment the provider sees the request varies by a
+// few milliseconds, and at 100/s the provider counted 101 calls inside one
+// second (real 429s). At 97 its busiest second held 98.
 func DefaultConfig() Config {
 	return Config{
-		Concurrency: 64, BatchSize: 20, Lease: 30 * time.Second, RatePerSecond: 90, Poll: 200 * time.Millisecond, RequestTimeout: 5 * time.Second,
+		Concurrency: 64, BatchSize: 20, Lease: 30 * time.Second, RatePerSecond: 97, Poll: 200 * time.Millisecond, RequestTimeout: 5 * time.Second,
 		Policy: RetryPolicy{MaxAttempts: 5, MaxAge: 10 * time.Minute, BaseDelay: 2 * time.Second, MaxDelay: 60 * time.Second, DefaultRetryAfter: time.Second},
 	}
 }
@@ -250,7 +253,7 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		at := now.Add(dec.Delay)
 		if dec.Kind == queue.RetryRateLimited {
 			// This message waits as told; the whole channel backs off only when
-			// 429s come in a burst (a stray one is not a reason to stall 90/s).
+			// 429s come in a burst (a stray one is not a reason to stall the channel).
 			if pacer.RateLimited(at) {
 				log.Warn("429 burst: channel paused", "until", at)
 			}

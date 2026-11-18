@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // A half ring: each part is an arc of the semicircle in proportion to its value
-// (used for the reasons deliveries failed, against all messages). The slot sits in the middle, under the arc.
+// (used for the outcome of a campaign's messages). The slot sits in the middle, under the arc.
 import { computed } from 'vue'
 
 export interface Arc {
@@ -15,12 +15,20 @@ const LEN = Math.PI * R
 const MIN_ARC = 3
 const arcs = computed(() => {
   const total = props.max ?? props.parts.reduce((s, p) => s + p.value, 0)
+  const lens = props.parts.map((p) => {
+    const len = total > 0 ? (p.value / total) * LEN : 0
+    return props.max !== undefined && p.value > 0 ? Math.max(len, MIN_ARC) : len
+  })
+  // The minimum can push the parts past the half ring: the largest part gives the room back.
+  const over = lens.reduce((s, l) => s + l, 0) - LEN
+  if (over > 0) {
+    const big = lens.indexOf(Math.max(...lens))
+    lens[big] = Math.max(0, lens[big] - over)
+  }
   let at = 0
-  return props.parts.map((p) => {
-    let len = total > 0 ? (p.value / total) * LEN : 0
-    if (props.max !== undefined && p.value > 0) len = Math.max(len, MIN_ARC)
-    const a = { color: p.color, dash: `${len} ${LEN * 2}`, offset: -at }
-    at += len
+  return props.parts.map((p, i) => {
+    const a = { color: p.color, dash: `${lens[i]} ${LEN * 2}`, offset: -at }
+    at += lens[i]
     return a
   })
 })

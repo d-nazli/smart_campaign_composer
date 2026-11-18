@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { CheckCircle2 } from 'lucide-vue-next'
 import type { CampaignStatus, DeliveryProgress, LocaleInfo } from '../types'
-import { deliveryTotals } from '../utils/dashboard'
+import { channelAverage, deliveryTotals, duration } from '../utils/dashboard'
+import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
 import { failureText, mergeFailures } from '../utils/failures'
 import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
 import Badge from './ui/Badge.vue'
@@ -13,7 +14,7 @@ import StatTile from './ui/StatTile.vue'
 
 // The sending step, laid out like a campaign report. Each number appears once: one figure
 // group per channel (sent, then failed / skipped / waiting), one bar for the whole campaign,
-// the failure reasons as a half ring, and one line of locales.
+// the outcome (delivered / each failure reason) as a half ring, and one line of locales.
 const props = defineProps<{ delivery: DeliveryProgress; status: CampaignStatus; locales?: LocaleInfo[] }>()
 
 const finished = computed(() => props.status === 'completed')
@@ -31,12 +32,55 @@ const byLocale = computed(() => {
   return localeSummary(totals, props.locales ?? FALLBACK_LOCALES).map((l) => ({ code: l.code, p: progress[l.code] }))
 })
 
-const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)']
+// The outcome ring: every message of the campaign is the whole; delivered in blue, each failure
+// reason in its own shade of red, what is still waiting is the empty track. Every colour also has
+// a labelled row underneath, so the colour never carries the meaning alone.
+// Speed per channel (the provider's limit is 100/s for each channel). The live rate is measured
+// here from the progress the page polls; the average and the time come from the server's
+// first and last accepted message.
+const samples = ref<Record<'sms' | 'email', Sample[]>>({ sms: [], email: [] })
+watch(
+  () => [props.delivery.sms.sent, props.delivery.email.sent] as const,
+  ([sms, email]) => {
+    const at = performance.now()
+    samples.value = { sms: pushSample(samples.value.sms, { at, sent: sms }), email: pushSample(samples.value.email, { at, sent: email }) }
+  },
+  { immediate: true },
+)
+const sending = computed(() => !finished.value && !props.delivery.done)
+const speedRows = computed(() =>
+  rows.value
+    .filter((r) => r.p.total > 0)
+    .map((r) => {
+      const avg = channelAverage(r.p)
+      const live = samples.value[r.key as 'sms' | 'email']
+      return {
+        key: r.key,
+        name: r.key === 'sms' ? 'SMS' : 'E-posta',
+        live: sending.value && live.length >= 2 ? `${Math.round(ratePerSecond(live))}/sn` : '–',
+        avg: avg ? `${Math.round(avg.perSecond)}/sn` : '–',
+        time: avg ? duration(avg.seconds) : '–',
+        retries: r.p.retries,
+        limited: r.p.rate_limited,
+      }
+    }),
+)
+
+const SENT_COLOR = 'var(--chart-1)'
+const REDS = ['var(--error)', 'color-mix(in srgb, var(--error) 70%, var(--surface))', 'color-mix(in srgb, var(--error) 50%, var(--surface))', 'color-mix(in srgb, var(--error) 35%, var(--surface))']
+const SKIPPED_COLOR = 'var(--muted)'
 const failedTotal = computed(() => reasons.value.reduce((n, r) => n + r.count, 0))
-// The ring is drawn against everything that was to be sent, so it shows how big the problem is.
 const pct = (n: number) => (totals.value.total > 0 ? ((n / totals.value.total) * 100).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) : '0')
 const count = (n: number) => n.toLocaleString('tr-TR')
-const arcs = computed(() => reasons.value.map((r, i) => ({ value: r.count, color: COLORS[i % COLORS.length] })))
+const outcome = computed(() => [
+  { key: 'sent', text: 'Başarılı', value: totals.value.sent, color: SENT_COLOR },
+  ...reasons.value.map((r, i) => ({ key: r.reason, text: failureText(r.reason), value: r.count, color: REDS[Math.min(i, REDS.length - 1)] })),
+  ...(totals.value.skipped > 0 ? [{ key: 'skipped', text: 'Atlandı (izin geri çekildi ya da adres yok)', value: totals.value.skipped, color: SKIPPED_COLOR }] : []),
+])
+const arcs = computed(() => outcome.value.map((o) => ({ value: o.value, color: o.color })))
+const ringLabel = computed(
+  () => `Gönderim sonucu: ${count(totals.value.total)} mesajın ${count(totals.value.sent)} tanesi başarılı, ${count(failedTotal.value)} tanesi başarısız (%${pct(failedTotal.value)})`,
+)
 </script>
 
 <template>
@@ -66,19 +110,47 @@ const arcs = computed(() => reasons.value.map((r, i) => ({ value: r.count, color
       </p>
     </section>
 
-    <div v-if="reasons.length || byLocale.length" class="two">
-      <section v-if="reasons.length" class="panel">
-        <h3 class="label">Başarısız mesajlar</h3>
-        <HalfDonut :parts="arcs" :max="totals.total" :label="`${count(totals.total)} mesajın ${count(failedTotal)} tanesi başarısız, %${pct(failedTotal)}`">
-          <strong class="big num" data-testid="failed-count">{{ count(failedTotal) }}</strong>
-          <span class="of num muted" data-testid="failed-share">/ {{ count(totals.total) }} · %{{ pct(failedTotal) }}</span>
+    <section v-if="speedRows.length" class="panel" data-testid="speed">
+      <h3 class="label">Hız · kanal başına en fazla 100/sn</h3>
+      <div class="speed-wrap">
+        <table class="speed">
+          <thead>
+            <tr>
+              <th scope="col">Kanal</th>
+              <th v-if="sending" scope="col" class="r">Anlık</th>
+              <th scope="col" class="r">Ortalama</th>
+              <th scope="col" class="r">{{ sending ? 'Geçen süre' : 'Süre' }}</th>
+              <th scope="col" class="r">Tekrar deneme</th>
+              <th scope="col" class="r">429</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in speedRows" :key="r.key" :data-testid="`speed-${r.key}`">
+              <th scope="row">{{ r.name }}</th>
+              <td v-if="sending" class="r num" data-testid="speed-live">{{ r.live }}</td>
+              <td class="r num" data-testid="speed-avg">{{ r.avg }}</td>
+              <td class="r num" data-testid="speed-time">{{ r.time }}</td>
+              <td class="r num">{{ count(r.retries) }}</td>
+              <td class="r num">{{ count(r.limited) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="two">
+      <section class="panel" data-testid="outcome">
+        <h3 class="label">Gönderim sonucu</h3>
+        <HalfDonut :parts="arcs" :max="totals.total" :label="ringLabel">
+          <strong class="big num" data-testid="outcome-total">{{ count(totals.sent) }} / {{ count(totals.total) }}</strong>
+          <span class="of num muted" data-testid="outcome-share">başarılı · %{{ pct(failedTotal) }} başarısız</span>
         </HalfDonut>
-        <ul class="reasons" aria-label="Başarısızlık nedenleri">
-          <li v-for="(r, i) in reasons" :key="r.reason" class="leader">
-            <i class="dot" :style="{ background: COLORS[i % COLORS.length] }" aria-hidden="true" />
-            <span>{{ failureText(r.reason) }}</span>
+        <ul class="reasons" aria-label="Gönderim sonucu ayrıntısı">
+          <li v-for="o in outcome" :key="o.key" class="leader" :data-testid="`outcome-${o.key}`">
+            <i class="dot" :style="{ background: o.color }" aria-hidden="true" />
+            <span>{{ o.text }}</span>
             <span class="leader__fill" />
-            <span class="num">%{{ pct(r.count) }} (<strong>{{ r.count }}</strong>)</span>
+            <span class="num">%{{ pct(o.value) }} (<strong>{{ count(o.value) }}</strong>)</span>
           </li>
         </ul>
       </section>
@@ -131,7 +203,7 @@ h3.label {
   align-items: start;
 }
 .big {
-  font-size: 1.875rem;
+  font-size: 1.375rem;
   font-weight: 400;
 }
 .of {
@@ -149,6 +221,32 @@ h3.label {
   height: 8px;
   border-radius: 50%;
   transform: translateY(-1px);
+}
+.speed-wrap {
+  overflow-x: auto;
+}
+.speed {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.speed th,
+.speed td {
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+.speed thead th {
+  border-top: none;
+  color: var(--muted);
+  font-weight: 500;
+}
+.speed tbody th {
+  font-weight: 500;
+}
+.speed .r {
+  text-align: right;
 }
 .locs {
   display: flex;

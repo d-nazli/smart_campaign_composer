@@ -1,4 +1,4 @@
-import type { CampaignSummary, DeliveryProgress } from '../types'
+import type { CampaignSummary, ChannelProgress, DeliveryProgress } from '../types'
 
 export type Page = 'compose' | 'dashboard'
 
@@ -208,9 +208,19 @@ export function isSending(c: Pick<CampaignSummary, 'status' | 'delivery'>): bool
 }
 
 /** "26 sn" / "1 dk 5 sn". */
-function duration(seconds: number): string {
+export function duration(seconds: number): string {
   const s = Math.max(1, Math.round(seconds))
   return s < 60 ? `${s} sn` : s % 60 === 0 ? `${s / 60} dk` : `${Math.floor(s / 60)} dk ${s % 60} sn`
+}
+
+/**
+ * One channel's average speed so far: accepted messages over the time between the first and the
+ * last one, and that time in seconds. null before anything was accepted.
+ */
+export function channelAverage(ch: ChannelProgress): { perSecond: number; seconds: number } | null {
+  if (!ch.first_sent_at || !ch.last_sent_at || ch.sent === 0) return null
+  const seconds = (Date.parse(ch.last_sent_at) - Date.parse(ch.first_sent_at)) / 1000
+  return { perSecond: ch.sent / Math.max(1, seconds), seconds }
 }
 
 export interface ChannelRates {
@@ -239,12 +249,11 @@ export function sendSpeed(c: Pick<CampaignSummary, 'status' | 'delivery'>, live?
   let last = -Infinity
   const averages: number[] = []
   for (const ch of [d.sms, d.email]) {
-    if (!ch.first_sent_at || !ch.last_sent_at || ch.sent === 0) continue
-    const from = Date.parse(ch.first_sent_at)
-    const to = Date.parse(ch.last_sent_at)
-    first = Math.min(first, from)
-    last = Math.max(last, to)
-    averages.push(ch.sent / Math.max(1, (to - from) / 1000))
+    const a = channelAverage(ch)
+    if (!a) continue
+    first = Math.min(first, Date.parse(ch.first_sent_at!))
+    last = Math.max(last, Date.parse(ch.last_sent_at!))
+    averages.push(a.perSecond)
   }
   if (averages.length === 0) return null
   const avg = averages.reduce((a, b) => a + b, 0) / averages.length

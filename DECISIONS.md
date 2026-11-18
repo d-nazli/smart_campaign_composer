@@ -294,7 +294,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 
 ## D54 — Retry politikası ve pacer · `Kesin (kullanıcı kararı + uygulama)`
 - Saf fonksiyon `RetryPolicy.Decide`: 2xx→sent; **429→`Retry-After` kadar bekle, deneme harcanmaz**; 5xx/408/zaman aşımı/bağlantı hatası→en fazla 5 başarısız deneme, `min(60 sn, 2 sn·2ⁿ)` **full jitter**; diğer 4xx (ör. `invalid_recipient`)→kalıcı `failed`, retry yok. Teslimat 10 dk'dan eskiyse (veya beklemek sınırı aşacaksa) retry edilmez, `failed` + "too old".
-- Pacer: kanal başına tek, **varsayılan 90/sn** (`WORKER_RATE_PER_SEC`). Aralık yukarı yuvarlanır, bu yüzden gerçek hız hiçbir zaman ayarı geçmez; boşta kalan zaman "patlama kredisi" biriktirmez. Test: hiçbir 1 sn penceresi hızı aşmaz (1, 7, 90, 100, 333/sn); gerçek saatle provider 100/sn limitini uygularken 300 mesaj hiç 429 görmeden gider.
+- Pacer: kanal başına tek, **varsayılan 90/sn (D101 ile 97/sn)** (`WORKER_RATE_PER_SEC`). Aralık yukarı yuvarlanır, bu yüzden gerçek hız hiçbir zaman ayarı geçmez; boşta kalan zaman "patlama kredisi" biriktirmez. Test: hiçbir 1 sn penceresi hızı aşmaz (1, 7, 90, 100, 333/sn); gerçek saatle provider 100/sn limitini uygularken 300 mesaj hiç 429 görmeden gider.
 - **Bedeli (dürüst):** 429 alınca *tüm kanal* `Retry-After` kadar durur. Provider'ın varsayılan kaosu %3 rastgele 429 enjekte ettiği için bu, kanal hızını düşürür: canlı denemede kanal başına yaklaşık 10–20 mesaj/sn, 1.700 mesaj ≈ 80 sn. Yalnız o mesajı bekletmek daha hızlı olurdu ama gerçek bir hız sınırında diğer isteklerin de 429 yemesine yol açar. Hızlı demo için `.env`'de `PROVIDER_429_RATE=0` yeterli.
 
 ## D55 — Worker davranışı · `Önerildi → uygulandı`
@@ -302,7 +302,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Metin gönderim anında alıcıya göre render edilir (uzun isimler yedek sözcüğe düşer, SMS ≤160 garantisi). Test: tüm istekler için SMS ≤160, konu ≤80 tek satır, kalmış `{{…}}` yok, teklif mesajda var.
 - `Idempotency-Key` = delivery id. Kapanışta uçuştaki gönderimlerin sonucu kendi süresiyle (5 sn) yazılır; kapanış yüzünden yarıda kesilen çağrı "başarısız deneme" sayılmaz, lease dolunca yeniden alınır.
 - Bir `RunOnce` (test/tek seferlik) ve sürekli `Run` (kanal başına claimer + `WORKER_CONCURRENCY` gönderici) aynı `process` kodunu kullanır.
-- Ayarlar: `WORKER_RATE_PER_SEC` (90), `WORKER_CONCURRENCY` (64), `WORKER_MAX_ATTEMPTS` (5), `WORKER_REQUEST_TIMEOUT_MS` (5000; provider'ın 10 sn "asılma" kaosundan kısa).
+- Ayarlar: `WORKER_RATE_PER_SEC` (97, D101), `WORKER_CONCURRENCY` (64), `WORKER_MAX_ATTEMPTS` (5), `WORKER_REQUEST_TIMEOUT_MS` (5000; provider'ın 10 sn "asılma" kaosundan kısa).
 
 ## D56 — Arayüz: onay kutusu ve 1 sn polling · `Önerildi → uygulandı`
 - "Onayla ve gönder" iki adımlı (sayılar + uyarılar gösterilir, "Evet, gönder"). Kaydedilmemiş düzenleme varken onay kapalı. Onaydan sonra editör salt okunur, kitle/metin kilitli.
@@ -464,7 +464,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Test: api bütçesi 18, worker bütçesi 20 iken 20 harfli isim → SMS 162 / konu 82 olurdu; sağlayıcıya hiç istek gitmez, iki teslimat `failed` + sebep; kısa isimli alıcının mesajları gider. Sınır testleri: 160/161, 80/81, satır sonu.
 
 ## D81 — Hız sınırı tek worker varsayar · `Kesin (kullanıcı kararı: kodlanmıyor)`
-- Kanal başına 100/sn sınırı worker sürecindeki pacer ile uygulanır (D54, varsayılan 90/sn). Pacer süreç içidir: **iki worker çalışırsa** her biri 90/sn gönderir ve kanal toplamı 180/sn olur. Mock sağlayıcı yine 100/sn'de 429 döner, mesaj kaybolmaz ama sınır istemci tarafında artık garanti değildir.
+- Kanal başına 100/sn sınırı worker sürecindeki pacer ile uygulanır (D54, varsayılan 97/sn, D101). Pacer süreç içidir: **iki worker çalışırsa** her biri 97/sn gönderir ve kanal toplamı 194/sn olur. Mock sağlayıcı yine 100/sn'de 429 döner, mesaj kaybolmaz ama sınır istemci tarafında artık garanti değildir.
 - **Varsayım:** compose tek worker çalıştırır; ölçeklemek kapsam dışı. Çoklu worker gerekirse sınır paylaşılan bir yerde tutulmalı (ör. Postgres'te kanal başına saniyelik kota satırı ya da Redis token bucket) ve pacer oradan slot almalı. Kuyruk (`SKIP LOCKED`) ve idempotency zaten çoklu worker'a hazır; tek eksik bu.
 - README'deki "worker tek replica (hız sınırı süreç içi)" notu bu kararın kısa hâlidir.
 
@@ -570,7 +570,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Eksik veya güncel olmayan çeviri varken onay backend'de **409 `stale_translations`** (`missing`, `stale` listeleri). Her locale yeniden doğrulanır: JSON şeması, SMS 160 / konu 80 (değişken bütçeleriyle), değişken kümesi kaynakla aynı (`{{first_name}}` kaybolamaz), sayılar/tarihler/ücretsiz kargo aynı.
 - **Yalnız tam eşleşme:** kişi kendi locale'inin metnini alır; metin yoksa başka locale'e düşülmez, teslimat `skipped` (`no content for locale`). Zamanlanmış kampanyada sonradan beliren locale bu yüzden mesaj almaz (testli).
 - Locale gönderim anında okunur ve teslimata (`deliveries.locale`) yazılır; locale kırılımı artık gerçek gönderilen locale'i sayar (D77'deki sınır kalktı).
-- Değişmeyenler: adres başına tek mesaj (D79), izin kontrolü iki kez, kanal başına tek hız sınırı (90/sn, sağlayıcı 100/sn) tüm locale'ler için toplam.
+- Değişmeyenler: adres başına tek mesaj (D79), izin kontrolü iki kez, kanal başına tek hız sınırı (97/sn, sağlayıcı 100/sn) tüm locale'ler için toplam.
 
 ## D96 — Arayüz: Mesajlar kartında locale sütunu · `Kesin (kullanıcı kararı)`
 - **Güncelleme (D97):** çeviri alanları salt okunur; her çeviride yalnız "Yeniden çevir". Onay penceresi elle düzenleme için değil, değişen Türkçe metin için.
@@ -597,7 +597,14 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Ölçüm (gürültülü varsayılan provider, ~2.500 mesaj): kanal başına yalnız 13–17 kabul/sn. Sebep: her 429 tüm kanalı `Retry-After` (1–3 sn) kadar durduruyordu; %3 enjekte 429 × 90/sn ≈ 2,7 durdurma/sn ile kanal çoğu zaman bekliyordu. İkincil: 20 gönderici (1 sn'lik asılan çağrı 5 sn yer tutar) ve küçük DB havuzu.
 - Karar: tek 429 yalnız kendi mesajını bekletir. Kanal, 1 sn içinde ≥10 429 gelirse durur (`Pacer.RateLimited`); pacer 90/sn'de kaldığı için dağınık 429 gürültüdür, kümelenen 429 gerçek sınırlamadır. D12'deki "kanalı duraklat" bu koşula bağlandı.
 - `WORKER_CONCURRENCY` 20→64; claim döngüsü gönderici boşalınca haber alır (eskiden boş slotta 200 ms uyuyordu ≈ en çok 100 claim/sn); worker DB havuzu `Concurrency/2+4` bağlantı.
-- Sonuç: kanal başına ~90 çağrı/sn, ~80 kabul/sn (kalanı kaos yüzünden retry); hiçbir 1 sn penceresi 100'ü aşmaz. Testler: `TestEachChannelSendsNearButNeverAbove100PerSecond`, `TestALone429DelaysOnlyItsOwnMessage`, pacer'da yığın/dağınık 429 testleri.
+- Sonuç: kanal başına ~90 çağrı/sn, ~80 kabul/sn (kalanı kaos yüzünden retry); hiçbir 1 sn penceresi 100'ü aşmaz. Testler: `TestALone429DelaysOnlyItsOwnMessage`, pacer'da yığın/dağınık 429 testleri (ölçüm testleri D101'de).
+
+## D101 — Pacer 97/sn; varsayılan kaos aynı kalır · `Kesin (kullanıcı kararı)`
+- Hedef: kanal başına kabul edilen hız 100'e yakın, ama hiçbir 1 sn penceresinde provider çağrısı 100'ü aşmayacak.
+- Ölçüm (gerçek saat, iki kanal birlikte, 50–150 ms gecikme, en yoğun 1 sn penceresi provider tarafında): pacer 100/sn → **101 çağrı, gerçek 429** (yasak); 99 → 100; 98 → 99–100; 97 → 98. Fazlalık, pacer slotu ile isteğin provider'a varması arasındaki birkaç ms'lik oynamadan geliyor. Seçilen **97**: iki çağrılık pay.
+- Provider her çağrıyı kaostan önce sayar. Varsayılan kaos çağrıların ~%10'unu boşa harcar (%1 zaman aşımı, ~%3 enjekte 429, ~%5 5xx, %2 kabul-sonrası-hatanın tekrar çağrısı). Bu yüzden kabul edilen hız = çağrı × ~0,9: 97 çağrıda ~85–86/sn, 100 çağrıda bile teorik tavan ~89,6/sn. **Kaos açıkken 90+ kabul, 100 çağrı sınırıyla matematiksel olarak mümkün değil.** Kaos kapalıyken 97 çağrıda kabul ~96/sn.
+- Kullanıcı kararı: varsayılan kaos aynı kalsın (retry/429 demoda görünsün); tavan README'de yazılı.
+- Ölçüm `make bench`'e taşındı (`bench` build tag'i, `make test`'e dahil değil, yalnız geçici test DB'leri): hatasız ve varsayılan kaoslu provider için kanal başına çağrı/sn, kabul/sn, en yoğun 1 sn penceresi, gerçek 429; pencere >100 ya da gerçek 429 olursa başarısız. `BENCH_RATES=97,100` ile 97: pik 98, 429 yok; 100: pik 101, gerçek 429. `make test`'te kalan kural testi: `TestRealPaceNeverTriggersTheProvidersRateLimit`.
 
 ---
 

@@ -166,6 +166,19 @@ services:
     command: ["npm", "test"]
     networks: [app]
 
+  # ---- send-rate benchmark (`make bench`; never part of `make test`) ----
+  backend-bench:
+    profiles: [bench]
+    build: { context: ./backend, target: dev }
+    command: ["go", "test", "-tags=bench", "-run", "Bench", "-count=1", "-v", "-timeout=15m", "./internal/worker/"]
+    environment:
+      LLM_MODE: mock
+      ANTHROPIC_API_KEY: ""
+      TEST_DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/postgres?sslmode=disable
+    networks: [app]
+    depends_on:
+      postgres: { condition: service_healthy }
+
   # ---- opt-in smoke test against the real Claude API (`make test-live`) ----
   backend-test-live:
     profiles: [live]

@@ -5,7 +5,7 @@
 COMPOSE     := docker compose
 COMPOSE_DEV := docker compose -f docker-compose.yml -f docker-compose.dev.yml
 
-.PHONY: up down build dev dev-down ps logs test test-backend test-frontend test-race test-live clean
+.PHONY: up down build dev dev-down ps logs test test-backend test-frontend test-race test-live bench clean
 
 ## Full stack, production-like images (http://localhost:8080)
 up:
@@ -48,6 +48,12 @@ test-race:
 ## Not part of `make test`.
 test-live:
 	$(COMPOSE) --profile live run --rm --build backend-test-live
+
+## Send-rate benchmark: worker + mock provider, both channels, real clock (~30 s).
+## Prints calls/s and accepted/s per channel; fails if any 1 s window exceeds 100 calls.
+## Not part of `make test`. Options: BENCH_RATES=95,97,100 BENCH_MESSAGES=800
+bench:
+	$(COMPOSE) --profile bench run --rm --build -e BENCH_RATES=$(BENCH_RATES) -e BENCH_MESSAGES=$(BENCH_MESSAGES) backend-bench
 
 ## Stop everything and delete the database volume (re-seeds on next up)
 clean:

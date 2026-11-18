@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { DeliveryProgress as Delivery, Segment } from '../types'
 import ApprovalCard from './ApprovalCard.vue'
@@ -55,37 +55,85 @@ describe('DeliveryProgress', () => {
     expect(make().get('.reasons').text()).toContain('2')
   })
 
-  it('draws the failures against all messages, one colour per reason', () => {
-    const many: Delivery = {
-      sms: ch({ total: 1500, sent: 1490, failed: 10 }),
-      email: ch({ total: 936, sent: 935, failed: 1 }),
-      done: true,
-      failures: [
-        { channel: 'sms', reason: 'gave_up', count: 9 },
-        { channel: 'sms', reason: 'rejected', count: 1 },
-        { channel: 'email', reason: 'gave_up', count: 1 },
-      ],
-    }
-    const w = make(many, 'completed')
-    const t = w.get('[data-testid="failed-share"]').text()
-    expect(t).toContain('/ 2.436')
-    expect(t).toContain('%0,45') // 11 of 2.436
-    expect(w.get('[data-testid="failed-count"]').text()).toBe('11')
+  const outcomeOf = (sent: number, total: number, failures: { reason: string; count: number }[]): Delivery => ({
+    sms: ch({ total, sent, failed: failures.reduce((n, f) => n + f.count, 0) }),
+    email: ch(),
+    done: true,
+    failures: failures.map((f) => ({ channel: 'sms' as const, ...f })),
+  })
+  const len = (el: { attributes: (n: string) => string | undefined }) => parseFloat(el.attributes('stroke-dasharray')!)
+  const HALF = Math.PI * 70
+
+  it('shows the outcome of all messages: delivered in blue, each failure reason in its own red', () => {
+    const w = make(outcomeOf(7264, 7296, [{ reason: 'gave_up', count: 20 }, { reason: 'rejected', count: 12 }]), 'completed')
+    expect(w.get('[data-testid="outcome"] h3').text()).toBe('Gönderim sonucu')
+    expect(w.get('[data-testid="outcome-total"]').text()).toBe('7.264 / 7.296')
+    expect(w.get('[data-testid="outcome-share"]').text()).toBe('başarılı · %0,44 başarısız')
     const arcs = w.findAll('path.arc')
-    expect(arcs).toHaveLength(2)
-    // each reason has its own colour, and the ring is nearly empty: 10 of 2.436 is about 0,4% of the half ring
-    expect(new Set(arcs.map((a) => a.attributes('stroke'))).size).toBe(2)
-    expect(parseFloat(arcs[0].attributes('stroke-dasharray')!)).toBeLessThan(5)
-    expect(parseFloat(arcs[0].attributes('stroke-dasharray')!)).toBeGreaterThan(0)
-    // the list shares are of all messages too
-    expect(w.get('.reasons').text()).toContain('%0,41 (10)')
+    expect(arcs).toHaveLength(3)
+    expect(arcs[0].attributes('stroke')).toBe('var(--chart-1)')
+    expect(arcs[1].attributes('stroke')).toBe('var(--error)')
+    expect(arcs[2].attributes('stroke')).not.toBe(arcs[1].attributes('stroke'))
+    expect(arcs.slice(1).every((a) => a.attributes('stroke')!.includes('--error'))).toBe(true)
+    expect(len(arcs[1])).toBeGreaterThan(0) // a tiny share is still visible
+    expect(len(arcs[0]) + len(arcs[1]) + len(arcs[2])).toBeLessThanOrEqual(HALF + 0.001) // never past the half ring
+    // every colour has a labelled row with its count and share
+    expect(w.get('[data-testid="outcome-total"]').text()).toContain('7.264')
+    expect(w.get('li[data-testid="outcome-sent"]').text()).toContain('Başarılı')
+    expect(w.get('li[data-testid="outcome-sent"]').text()).toContain('%99,56 (7.264)')
+    expect(w.get('li[data-testid="outcome-gave_up"]').text()).toContain('%0,27 (20)')
+    expect(w.get('li[data-testid="outcome-rejected"]').text()).toContain('%0,16 (12)')
   })
 
-  it('a single failure reason no longer fills the ring', () => {
-    const one: Delivery = { sms: ch({ total: 100, sent: 90, failed: 10 }), email: ch(), done: true, failures: [{ channel: 'sms', reason: 'rejected', count: 10 }] }
-    const arc = make(one, 'completed').get('path.arc')
-    const len = parseFloat(arc.attributes('stroke-dasharray')!)
-    expect(len).toBeCloseTo((10 / 100) * Math.PI * 70, 1) // 10% of the half ring, not 100%
+  it('is a full blue ring when nothing failed, and is shown then too', () => {
+    const w = make(outcomeOf(500, 500, []), 'completed')
+    const arcs = w.findAll('path.arc')
+    expect(arcs).toHaveLength(1)
+    expect(len(arcs[0])).toBeCloseTo(HALF, 3)
+    expect(w.get('[data-testid="outcome-share"]').text()).toBe('başarılı · %0 başarısız')
+  })
+
+  it('leaves what is still waiting empty', () => {
+    const d: Delivery = { sms: ch({ total: 100, sent: 40, pending: 60 }), email: ch(), done: false }
+    expect(len(make(d).get('path.arc'))).toBeCloseTo(0.4 * HALF, 1)
+  })
+
+  it('shows the speed per channel: average, time, retries and 429s once finished', () => {
+    const d: Delivery = {
+      sms: ch({ total: 2500, sent: 2470, retries: 40, rate_limited: 9, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:26Z' }),
+      email: ch({ total: 100, sent: 100, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:01:05Z' }),
+      done: true,
+    }
+    const w = make(d, 'completed')
+    const sms = w.get('[data-testid="speed-sms"]')
+    expect(sms.get('[data-testid="speed-avg"]').text()).toBe('95/sn')
+    expect(sms.get('[data-testid="speed-time"]').text()).toBe('26 sn')
+    expect(sms.text()).toContain('40')
+    expect(sms.text()).toContain('9')
+    expect(w.get('[data-testid="speed-email"] [data-testid="speed-time"]').text()).toBe('1 dk 5 sn')
+    expect(w.find('[data-testid="speed-live"]').exists()).toBe(false) // finished: no live column
+  })
+
+  it('measures the live speed of each channel between two polls', async () => {
+    vi.useFakeTimers()
+    try {
+      const at = (sms: number, email: number): Delivery => ({ sms: ch({ total: 1000, sent: sms, pending: 1000 - sms }), email: ch({ total: 1000, sent: email, pending: 1000 - email }), done: false })
+      const w = make(at(100, 100))
+      expect(w.get('[data-testid="speed-sms"] [data-testid="speed-live"]').text()).toBe('–')
+      vi.advanceTimersByTime(1000)
+      await w.setProps({ delivery: at(198, 195) })
+      expect(w.get('[data-testid="speed-sms"] [data-testid="speed-live"]').text()).toBe('98/sn')
+      expect(w.get('[data-testid="speed-email"] [data-testid="speed-live"]').text()).toBe('95/sn')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('has no speed row for a channel nobody receives', () => {
+    const d: Delivery = { sms: ch({ total: 10, sent: 10 }), email: ch(), done: true }
+    const w = make(d, 'completed')
+    expect(w.find('[data-testid="speed-sms"]').exists()).toBe(true)
+    expect(w.find('[data-testid="speed-email"]').exists()).toBe(false)
   })
 
   it('says when it is finished', () => {
