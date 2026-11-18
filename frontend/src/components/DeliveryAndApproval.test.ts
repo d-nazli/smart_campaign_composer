@@ -43,12 +43,38 @@ describe('DeliveryProgress', () => {
     expect(w.find('.totals').exists()).toBe(false)
   })
 
-  it('shows sent per locale, sent/total while some wait', () => {
-    const t = make().get('[data-testid="delivery-locales"]').text()
-    expect(t).toContain('tr-TR 25/30')
-    expect(t).toContain('en-GB 10/12')
-    expect(t).toContain('ar-SA 5/8')
-    expect(make({ ...delivery, done: true }, 'completed').get('[data-testid="delivery-locales"]').text()).toContain('tr-TR 25')
+  const localeRows = (w: ReturnType<typeof make>) =>
+    w.findAll('[data-testid="delivery-locales"] li').map((li) => ({
+      code: li.get('.loc__code').text(),
+      name: li.get('.loc__name').text(),
+      n: li.get('.loc__n').text(),
+      width: (li.get('.loc__bar i').element as HTMLElement).style.width,
+    }))
+  const locales = [
+    { code: 'tr-TR', name: 'Turkish (Türkiye)', native_name: 'Türkçe (Türkiye)', direction: 'ltr' as const, is_source: true },
+    { code: 'en-GB', name: 'English (United Kingdom)', native_name: 'English (UK)', direction: 'ltr' as const, is_source: false },
+    { code: 'ar-SA', name: 'Arabic (Saudi Arabia)', native_name: 'العربية (السعودية)', direction: 'rtl' as const, is_source: false },
+  ]
+
+  it('lists the locales largest first: code, language with a bar, sent/total while some wait', () => {
+    const w = mount(DeliveryProgress, { props: { delivery, status: 'sending', locales } })
+    expect(w.find('[data-testid="delivery-locales"] .ui-badge').exists()).toBe(false) // no chips
+    expect(localeRows(w)).toEqual([
+      { code: 'tr-TR', name: 'Türkçe (Türkiye)', n: '25/30', width: '83.3%' },
+      { code: 'en-GB', name: 'English (UK)', n: '10/12', width: '33.3%' },
+      { code: 'ar-SA', name: 'العربية (السعودية)', n: '5/8', width: '16.7%' },
+    ])
+  })
+
+  it('once finished, sorts by what was sent; the largest locale fills its bar', () => {
+    const d = { ...delivery, done: true, locales: { 'tr-TR': { total: 30, sent: 9 }, 'en-GB': { total: 12, sent: 12 }, 'ar-SA': { total: 1500, sent: 1490 } } }
+    const rows = localeRows(mount(DeliveryProgress, { props: { delivery: d, status: 'completed', locales } }))
+    expect(rows.map((r) => [r.code, r.n])).toEqual([
+      ['ar-SA', '1.490'],
+      ['en-GB', '12'],
+      ['tr-TR', '9'],
+    ])
+    expect(rows[0].width).toBe('100%')
   })
 
   it('explains the failures in words', () => {
@@ -83,6 +109,16 @@ describe('DeliveryProgress', () => {
     expect(w.get('li[data-testid="outcome-sent"]').text()).toContain('%99,56 (7.264)')
     expect(w.get('li[data-testid="outcome-gave_up"]').text()).toContain('%0,27 (20)')
     expect(w.get('li[data-testid="outcome-rejected"]').text()).toContain('%0,16 (12)')
+  })
+
+  it('puts the numbers under the half ring, never over its arc', () => {
+    const w = make(outcomeOf(3465, 3484, [{ reason: 'rejected', count: 19 }]), 'completed')
+    const fig = w.get('[data-testid="outcome"] figure')
+    expect([...fig.element.children].map((c) => c.tagName.toLowerCase())).toEqual(['svg', 'figcaption'])
+    const src = Object.values(import.meta.glob('./ui/HalfDonut.vue', { query: '?raw', import: 'default', eager: true }))[0] as string
+    const rule = src.slice(src.indexOf('figcaption {'), src.indexOf('}', src.indexOf('figcaption {')))
+    expect(rule).not.toMatch(/position:\s*absolute/)
+    expect(rule).toMatch(/margin-top/)
   })
 
   it('is a full blue ring when nothing failed, and is shown then too', () => {

@@ -5,9 +5,8 @@ import type { CampaignStatus, DeliveryProgress, LocaleInfo } from '../types'
 import { channelAverage, deliveryTotals, duration } from '../utils/dashboard'
 import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
 import { failureText, mergeFailures } from '../utils/failures'
-import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
+import { FALLBACK_LOCALES } from '../utils/locales'
 import { comparisonRows } from '../utils/variants'
-import Badge from './ui/Badge.vue'
 import HalfDonut from './ui/HalfDonut.vue'
 import KpiGroup from './ui/KpiGroup.vue'
 import ProgressBar from './ui/ProgressBar.vue'
@@ -15,7 +14,7 @@ import StatTile from './ui/StatTile.vue'
 
 // The sending step, laid out like a campaign report. Each number appears once: one figure
 // group per channel (sent, then failed / skipped / waiting), one bar for the whole campaign,
-// the outcome (delivered / each failure reason) as a half ring, and one line of locales.
+// the outcome (delivered / each failure reason) as a half ring, and the locales largest first.
 const props = defineProps<{ delivery: DeliveryProgress; status: CampaignStatus; locales?: LocaleInfo[] }>()
 
 const finished = computed(() => props.status === 'completed')
@@ -26,11 +25,18 @@ const rows = computed(() => [
   { key: 'sms', label: 'SMS · gönderilen', p: props.delivery.sms },
   { key: 'email', label: 'E-posta · gönderilen', p: props.delivery.email },
 ])
-// Sent messages per locale, in table order (a locale nobody receives is left out).
+// Sent messages per locale, largest first (a locale nobody receives is left out). While sending the
+// order follows what goes there, so rows do not jump; once finished, what was sent. The bar is the
+// locale's sent messages against the largest locale's number.
 const byLocale = computed(() => {
-  const progress = props.delivery.locales ?? {}
-  const totals = Object.fromEntries(Object.entries(progress).map(([code, p]) => [code, p.total]))
-  return localeSummary(totals, props.locales ?? FALLBACK_LOCALES).map((l) => ({ code: l.code, p: progress[l.code] }))
+  const all = props.locales ?? FALLBACK_LOCALES
+  const key = (p: { total: number; sent: number }) => (finished.value ? p.sent : p.total)
+  const rows = Object.entries(props.delivery.locales ?? {})
+    .filter(([, p]) => p.total > 0)
+    .map(([code, p]) => ({ code, p, name: all.find((l) => l.code === code)?.native_name ?? '' }))
+    .sort((a, b) => key(b.p) - key(a.p) || a.code.localeCompare(b.code))
+  const max = Math.max(1, ...rows.map((r) => key(r.p)))
+  return rows.map((r) => ({ ...r, width: Math.min(100, Math.round((r.p.sent / max) * 1000) / 10) }))
 })
 
 // The outcome ring: every message of the campaign is the whole; delivered in blue, each failure
@@ -168,13 +174,18 @@ const ringLabel = computed(
         </ul>
       </section>
 
-      <section v-if="byLocale.length" class="panel" data-testid="delivery-locales">
+      <section v-if="byLocale.length" class="panel locpanel" data-testid="delivery-locales">
         <h3 class="label">Locale'e göre gönderilen</h3>
-        <div class="locs">
-          <Badge v-for="l in byLocale" :key="l.code">
-            {{ l.code }} <b class="num">{{ finished || l.p!.sent === l.p!.total ? l.p!.sent : `${l.p!.sent}/${l.p!.total}` }}</b>
-          </Badge>
-        </div>
+        <ol class="loclist">
+          <li v-for="l in byLocale" :key="l.code" class="loc" :data-testid="`delivery-locale-${l.code}`">
+            <span class="loc__code num">{{ l.code }}</span>
+            <span class="loc__mid">
+              <span class="loc__name"><bdi>{{ l.name }}</bdi></span>
+              <span class="loc__bar" aria-hidden="true"><i :style="{ width: `${l.width}%` }" /></span>
+            </span>
+            <b class="loc__n num">{{ finished || l.p.sent === l.p.total ? count(l.p.sent) : `${count(l.p.sent)}/${count(l.p.total)}` }}</b>
+          </li>
+        </ol>
       </section>
     </div>
 
@@ -239,7 +250,7 @@ h3.label {
 }
 .two {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--s-4);
   align-items: start;
 }
@@ -299,10 +310,53 @@ h3.label {
 .speed .r {
   text-align: right;
 }
-.locs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+/* Two columns, filled top to bottom so the largest locales read first. */
+.loclist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  columns: 2;
+  column-gap: var(--s-5);
+}
+.loc {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+  break-inside: avoid;
+  font-size: var(--text-sm);
+}
+.loc__code {
+  font-weight: 500;
+}
+.loc__mid {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.loc__name {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loc__bar {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.loc__bar i {
+  display: block;
+  height: 100%;
+  background: var(--chart-1);
+}
+.loc__n {
+  font-weight: 500;
+  text-align: right;
 }
 .speed tr.total {
   background: var(--surface-2);
@@ -336,6 +390,15 @@ h3.label {
 @media (max-width: 767px) {
   .panel {
     padding: var(--s-4);
+  }
+}
+/* Two columns only where a language name still fits next to its code and number. */
+.locpanel {
+  container-type: inline-size;
+}
+@container (max-width: 519px) {
+  .loclist {
+    columns: 1;
   }
 }
 </style>

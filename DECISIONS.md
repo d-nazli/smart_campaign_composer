@@ -649,6 +649,12 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 ## D109 — Varyant sekmelerinde yaklaşım gösterilmez · `Kesin (kullanıcı kararı)`
 - Sekmeler yalnız **Varyant A | Varyant B** yazar ("· Merak" gibi etiket yok). `approach` alanı, sabit liste ve "B'nin yaklaşımı A'nınkinden farklı olmalı" denetimi backend'de aynen durur (D105); yalnız arayüzden kaldırıldı.
 
+## D110 — Onay sonrası alıcı farkı: gösterilen kitle kaydedilir, kuyruk satırlardan sayılır · `Kesin (kullanıcı kararı)`
+- **Hata:** gönderim ekranı "Ekranda 1677 SMS gösterilmişti; onay anında 0 SMS kuyruğa alındı" diyordu, mesajlar ise gönderilmişti. Kök neden locale ya da A/B değil, **zamanlanmış gönderim**: zamanlanmış onayda henüz satır olmadığı için `POST /approve` yanıtı `queued: {sms: 0, email: 0}` dönüyordu. Ekran bu yanıtı saklayıp ekrandaki kitleyle karşılaştırıyordu; kampanya başlayıp gönderince de "0 kuyruğa alındı" yazıyordu. Hemen gönderimde sayı doğruydu (yeniden üretildi: 3502 / 3502); karşılaştırma yalnız aynı oturumda onaylanınca yapılıyordu.
+- **Düzeltme:** onayda ekranda gösterilen kitle (`sms_reachable` / `email_reachable`) `campaigns.approved_sms` / `approved_email` sütunlarına yazılır (`00014`). Zamanlanmış başlangıç kitleyi yeniden sayıp bu sütunların üstüne yazmaz. Kuyruğa alınan sayı her yerde deliveries satırlarından gelir (`queuedRows`: kanal başına, tüm varyant ve locale'ler). Kampanya görünümü `approval: {shown, queued}` döner; satırlar oluşmadan alan yoktur. Zamanlanmış onay yanıtında `queued` artık 0 değil, hiç yoktur.
+- **Ekran:** banner yalnız gerçek fark varsa görünür: "Onaydan sonra 27 SMS alıcısı değişti (1.677 → 1.650)." Sayfa yenilenince de aynı veriden hesaplanır.
+- **Testler:** normal onayda fark yok; onaydan önce izin geri çekilince fark tam olarak eksik satırlar kadar; A/B + çok locale'de onay yanıtı = varyant toplamı = (varyant, locale) satır toplamı = görünüm; zamanlanmış kampanya başlayınca onaydaki kitleyle karşılaştırılır.
+
 ---
 
 ## Açık / onay bekleyenler

@@ -626,15 +626,15 @@ func TestScheduleAndCancelOverHTTP(t *testing.T) {
 		t.Fatalf("schedule: %d %s", resp.StatusCode, body)
 	}
 	var res struct {
-		Status      string    `json:"status"`
-		ScheduledAt time.Time `json:"scheduled_at"`
-		Queued      struct{ SMS, Email int }
+		Status      string                    `json:"status"`
+		ScheduledAt time.Time                 `json:"scheduled_at"`
+		Queued      *struct{ SMS, Email int } // absent: nothing is queued before the start
 		Audience    *struct{ Matched int }
 	}
 	if err := json.Unmarshal(body, &res); err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != "scheduled" || !res.ScheduledAt.Equal(at) || res.Queued.SMS != 0 || res.Queued.Email != 0 || res.Audience != nil {
+	if res.Status != "scheduled" || !res.ScheduledAt.Equal(at) || res.Queued != nil || res.Audience != nil {
 		t.Fatalf("schedule body: %s", body)
 	}
 

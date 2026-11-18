@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // A half ring: each part is an arc of the semicircle in proportion to its value
-// (used for the outcome of a campaign's messages). The slot sits in the middle, under the arc.
+// (used for the outcome of a campaign's messages). The slot sits below the ring, clear of the arc.
 import { computed } from 'vue'
 
 export interface Arc {
@@ -47,7 +47,6 @@ const arcs = computed(() => {
 <style scoped>
 .gauge {
   margin: 0;
-  position: relative;
   max-width: 220px;
   margin-inline: auto;
 }
@@ -62,9 +61,9 @@ path {
 .track {
   stroke: var(--surface-2);
 }
+/* Under the ring, never over it: the arc's ends reach the bottom of the drawing. */
 figcaption {
-  position: absolute;
-  inset: auto 0 0;
+  margin-top: var(--s-3);
   text-align: center;
 }
 </style>

@@ -5,9 +5,9 @@ import { approveCampaign, cancelCampaign, createCampaign, deleteVariant, getCamp
 import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
 import { failedLocales, initialState, retryNotes } from '../composables/streamState'
-import type { ApproveResult, Campaign, ContentField, Issue, LocaleCode, MessageContent, Variant } from '../types'
+import type { Campaign, ContentField, Issue, LocaleCode, MessageContent, Variant } from '../types'
 import { VARIANTS, forVariant, hasVariantB, isDuplicate, issueVariant, pendingOf, variantsOf } from '../utils/variants'
-import { approvalDifference, shouldPoll } from '../utils/delivery'
+import { approvalChange, shouldPoll } from '../utils/delivery'
 import {
   FALLBACK_LOCALES,
   SOURCE_LOCALE,
@@ -130,7 +130,6 @@ const cancelling = ref(false)
 const confirmCancel = ref(false)
 const cancelError = ref<string | null>(null)
 const approveError = ref<string | null>(null)
-const approved = ref<ApproveResult | null>(null)
 
 // After approval the text is frozen: earlier steps still open, read-only.
 const frozen = computed(() => ['scheduled', 'approved', 'sending', 'completed', 'cancelled', 'failed'].includes(campaign.value?.status ?? ''))
@@ -167,7 +166,7 @@ const canApprove = computed(
     !approving.value,
 )
 const difference = computed(() =>
-  approved.value ? approvalDifference(approved.value.queued, campaign.value?.segment?.audience) : null,
+  approvalChange(campaign.value?.approval),
 )
 
 const limits = computed(() => props.info?.limits)
@@ -302,7 +301,7 @@ async function approve() {
   approveError.value = null
   try {
     const at = sendMode.value === 'later' ? fromLocalInput(sendWhen.value) : null
-    approved.value = await approveCampaign(campaign.value.id, at ? at.toISOString() : undefined)
+    await approveCampaign(campaign.value.id, at ? at.toISOString() : undefined)
     campaign.value = await getCampaign(campaign.value.id)
     go('send')
   } catch (e) {
@@ -577,7 +576,6 @@ async function submitBrief() {
   creating.value = true
   createError.value = null
   campaign.value = null
-  approved.value = null
   approveError.value = null
   resetStream()
   streamVariant.value = 'A'
@@ -937,7 +935,7 @@ onMounted(async () => {
               Zamanlanmış gönderim başlatılamadı: {{ campaign.schedule_error || 'bilinmeyen neden' }}. Hiçbir mesaj gönderilmedi.
             </p>
             <template v-else-if="campaign?.delivery">
-              <p v-if="difference" class="notice info" role="status">{{ difference }}</p>
+              <p v-if="difference" class="notice info" role="status" data-testid="approval-change">{{ difference }}</p>
               <DeliveryProgress :delivery="campaign.delivery" :status="campaign.status" :locales="allLocales" />
             </template>
             <Card v-else title="Gönderim"><p class="muted">Kampanya henüz onaylanmadı.</p></Card>

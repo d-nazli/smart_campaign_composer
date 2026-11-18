@@ -126,7 +126,7 @@ func TestTwoRecordsWithTheSameAddressGetOneMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Queued != firstRes.Queued {
+	if *res.Queued != *firstRes.Queued {
 		t.Fatalf("duplicate records added messages: first %+v, second %+v", firstRes.Queued, res.Queued)
 	}
 	if aud := shown.Segment.Audience; aud.SMSReachable != res.Queued.SMS || aud.EmailReachable != res.Queued.Email {
@@ -168,7 +168,7 @@ func TestApprovingTwiceDoesNotQueueTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a repeated approval is not an error: %v", err)
 	}
-	if !again.AlreadyApproved || again.Queued != first.Queued {
+	if !again.AlreadyApproved || *again.Queued != *first.Queued {
 		t.Fatalf("repeat = %+v, first = %+v", again, first)
 	}
 	if _, _, after := deliveryCounts(t, pool, id); after != total {
@@ -201,7 +201,7 @@ func TestConcurrentApprovalsQueueOnceAndExactlyOneWins(t *testing.T) {
 		if !results[i].AlreadyApproved {
 			winners++
 		}
-		if results[i].Queued != results[0].Queued {
+		if *results[i].Queued != *results[0].Queued {
 			t.Errorf("approval %d saw %+v, approval 0 saw %+v", i, results[i].Queued, results[0].Queued)
 		}
 	}

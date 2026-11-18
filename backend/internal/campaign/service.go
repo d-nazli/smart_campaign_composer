@@ -147,11 +147,24 @@ type View struct {
 	VariantCounts map[string]VariantCount `json:"variant_counts,omitempty"`
 	// Delivery is present once the campaign has been approved.
 	Delivery *DeliveryView `json:"delivery,omitempty"`
+	// Approval compares the recipients the screen showed when the campaign was
+	// approved with the deliveries actually queued (rows of every variant and
+	// locale). Present once the deliveries exist; the screen mentions it only
+	// when the two differ.
+	Approval *ApprovalCounts `json:"approval,omitempty"`
 	// ScheduledAt is when a scheduled campaign starts (set from approval on).
 	// ScheduleError says why a scheduled campaign could not start.
 	ScheduledAt   *time.Time `json:"scheduled_at,omitempty"`
 	ScheduleError string     `json:"schedule_error,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
+}
+
+// ApprovalCounts: Shown is the reachable recipients per channel on screen at
+// approval (for a scheduled campaign, at the approval, not at its start);
+// Queued the deliveries in the table.
+type ApprovalCounts struct {
+	Shown  Queued `json:"shown"`
+	Queued Queued `json:"queued"`
 }
 
 // VariantView is one variant's text, like the top-level fields of View for
@@ -251,6 +264,8 @@ type campaignRow struct {
 	bothReachable  *int
 	localeCounts   []byte
 	variantCounts  []byte
+	approvedSMS    *int
+	approvedEmail  *int
 	scheduledAt    *time.Time
 	scheduleError  string
 	createdAt      time.Time
@@ -262,10 +277,12 @@ func (s *Service) loadRow(ctx context.Context, q interface {
 	var r campaignRow
 	err := q.QueryRow(ctx, `
 		SELECT id, brief, name, status, segment_status, segment_rule, explanation, question,
-		       matched, sms_reachable, email_reachable, both_reachable, locale_counts, variant_counts, scheduled_at, schedule_error, created_at
+		       matched, sms_reachable, email_reachable, both_reachable, locale_counts, variant_counts, scheduled_at, schedule_error, created_at,
+		       approved_sms, approved_email
 		FROM campaigns WHERE id=$1`, id).
 		Scan(&r.id, &r.brief, &r.name, &r.status, &r.segmentStatus, &r.segmentRule, &r.explanation, &r.question,
-			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.localeCounts, &r.variantCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt)
+			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.localeCounts, &r.variantCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt,
+			&r.approvedSMS, &r.approvedEmail)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -332,6 +349,13 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 			return nil, err
 		}
 		v.Delivery = d
+		if r.approvedSMS != nil && r.approvedEmail != nil {
+			// The progress totals are the rows per channel, every state, variant and locale.
+			v.Approval = &ApprovalCounts{
+				Shown:  Queued{SMS: *r.approvedSMS, Email: *r.approvedEmail},
+				Queued: Queued{SMS: d.SMS.Total, Email: d.Email.Total},
+			}
+		}
 	}
 	return v, nil
 }

@@ -29,7 +29,8 @@ const (
 	StatusFailed = "failed"
 )
 
-// Queued is how many deliveries were enqueued per channel.
+// Queued is how many deliveries a campaign has per channel: the rows of the
+// deliveries table, every variant and every locale together (queuedRows).
 type Queued struct {
 	SMS   int `json:"sms"`
 	Email int `json:"email"`
@@ -41,8 +42,12 @@ type ApproveResult struct {
 	Status string `json:"status"`
 	// AlreadyApproved is true when this call found the campaign approved (a
 	// repeated or concurrent approval); nothing new was enqueued.
-	AlreadyApproved bool   `json:"already_approved"`
-	Queued          Queued `json:"queued"`
+	AlreadyApproved bool `json:"already_approved"`
+	// Queued is the deliveries in the table after the approval. Absent for a
+	// scheduled campaign that has not started: nothing is queued yet, and a 0
+	// there would read as "nobody" (the sending screen once said "0 SMS queued"
+	// for a scheduled campaign that went on to send them all).
+	Queued *Queued `json:"queued,omitempty"`
 	// ScheduledAt is when a scheduled campaign starts. A scheduled campaign has
 	// nothing queued and no audience yet: both are decided at that moment.
 	ScheduledAt *time.Time `json:"scheduled_at,omitempty"`
@@ -169,7 +174,7 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 		if err := checkScheduleAgainstOffer(*at, rule.Offer); err != nil {
 			return nil, err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2, variant_counts=$3 WHERE id=$1`, id, countsJSON, variantsJSON); err != nil {
+		if _, err := tx.Exec(ctx, approvedCountsSQL, id, countsJSON, variantsJSON); err != nil {
 			return nil, fmt.Errorf("store locale counts: %w", err)
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -185,19 +190,43 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 	if err != nil {
 		return nil, err
 	}
-	q, err := enqueueAudience(ctx, tx, id, compiled, now, ab)
+	if _, err := enqueueAudience(ctx, tx, id, compiled, now, ab); err != nil {
+		return nil, err
+	}
+	q, err := queuedRows(ctx, tx, id)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2, variant_counts=$3 WHERE id=$1`, id, countsJSON, variantsJSON); err != nil {
+	if _, err := tx.Exec(ctx, approvedCountsSQL, id, countsJSON, variantsJSON); err != nil {
 		return nil, fmt.Errorf("store locale counts: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit approval: %w", err)
 	}
 
-	return &ApproveResult{ID: id, Status: StatusApproved, Queued: q, Audience: &aud, Locales: counts, Variants: variants,
+	return &ApproveResult{ID: id, Status: StatusApproved, Queued: &q, Audience: &aud, Locales: counts, Variants: variants,
 		Warnings: s.warningsFor(set, ls, rule.Offer.Normalize())}, nil
+}
+
+// approvedCountsSQL stores the approval's locale and variant counts, and keeps
+// the recipients the screen showed at that moment (approved_sms /
+// approved_email: the stored audience, which a scheduled start recounts).
+const approvedCountsSQL = `
+	UPDATE campaigns SET locale_counts=$2, variant_counts=$3, approved_sms=sms_reachable, approved_email=email_reachable
+	WHERE id=$1`
+
+// queuedRows counts the campaign's deliveries per channel: the rows actually
+// in the table, over every variant and every locale.
+func queuedRows(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, id int64) (Queued, error) {
+	var out Queued
+	if err := q.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE channel='sms'), count(*) FILTER (WHERE channel='email')
+		FROM deliveries WHERE campaign_id=$1`, id).Scan(&out.SMS, &out.Email); err != nil {
+		return Queued{}, fmt.Errorf("count deliveries: %w", err)
+	}
+	return out, nil
 }
 
 // variantCountsJSON is the variant_counts column: NULL without Variant B.
@@ -361,11 +390,13 @@ func (s *Service) alreadyApprovedOrRefuse(ctx context.Context, id int64) (*Appro
 	default:
 		return nil, &StateError{fmt.Sprintf("kampanya %q durumunda; onaylamak için önce kitle ve mesajlar hazır olmalı", row.status)}
 	}
-	var q Queued
-	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE channel='sms'), count(*) FILTER (WHERE channel='email')
-		FROM deliveries WHERE campaign_id=$1`, id).Scan(&q.SMS, &q.Email); err != nil {
-		return nil, fmt.Errorf("count deliveries: %w", err)
+	var queued *Queued
+	if row.status != StatusScheduled { // a scheduled campaign has queued nothing yet
+		q, err := queuedRows(ctx, s.pool, id)
+		if err != nil {
+			return nil, err
+		}
+		queued = &q
 	}
 	warnings := []content.Issue{}
 	ls, err := s.loadLocales(ctx)
@@ -382,5 +413,5 @@ func (s *Service) alreadyApprovedOrRefuse(ctx context.Context, id int64) (*Appro
 		}
 		warnings = s.warningsFor(set, ls, rowOffer(row))
 	}
-	return &ApproveResult{ID: id, Status: row.status, AlreadyApproved: true, Queued: q, ScheduledAt: row.scheduledAt, Warnings: warnings}, nil
+	return &ApproveResult{ID: id, Status: row.status, AlreadyApproved: true, Queued: queued, ScheduledAt: row.scheduledAt, Warnings: warnings}, nil
 }

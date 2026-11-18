@@ -1,4 +1,4 @@
-import type { Audience, Campaign, ChannelProgress } from '../types'
+import type { ApprovalCounts, Campaign, ChannelProgress } from '../types'
 
 /** Share of a channel's recipients that reached a final state (0-100). Never 100 while one is pending. */
 export function channelPercent(p: ChannelProgress): number {
@@ -27,15 +27,21 @@ export function shouldPoll(c: Campaign): boolean {
   return c.status === 'scheduled' || c.status === 'approved' || c.status === 'sending'
 }
 
-/** A sentence when the queued numbers differ from what was shown before approval, otherwise null. */
-export function approvalDifference(queued: { sms: number; email: number }, shown: Audience | undefined): string | null {
-  if (!shown) return null
-  const sentence = (label: string, was: number, now: number) =>
-    was === now ? null : `Ekranda ${was} ${label} gösterilmişti; onay anında ${now} ${label} kuyruğa alındı`
+const fmt = (n: number) => n.toLocaleString('tr-TR')
+
+/**
+ * "Onaydan sonra 27 SMS alıcısı değişti (1.677 → 1.650)." when the deliveries really queued differ from
+ * the recipients on screen at approval; null when they are the same (or not queued yet).
+ */
+export function approvalChange(a: ApprovalCounts | undefined): string | null {
+  if (!a) return null
   const parts = [
-    sentence('SMS', shown.sms_reachable, queued.sms),
-    sentence('e-posta', shown.email_reachable, queued.email),
-  ].filter((s): s is string => s !== null)
+    { label: 'SMS', was: a.shown.sms, now: a.queued.sms },
+    { label: 'e-posta', was: a.shown.email, now: a.queued.email },
+  ]
+    .filter((c) => c.was !== c.now)
+    .map((c) => `${fmt(Math.abs(c.was - c.now))} ${c.label} alıcısı (${fmt(c.was)} → ${fmt(c.now)})`)
   if (parts.length === 0) return null
-  return parts.join('. ') + ' (veriler değişmiş olabilir).'
+  if (parts.length === 1) return `Onaydan sonra ${parts[0].replace(' (', ' değişti (')}.`
+  return `Onaydan sonra ${parts.join(' ve ')} değişti.`
 }

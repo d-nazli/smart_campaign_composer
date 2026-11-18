@@ -204,11 +204,24 @@ export interface DeliveryProgress {
   variants?: VariantProgress[]
 }
 
+export interface ChannelCounts {
+  sms: number
+  email: number
+}
+
+export interface ApprovalCounts {
+  /** Reachable recipients on screen when the campaign was approved. */
+  shown: ChannelCounts
+  /** Deliveries in the queue, every variant and locale. */
+  queued: ChannelCounts
+}
+
 export interface ApproveResult {
   id: number
   status: CampaignStatus
   already_approved: boolean
-  queued: { sms: number; email: number }
+  /** The deliveries queued (absent for a scheduled campaign that has not started). */
+  queued?: ChannelCounts
   /** When a scheduled campaign starts (status "scheduled"). */
   scheduled_at?: string
   /** Audience counted at approval time (absent on a repeated approval). */
@@ -248,6 +261,11 @@ export interface Campaign {
   variant_counts?: Record<Variant, VariantCount>
   /** Present once the campaign has been approved. */
   delivery?: DeliveryProgress
+  /**
+   * Recipients on screen at approval against the deliveries really queued (rows of every
+   * variant and locale). Present once the deliveries exist; the screen mentions it only when they differ.
+   */
+  approval?: ApprovalCounts
   /** When a scheduled campaign starts; why it could not start. */
   scheduled_at?: string
   schedule_error?: string

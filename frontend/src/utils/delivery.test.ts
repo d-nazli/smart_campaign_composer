@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Campaign, ChannelProgress } from '../types'
-import { approvalDifference, channelPercent, describeChannel, shouldPoll } from './delivery'
+import { approvalChange, channelPercent, describeChannel, shouldPoll } from './delivery'
 
 const p = (o: Partial<ChannelProgress> = {}): ChannelProgress => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
 
@@ -61,20 +61,23 @@ describe('shouldPoll', () => {
   })
 })
 
-describe('approvalDifference', () => {
-  const shown = { matched: 300, sms_reachable: 203, email_reachable: 227, both_reachable: 165 }
-  it('is silent when the queue is what the screen promised', () => {
-    expect(approvalDifference({ sms: 203, email: 227 }, shown)).toBeNull()
+describe('approvalChange', () => {
+  const same = { shown: { sms: 1677, email: 3794 }, queued: { sms: 1677, email: 3794 } }
+  it('is silent after a normal approval (nothing changed)', () => {
+    expect(approvalChange(same)).toBeNull()
   })
-  it('explains a different number instead of hiding it', () => {
-    expect(approvalDifference({ sms: 199, email: 227 }, shown)).toBe(
-      'Ekranda 203 SMS gösterilmişti; onay anında 199 SMS kuyruğa alındı (veriler değişmiş olabilir).',
+  it('says how many SMS recipients changed, with both numbers', () => {
+    expect(approvalChange({ ...same, queued: { sms: 1650, email: 3794 } })).toBe('Onaydan sonra 27 SMS alıcısı değişti (1.677 → 1.650).')
+  })
+  it('names both channels when both changed', () => {
+    expect(approvalChange({ ...same, queued: { sms: 1650, email: 3789 } })).toBe(
+      'Onaydan sonra 27 SMS alıcısı (1.677 → 1.650) ve 5 e-posta alıcısı (3.794 → 3.789) değişti.',
     )
   })
-  it('names both channels when both differ', () => {
-    expect(approvalDifference({ sms: 199, email: 220 }, shown)).toContain('e-posta')
+  it('counts a growth too', () => {
+    expect(approvalChange({ ...same, queued: { sms: 1700, email: 3794 } })).toBe('Onaydan sonra 23 SMS alıcısı değişti (1.677 → 1.700).')
   })
-  it('is silent when there is nothing to compare', () => {
-    expect(approvalDifference({ sms: 1, email: 1 }, undefined)).toBeNull()
+  it('is silent before anything is queued', () => {
+    expect(approvalChange(undefined)).toBeNull()
   })
 })

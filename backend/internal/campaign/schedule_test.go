@@ -59,7 +59,7 @@ func TestApprovingForLaterOnlyRecordsTheDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Status != campaign.StatusScheduled || res.ScheduledAt == nil || !res.ScheduledAt.Equal(at) ||
-		res.AlreadyApproved || res.Audience != nil || res.Queued != (campaign.Queued{}) {
+		res.AlreadyApproved || res.Audience != nil || res.Queued != nil {
 		t.Fatalf("result: %+v", res)
 	}
 	if _, _, total := deliveryCounts(t, pool, id); total != 0 {
