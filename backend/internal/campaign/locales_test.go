@@ -114,7 +114,7 @@ func TestRegeneratingTheSameSourceKeepsTheVersion(t *testing.T) {
 
 // A translation is asked again, with the reason, when it drops {{first_name}}.
 func TestATranslationThatDropsAPlaceholderIsRepaired(t *testing.T) {
-	noName := msgs("15% off is waiting for you!", "15% off", "Hello,\\n\\nEnjoy 15% off.")
+	noName := translation("15% off is waiting for you!", "15% off", "Hello,\\n\\nEnjoy 15% off.")
 	m := mock.NewScripted(nil, nil).WithTranslation("en-GB", mock.Step{Kind: mock.Raw, Raw: noName}, mock.Step{Kind: mock.Smart})
 	svc, pool := newService(t, m)
 	id := offerCampaign(t, svc)
@@ -141,7 +141,7 @@ func TestATranslationThatDropsAPlaceholderIsRepaired(t *testing.T) {
 }
 
 func TestATranslationWithADifferentDiscountIsRepaired(t *testing.T) {
-	wrong := msgs("{{first_name}}, 20 % Rabatt wartet!", "20 % Rabatt", "Hallo {{first_name}},\\n\\n20 % Rabatt.")
+	wrong := translation("{{first_name}}, 20 % Rabatt wartet!", "20 % Rabatt", "Hallo {{first_name}},\\n\\n20 % Rabatt.")
 	m := mock.NewScripted(nil, nil).WithTranslation("de-DE", mock.Step{Kind: mock.Raw, Raw: wrong}, mock.Step{Kind: mock.Smart})
 	svc, pool := newService(t, m)
 	id := offerCampaign(t, svc)

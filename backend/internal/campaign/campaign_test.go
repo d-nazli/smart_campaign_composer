@@ -38,7 +38,7 @@ func tooLongSMS() string {
 	return `{"sms_body":"` + strings.Repeat("a", 170) + `","email_subject":"Konu","email_body":"Gövde"}`
 }
 
-const goodMessages = `{"sms_body":"{{first_name}}, %30 indirim seni bekliyor!","email_subject":"{{first_name}}, sepetin seni bekliyor","email_body":"Merhaba {{first_name}},\n\nSepetindeki ürünlerde %30 indirim var."}`
+const goodMessages = `{"sms_body":"{{first_name}}, %30 indirim seni bekliyor!","email_subject":"{{first_name}}, sepetin seni bekliyor","email_body":"Merhaba {{first_name}},\n\nSepetindeki ürünlerde %30 indirim var.","approach":"fayda"}`
 
 func audit(t *testing.T, pool *pgxpool.Pool, campaignID int64, kind string) (total, valid int) {
 	t.Helper()

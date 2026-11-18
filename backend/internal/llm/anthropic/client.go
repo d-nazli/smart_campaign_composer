@@ -61,7 +61,7 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta func(string)) (llm.Output, error) {
 	params := c.params(
 		llm.MessagesSystemPromptFor(req.Policy, req.Locale),
-		content.JSONSchema(),
+		content.MessagesJSONSchema(),
 		sdk.OutputConfigEffortMedium, // copywriting: some reasoning pays off
 		conversation(llm.MessagesUserPromptFor(req), req.Previous),
 	)

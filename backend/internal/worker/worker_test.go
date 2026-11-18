@@ -522,6 +522,15 @@ func TestRealPaceNeverTriggersTheProvidersRateLimit(t *testing.T) {
 	if got := maxInAnyWindow(times); got > 100 {
 		t.Fatalf("%d requests inside one second", got)
 	}
+	// The busiest second the sending screen shows ("En yüksek (1 sn)") is read
+	// from the calls the worker recorded; it must agree that 100 was never passed.
+	peaks, err := campaign.PeakPerSecond(ctx, pool, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peaks["sms"] == 0 || peaks["sms"] > 100 {
+		t.Fatalf("recorded busiest second: %v", peaks)
+	}
 	// 300 messages at 97/s cannot take less than ~3.1s.
 	if elapsed < 3*time.Second {
 		t.Fatalf("300 messages in %v: faster than the configured 97/s", elapsed)
@@ -808,5 +817,65 @@ func TestEveryRecipientGetsTheirVariantInTheirLocale(t *testing.T) {
 	}
 	if perVariant["A"] == 0 || perVariant["B"] == 0 {
 		t.Fatalf("sent per variant %v", perVariant)
+	}
+}
+
+// ---- failures per channel --------------------------------------------------------
+
+// A message fails for a reason of its own channel (a malformed phone number
+// is not a malformed e-mail address): over a wide audience the people whose SMS
+// failed and the people whose e-mail failed are not the same set.
+func TestTheTwoChannelsFailForDifferentPeople(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	policy, err := content.NewPolicy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := campaign.NewService(pool, mock.New(0), policy, log)
+	v, err := svc.Create(ctx, "Tüm müşterilere %10 indirim gönder")
+	if err != nil || v.Segment.Status != "ok" {
+		t.Fatalf("create: %v %+v", err, v)
+	}
+	if err := svc.GenerateMessages(ctx, v.ID, campaign.Events{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	clk := fakeClock()
+	w := newWorker(t, queue.NewPG(pool), newProvider(t, quiet(), clk).URL, clk, testConfig())
+	drain(t, w, pool, clk)
+
+	failed := func(channel string) map[int64]bool {
+		rows, err := pool.Query(ctx, `SELECT user_id FROM deliveries WHERE campaign_id=$1 AND channel=$2 AND status='failed'`, v.ID, channel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[int64]bool{}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				t.Fatal(err)
+			}
+			out[id] = true
+		}
+		return out
+	}
+	sms, email := failed("sms"), failed("email")
+	if len(sms) == 0 || len(email) == 0 {
+		t.Fatalf("expected failures on both channels: sms %d, email %d", len(sms), len(email))
+	}
+	both := 0
+	for id := range sms {
+		if email[id] {
+			both++
+		}
+	}
+	if both == len(sms) || both == len(email) {
+		t.Fatalf("the same people failed on both channels: sms %d, email %d, both %d", len(sms), len(email), both)
+	}
+	if both > len(sms)/2 {
+		t.Fatalf("most people who failed on SMS also failed on e-mail: sms %d, both %d", len(sms), both)
 	}
 }

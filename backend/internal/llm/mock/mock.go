@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"smartcampaign/internal/brief"
 	"smartcampaign/internal/content"
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/offer"
@@ -35,7 +36,15 @@ const (
 	// Drop streams the first half of Step.Raw (or the smart answer) and then
 	// fails, like a connection that breaks mid-stream.
 	Drop
+	// SameApproach writes a smart message but takes the other variant's
+	// approach (a model that ignored "choose a different approach").
+	SameApproach
+	// UnknownApproach writes a smart message with an approach outside the list.
+	UnknownApproach
 )
+
+// UnknownApproachValue is what UnknownApproach answers.
+const UnknownApproachValue = "korku"
 
 // Step is one scripted response.
 type Step struct {
@@ -133,7 +142,20 @@ func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta f
 		Variant: req.Variant, Avoid: req.Avoid})
 	step := next(c.messages, &c.msgIdx)
 	c.mu.Unlock()
-	return c.play(ctx, step, func() string { return smartMessagesFor(req) }, onDelta)
+	smart := func() string { return smartMessagesFor(req) }
+	switch step.Kind {
+	case SameApproach:
+		smart = func() string {
+			same := req.AvoidApproach
+			if same == "" {
+				same, _ = brief.SuggestApproaches(req.Brief, req.Offer.Normalize().ExpiresAt, "")
+			}
+			return withApproach(smartMessagesFor(req), same)
+		}
+	case UnknownApproach:
+		smart = func() string { return withApproach(smartMessagesFor(req), UnknownApproachValue) }
+	}
+	return c.play(ctx, step, smart, onDelta)
 }
 
 func (c *Client) Translate(ctx context.Context, req llm.TranslateRequest, onDelta func(string)) (llm.Output, error) {

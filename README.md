@@ -83,6 +83,10 @@ fazla 429 gelirse (provider gerçekten sınırlıyor demektir) kanal `Retry-Afte
 kaosla ~85/sn, çünkü çağrıların ~%10'u hata alıp yeniden deneniyor. 100 çağrı/sn'de bile bu kaosla kabul edilen hızın
 tavanı ~89,6/sn'dir (D101).
 
+Gönderim ekranındaki hız tablosu kanal başına ortalamanın yanında **En yüksek (1 sn)** sütununu gösterir: worker'ın
+kaydettiği çağrı başlangıçlarında herhangi bir 1 saniyelik kayan pencerede başlatılan en çok çağrı; 100'ü geçerse kırmızı
+olur (D107). **429 (provider)** sütunu sağlayıcının test amaçlı enjekte ettiği 429'ları sayar; bizim hız sınırımız aşılmadı.
+
 Hızı ölçmek için **`make bench`** (~30 sn, `make test`'e dahil değil): worker ve mock provider gerçek saatle, iki kanal
 birlikte çalışır; kanal başına çağrı/sn, kabul/sn, en yoğun 1 sn penceresi ve gerçek 429 sayısı tablo olarak yazılır. Bir
 pencerede 100'den fazla çağrı ya da gerçek 429 olursa komut başarısız olur. Yalnızca geçici test veritabanları kullanır, çalışan
@@ -109,9 +113,13 @@ Insider One'ın Localization yapısı örnek alındı (D92–D97).
 Insider One'ın e-posta Experiment ekranı örnek alındı (D102–D104). Kapsam bilerek dar: **yalnız A ve B**, oran %50 / %50
 sabit, **kazanan seçimi yok**, açılma/tıklama ölçümü yok (bu proje yalnız üretir ve gönderir).
 
-- Mesajlar kartının üstünde **Varyant A | Varyant B ⋮ | +** sekmeleri. Her kampanyanın A'sı vardır. **+** B'yi üretir: model
-  (ya da mock) A'nın metnini görerek aynı teklifi farklı sözlerle yazar. B'nin **⋮** menüsü: **Yeniden üret**, **Sil**.
-  B silinince herkes A'yı alır.
+- B yokken Mesajlar kartının başlığında yalnız **+ A/B testi** düğmesi vardır. B eklenince **Varyant A · Merak |
+  Varyant B · Fayda ⋮** sekmeleri çıkar, B silinince kaybolur ve herkes A'yı alır. B'nin **⋮** menüsü: **Yeniden üret**, **Sil**.
+- **Yaklaşım:** her varyant sabit bir listeden bir yaklaşım alır (`aciliyet`, `duygusal`, `fayda`, `merak`, `kisisel`).
+  Claude brief'e göre seçer; B'ninki A'nınkinden farklı olmalı, liste dışı değer reddedilir. Teklif, rakamlar ve tarih iki
+  varyantta aynıdır. Brief'te son tarih ya da süre yoksa `aciliyet` seçilemez ve hiçbir metin "son gün", "acele et" gibi
+  süre baskısı ya da (brief stoktan söz etmiyorsa) stok iddiası yazamaz (D105, D106). Mock: özel gün → duygusal, tarih →
+  aciliyet, sepet → merak, diğerleri → fayda.
 - Her varyantın **kendi tr-TR kaynağı ve kendi çevirileri** vardır; elle yalnız tr-TR düzenlenir. A değişince yalnız A'nın
   çevirileri güncel değil olur, B'ninkiler olduğu gibi kalır (ve tersi).
 - **B, A'nın aynısı olamaz** (harf büyüklüğü ve boşluk sayılmaz, üç alan birden aynıysa): kayıtta ve onayda

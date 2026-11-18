@@ -244,7 +244,7 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 	}
 
 	now := w.clk.Now()
-	w.record(func(c context.Context, _ time.Time) error { return w.q.Observe(c, d.ID, now.Sub(began)) })
+	w.record(func(c context.Context, _ time.Time) error { return w.q.Observe(c, d.ID, began, now.Sub(began)) })
 	dec := w.cfg.Policy.Decide(res.Outcome, d.Attempts, now.Sub(d.CreatedAt))
 	switch dec.Action {
 	case ActionSent:

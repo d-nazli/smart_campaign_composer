@@ -93,7 +93,7 @@ func messageCalls(m *mock.Client) []mock.Call {
 }
 
 func msgs(sms, subject, body string) string {
-	return `{"sms_body":"` + sms + `","email_subject":"` + subject + `","email_body":"` + body + `"}`
+	return `{"sms_body":"` + sms + `","email_subject":"` + subject + `","email_body":"` + body + `","approach":"fayda"}`
 }
 
 func TestMessagesThatForgetTheOfferAreRepaired(t *testing.T) {
@@ -218,4 +218,9 @@ func TestEditedContentWithoutTheOfferGetsAWarningNotASilentPass(t *testing.T) {
 	if !v.Content.Report.OK {
 		t.Error("warnings must not make the report invalid")
 	}
+}
+
+// translation is msgs without the approach: a translation's JSON has only the three texts.
+func translation(sms, subject, body string) string {
+	return strings.Replace(msgs(sms, subject, body), `,"approach":"fayda"`, "", 1)
 }

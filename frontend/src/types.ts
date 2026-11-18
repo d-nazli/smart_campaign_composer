@@ -133,8 +133,13 @@ export interface Segment {
 
 export type ContentSource = 'llm' | 'fallback' | 'edited' | 'translated'
 
+/** The deliberate angle of a variant's source text, chosen by the model from a fixed list. */
+export type Approach = 'aciliyet' | 'duygusal' | 'fayda' | 'merak' | 'kisisel'
+
 export interface StoredContent extends MessageContent {
   locale: LocaleCode
+  /** The source text's approach (absent on translations, the built-in template and older texts). */
+  approach?: Approach
   source: ContentSource
   /** Changes of the source text; a translation keeps the source version it was made from. */
   version: number
@@ -174,6 +179,8 @@ export interface ChannelProgress {
   /** When the first and the last message of this channel were accepted (absent until one was). */
   first_sent_at?: string
   last_sent_at?: string
+  /** The most provider calls started in any one second (only on the campaign's own page; 0 or absent in the list). */
+  peak_per_second?: number
 }
 
 /** Why some deliveries failed: a code from the API (rejected, gave_up, too_old, too_long, other). */

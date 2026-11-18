@@ -45,6 +45,9 @@ type storedContent struct {
 	SourceVersion int
 	SourceText    *content.Content
 	UpdatedAt     time.Time
+	// Approach is the source text's approach (D105); "" on translations, on
+	// the built-in template and on texts written before approaches existed.
+	Approach string
 }
 
 // queryer is satisfied by *pgxpool.Pool and pgx.Tx.
@@ -57,7 +60,8 @@ type queryer interface {
 // has a text; B only when it has one.
 func loadContents(ctx context.Context, q queryer, campaignID int64) (map[string]map[string]storedContent, error) {
 	rows, err := q.Query(ctx, `
-		SELECT variant, locale, sms_body, email_subject, email_body, source, version, coalesce(source_version, 0), source_text, updated_at
+		SELECT variant, locale, sms_body, email_subject, email_body, source, version, coalesce(source_version, 0), source_text, updated_at,
+		       coalesce(approach, '')
 		FROM campaign_contents WHERE campaign_id=$1`, campaignID)
 	if err != nil {
 		return nil, fmt.Errorf("load content: %w", err)
@@ -68,7 +72,7 @@ func loadContents(ctx context.Context, q queryer, campaignID int64) (map[string]
 		var variant, code string
 		var sc storedContent
 		var srcText []byte
-		if err := rows.Scan(&variant, &code, &sc.SMSBody, &sc.EmailSubject, &sc.EmailBody, &sc.Source, &sc.Version, &sc.SourceVersion, &srcText, &sc.UpdatedAt); err != nil {
+		if err := rows.Scan(&variant, &code, &sc.SMSBody, &sc.EmailSubject, &sc.EmailBody, &sc.Source, &sc.Version, &sc.SourceVersion, &srcText, &sc.UpdatedAt, &sc.Approach); err != nil {
 			return nil, fmt.Errorf("load content: %w", err)
 		}
 		if len(srcText) > 0 {
@@ -218,25 +222,27 @@ func (s *Service) GenerateVariant(ctx context.Context, id int64, variant string,
 		return err
 	}
 	src := ls.Source()
-	var avoid *content.Content
-	if variant == VariantB {
-		stored, err := loadContents(ctx, s.pool, id)
-		if err != nil {
-			return err
-		}
-		a, ok := stored[VariantA][src.Code]
-		if !ok {
-			return &StateError{"Varyant B için önce Varyant A'nın mesajları üretilmeli"}
-		}
-		avoid = &a.Content
+	promised := rowOffer(row)
+	stored, err := loadContents(ctx, s.pool, id)
+	if err != nil {
+		return err
+	}
+	// What the text is checked against: whether the brief allows time pressure
+	// or a stock claim, and the other variant (B always has A; A has B when B
+	// was written first and A is written again).
+	chk := genCheck{locale: src, deadline: briefs.HasDeadline(row.brief, promised.ExpiresAt), stock: briefs.MentionsStock(row.brief)}
+	if other, ok := stored[otherVariant(variant)][src.Code]; ok {
+		chk.other, chk.otherApproach = &other.Content, other.Approach
+	} else if variant == VariantB {
+		return &StateError{"Varyant B için önce Varyant A'nın mesajları üretilmeli"}
 	}
 	ev = ev.serialized()
 
 	genCtx, cancel := context.WithTimeout(ctx, messagesTimeout)
 	defer cancel()
-	promised := rowOffer(row)
 
-	c, err := s.generateSource(genCtx, id, row, promised, src, variant, avoid, ev)
+	g, err := s.generateSource(genCtx, id, row, promised, src, variant, chk, ev)
+	c, approach := g.Content, g.approach
 	source := SourceLLM
 	reason := ""
 	if err != nil {
@@ -265,13 +271,13 @@ func (s *Service) GenerateVariant(ctx context.Context, id int64, variant string,
 			}
 		}
 		s.log.Warn("message generation failed; using the fallback template", "campaign_id", id, "reason", reason, "error", err)
-		c, source = s.policy.Fallback(promised), SourceFallback
+		c, approach, source = s.policy.Fallback(promised), "", SourceFallback
 	}
 	norm, rep := s.policy.Validate(c)
 	if !rep.OK {
 		return fmt.Errorf("source text violates the limits after validation (misconfigured budgets?): %v", rep.Messages())
 	}
-	version, err := s.writeSource(ctx, id, variant, norm, source)
+	version, err := s.writeSource(ctx, id, variant, norm, source, approach)
 	if err != nil {
 		return err
 	}
@@ -328,33 +334,93 @@ func (s *Service) storeVariantCounts(ctx context.Context, id int64, row *campaig
 	return nil
 }
 
+// genCheck is what a variant's source text is held to besides the limits and
+// the offer: the brief's deadline and stock (no invented claims), and the other
+// variant (another text and another approach, the same promise).
+type genCheck struct {
+	locale          content.Locale
+	deadline, stock bool
+	other           *content.Content
+	otherApproach   string
+}
+
+// generated is a validated source text with its approach.
+type generated struct {
+	content.Content
+	approach string
+}
+
 // generateSource runs the ask-validate-repair loop for one variant's source text.
 func (s *Service) generateSource(ctx context.Context, id int64, row *campaignRow, promised offer.Offer, src content.Locale,
-	variant string, avoid *content.Content, ev Events) (content.Content, error) {
+	variant string, chk genCheck, ev Events) (generated, error) {
 	var scanner *llm.FieldStream
 	return llm.Repair(ctx, maxAttempts,
 		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
 			scanner = llm.NewFieldStream(content.FieldSMSBody, content.FieldEmailSubject, content.FieldEmailBody)
 			return s.llm.Messages(ctx, llm.MessageRequest{
 				Brief: row.brief, Explanation: row.explanation, Offer: promised, Policy: s.policy, Previous: prev,
-				Locale: src, Theme: briefs.ThemeOf(row.brief, src.Lang()), Variant: variant, Avoid: avoid,
+				Locale: src, Theme: briefs.ThemeOf(row.brief, src.Lang()), Variant: variant,
+				Avoid: chk.other, AvoidApproach: chk.otherApproach, Deadline: chk.deadline,
 			}, deltas(scanner, src.Code, ev))
 		},
-		func(raw string) (content.Content, []string) { return s.validateVariant(raw, promised, avoid) },
+		func(raw string) (generated, []string) { return s.validateVariant(raw, promised, chk) },
 		hooks(s, id, "messages", src.Code, variant, ev),
 	)
 }
 
-// validateVariant is validateMessages plus, for Variant B, "not A again".
-func (s *Service) validateVariant(raw string, promised offer.Offer, avoid *content.Content) (content.Content, []string) {
-	c, problems := s.validateMessages(raw, promised)
-	if len(problems) == 0 && avoid != nil && sameText(c, *avoid) {
-		return c, []string{DuplicateVariantProblem}
+// validateVariant parses the model's JSON strictly (the three texts and the
+// approach) and checks it: the limits and the offer (validateMessages), an
+// approach from the list that the brief allows and the other variant does not
+// use, no time pressure or stock claim the brief does not back, and, next to
+// the other variant, another text with the same promise.
+func (s *Service) validateVariant(raw string, promised offer.Offer, chk genCheck) (generated, []string) {
+	c, approach, err := decodeMessage(raw)
+	if err != nil {
+		return generated{Content: c}, []string{err.Error()}
 	}
-	return c, problems
+	norm, problems := s.checkMessages(c, promised)
+	if approach == nil {
+		problems = append(problems, fmt.Sprintf("approach alanı eksik: şunlardan biri olmalı: %s", strings.Join(content.Approaches, ", ")))
+		approach = new(string)
+	} else if p := content.ApproachProblem(*approach, chk.otherApproach, chk.deadline); p != "" {
+		problems = append(problems, p)
+	}
+	for _, i := range content.UnsupportedClaims(norm, chk.deadline, chk.stock) {
+		problems = append(problems, i.Message)
+	}
+	if chk.other != nil {
+		if sameText(norm, *chk.other) {
+			problems = append(problems, DuplicateVariantProblem)
+		}
+		for _, i := range content.VariantFacts(chk.locale, *chk.other, norm) {
+			problems = append(problems, i.Message)
+		}
+	}
+	if len(problems) > 0 {
+		return generated{Content: c, approach: *approach}, problems
+	}
+	return generated{Content: norm, approach: *approach}, nil
 }
 
-// DuplicateVariantProblem is the feedback to a model that wrote Variant A again.
+// decodeMessage reads exactly one JSON object with the three texts and the
+// approach (nil when the field is missing: reported with the other problems).
+func decodeMessage(raw string) (content.Content, *string, error) {
+	var m struct {
+		content.Content
+		Approach *string `json:"approach"`
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return m.Content, nil, fmt.Errorf("geçerli bir JSON nesnesi değil veya şemaya uymuyor (sms_body, email_subject, email_body, approach): %s", err.Error())
+	}
+	if dec.More() {
+		return m.Content, nil, errors.New("JSON nesnesinden sonra fazladan içerik var")
+	}
+	return m.Content, m.Approach, nil
+}
+
+// DuplicateVariantProblem is the feedback to a model that wrote the other variant again.
 const DuplicateVariantProblem = "Varyant B, Varyant A ile aynı: farklı bir açılış, farklı bir e-posta konusu ve farklı bir SMS cümlesi yaz (teklif ve rakamlar aynı kalsın)"
 
 // translateAll translates one variant's source text into the targets, a few at a time.
@@ -715,7 +781,7 @@ func (s *Service) DeleteVariant(ctx context.Context, id int64, variant string) (
 // writeSource stores one variant's source text and returns its version: a new
 // version when the text changed (that variant's translations become stale), the
 // same otherwise.
-func (s *Service) writeSource(ctx context.Context, id int64, variant string, c content.Content, source string) (int, error) {
+func (s *Service) writeSource(ctx context.Context, id int64, variant string, c content.Content, source, approach string) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -727,14 +793,14 @@ func (s *Service) writeSource(ctx context.Context, id int64, variant string, c c
 	}
 	var version int
 	err = tx.QueryRow(ctx, `
-		INSERT INTO campaign_contents (campaign_id, variant, locale, sms_body, email_subject, email_body, source, version)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,1)
+		INSERT INTO campaign_contents (campaign_id, variant, locale, sms_body, email_subject, email_body, source, version, approach)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,1,nullif($8, ''))
 		ON CONFLICT (campaign_id, variant, locale) DO UPDATE
-		   SET sms_body=$4, email_subject=$5, email_body=$6, source=$7, updated_at=now(),
+		   SET sms_body=$4, email_subject=$5, email_body=$6, source=$7, approach=nullif($8, ''), updated_at=now(),
 		       version = campaign_contents.version + CASE
 		           WHEN (campaign_contents.sms_body, campaign_contents.email_subject, campaign_contents.email_body) = ($4, $5, $6) THEN 0 ELSE 1 END
 		RETURNING version`,
-		id, variant, ls.Source().Code, c.SMSBody, c.EmailSubject, c.EmailBody, source).Scan(&version)
+		id, variant, ls.Source().Code, c.SMSBody, c.EmailSubject, c.EmailBody, source, approach).Scan(&version)
 	if err != nil {
 		return 0, fmt.Errorf("store content: %w", err)
 	}

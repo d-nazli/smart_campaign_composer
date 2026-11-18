@@ -42,6 +42,35 @@ func ConsistentWith(src Locale, ref Content, loc Locale, c Content) []Issue {
 	return out
 }
 
+// VariantFacts compares the two variants of one campaign in one locale: they
+// must promise the same thing (percentages, TL amounts, dates and free
+// shipping, in the SMS and in the email), while the wording, the approach and
+// the {{variables}} they use may differ.
+func VariantFacts(l Locale, a, b Content) []Issue {
+	var out []Issue
+	for _, ch := range []struct {
+		field, label string
+		a, b         string
+	}{
+		{FieldSMSBody, "SMS", a.SMSBody, b.SMSBody},
+		{FieldEmailBody, "E-posta", a.EmailSubject + "\n" + a.EmailBody, b.EmailSubject + "\n" + b.EmailBody},
+	} {
+		fa, fb := factsOf(ch.a, l.FreeShippingTerms), factsOf(ch.b, l.FreeShippingTerms)
+		fa.placeholders, fb.placeholders = nil, nil
+		for _, d := range fa.differences(fb, len(l.FreeShippingTerms) > 0) {
+			out = append(out, Issue{
+				Field: ch.field, Code: CodeVariantMismatch,
+				Message: fmt.Sprintf("%s: iki varyant aynı teklifi söylemeli ama %s farklı (diğer varyant: %s, bu metin: %s). Sayıları ve tarihleri aynı yaz.",
+					ch.label, d.what, d.a, d.b),
+			})
+		}
+	}
+	return out
+}
+
+// CodeVariantMismatch marks a variant that promises something else than the other one.
+const CodeVariantMismatch = "variant_mismatch"
+
 type facts struct {
 	percents, amounts, dates, placeholders []string
 	freeShipping                           bool

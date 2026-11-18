@@ -108,8 +108,11 @@ type ContentView struct {
 	// SourceText is the source text a stale translation was made from (so the
 	// screen can show what changed); absent when the translation is up to date.
 	SourceText *content.Content `json:"source_text,omitempty"`
-	Report     content.Report   `json:"report"`
-	UpdatedAt  time.Time        `json:"updated_at"`
+	// Approach is the source text's approach (D105): one of content.Approaches,
+	// absent on translations, on the built-in template and on older texts.
+	Approach  string         `json:"approach,omitempty"`
+	Report    content.Report `json:"report"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 type View struct {
@@ -345,7 +348,7 @@ func (s *Service) variantView(ls content.Locales, r *campaignRow, required []str
 		if !ok {
 			continue
 		}
-		cv := &ContentView{Content: sc.Content, Locale: l.Code, Source: sc.Source, Version: sc.Version,
+		cv := &ContentView{Content: sc.Content, Locale: l.Code, Source: sc.Source, Version: sc.Version, Approach: sc.Approach,
 			SourceVersion: sc.SourceVersion, UpdatedAt: sc.UpdatedAt}
 		_, cv.Report = s.policy.Validate(cv.Content)
 		if l.IsSource {
@@ -375,22 +378,16 @@ func (s *Service) variantView(ls content.Locales, r *campaignRow, required []str
 	return vv
 }
 
-// validateMessages parses the model's JSON strictly and applies the content
-// rules. The returned problems are fed back to the model on a retry.
-func (s *Service) validateMessages(raw string, promised offer.Offer) (content.Content, []string) {
-	c, err := decodeStrict(raw)
-	if err != nil {
-		return c, []string{err.Error()}
-	}
+// checkMessages applies the content rules to a source text: the limits and
+// variables (Validate) and the offer (Quality). The returned problems are fed
+// back to the model on a retry; the text comes back normalized.
+func (s *Service) checkMessages(c content.Content, promised offer.Offer) (content.Content, []string) {
 	norm, rep := s.policy.Validate(c)
 	problems := rep.Messages()
 	for _, q := range s.policy.Quality(norm, promised) {
 		problems = append(problems, q.Message)
 	}
-	if len(problems) > 0 {
-		return c, problems
-	}
-	return norm, nil
+	return norm, problems
 }
 
 // rowCounts is the stored number of reachable people per locale.

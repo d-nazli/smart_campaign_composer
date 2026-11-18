@@ -78,7 +78,28 @@ func smartMessagesFor(req llm.MessageRequest) string {
 	for i := 1; req.Avoid != nil && sameWords(c, *req.Avoid) && i <= 64; i++ {
 		c = k.write(req.Policy, o, th, seed+i*variantStep)
 	}
-	return toJSON(c)
+	// The approach follows the brief's words (special day → duygusal, a
+	// deadline → aciliyet, a cart → merak, otherwise fayda), and is never the
+	// other variant's.
+	approach, _ := brief.SuggestApproaches(req.Brief, o.ExpiresAt, req.AvoidApproach)
+	return messageJSON(c, approach)
+}
+
+// messageJSON is the message step's answer: the texts and the approach.
+func messageJSON(c content.Content, approach string) string {
+	raw, _ := json.Marshal(messagesJSON{SMSBody: c.SMSBody, EmailSubject: c.EmailSubject, EmailBody: c.EmailBody, Approach: approach})
+	return string(raw)
+}
+
+// withApproach replaces the approach of a message answer (the broken scenarios).
+func withApproach(raw, approach string) string {
+	var m messagesJSON
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return raw
+	}
+	m.Approach = approach
+	out, _ := json.Marshal(m)
+	return string(out)
 }
 
 // variantStep moves a seed far enough through the phrase banks that the text
@@ -140,6 +161,7 @@ type messagesJSON struct {
 	SMSBody      string `json:"sms_body"`
 	EmailSubject string `json:"email_subject"`
 	EmailBody    string `json:"email_body"`
+	Approach     string `json:"approach,omitempty"`
 }
 
 // kitFor returns the phrase book of a language ("en" for every en-* locale).

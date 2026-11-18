@@ -376,7 +376,7 @@ func TestObserveAddsCallsAndTimeAcrossAttempts(t *testing.T) {
 	f := setup(t, 2, 0)
 	ds := claim(t, f, "sms", 2, f.now)
 	for _, l := range []time.Duration{120 * time.Millisecond, 80 * time.Millisecond} {
-		if err := f.q.Observe(ctx, ds[0].ID, l); err != nil {
+		if err := f.q.Observe(ctx, ds[0].ID, f.now, l); err != nil {
 			t.Fatal(err)
 		}
 	}

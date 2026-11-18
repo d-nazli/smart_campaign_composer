@@ -68,7 +68,7 @@ type Queue interface {
 	// Observe adds one provider call and its duration to a delivery (for the
 	// response-time metric). It is separate from the result so a lost result
 	// never loses the measurement.
-	Observe(ctx context.Context, id int64, latency time.Duration) error
+	Observe(ctx context.Context, id int64, began time.Time, latency time.Duration) error
 	// Finish marks campaigns with nothing left to send as completed.
 	Finish(ctx context.Context, now time.Time) (int, error)
 	// Content returns the (frozen) message templates of one variant of a
@@ -207,8 +207,10 @@ func (q *PG) Content(ctx context.Context, campaignID int64, variant, locale stri
 
 var _ Queue = (*PG)(nil)
 
-func (q *PG) Observe(ctx context.Context, id int64, latency time.Duration) error {
-	_, err := q.pool.Exec(ctx, `UPDATE deliveries SET provider_calls = provider_calls + 1, provider_micros = provider_micros + $2 WHERE id = $1`,
-		id, latency.Microseconds())
+// Observe adds one provider call to a delivery: its duration (the response-time
+// metric) and when it started (the busiest second of the sending screen).
+func (q *PG) Observe(ctx context.Context, id int64, began time.Time, latency time.Duration) error {
+	_, err := q.pool.Exec(ctx, `UPDATE deliveries SET provider_calls = provider_calls + 1, provider_micros = provider_micros + $2,
+	       call_starts = array_append(call_starts, $3) WHERE id = $1`, id, latency.Microseconds(), began)
 	return err
 }

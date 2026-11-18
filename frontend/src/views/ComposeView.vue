@@ -6,7 +6,7 @@ import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
 import { failedLocales, initialState, retryNotes } from '../composables/streamState'
 import type { ApproveResult, Campaign, ContentField, Issue, LocaleCode, MessageContent, Variant } from '../types'
-import { VARIANTS, forVariant, hasVariantB, isDuplicate, issueVariant, pendingOf, variantsOf } from '../utils/variants'
+import { VARIANTS, forVariant, hasVariantB, isDuplicate, issueVariant, pendingOf, variantLabel, variantsOf } from '../utils/variants'
 import { approvalDifference, shouldPoll } from '../utils/delivery'
 import {
   FALLBACK_LOCALES,
@@ -25,7 +25,7 @@ import {
 import { checkContent } from '../utils/limits'
 import { campaignIdFromUrl, urlForCampaign, urlWithoutCampaign } from '../utils/route'
 import { checkSchedule, formatWhen, fromLocalInput, toLocalInput, untilText } from '../utils/schedule'
-import { ArrowLeft, Clock, FileText, RefreshCw, Sparkles, XCircle } from 'lucide-vue-next'
+import { ArrowLeft, Clock, FileText, Plus, RefreshCw, Sparkles, XCircle } from 'lucide-vue-next'
 import { briefTitle, statusLabel } from '../utils/dashboard'
 import { attemptLabel } from '../utils/preview'
 import { withAllCustomers } from '../utils/sendToAll'
@@ -787,14 +787,24 @@ onMounted(async () => {
                   @click="generate(activeVariant)"
                   >Yeniden üret</Button
                 >
+                <Button
+                  v-if="tabVariants.length === 1 && !frozen && !streaming && !!campaign?.content"
+                  variant="outline"
+                  size="sm"
+                  :icon="Plus"
+                  :disabled="busy"
+                  data-testid="variant-add"
+                  @click="generate('B')"
+                  >A/B testi</Button
+                >
               </template>
-              <template #tabs>
+              <template v-if="tabVariants.length > 1" #tabs>
                 <VariantTabs
                   v-model="activeVariant"
                   :variants="tabVariants"
+                  :labels="{ A: variantLabel(campaign, 'A'), B: variantLabel(campaign, 'B') }"
                   :status="variantStatus"
                   :locked="frozen || busy || !campaign?.content"
-                  @add="generate('B')"
                   @regenerate="generate('B')"
                   @remove="confirmRemove = true"
                 />

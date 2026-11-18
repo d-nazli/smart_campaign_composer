@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { CheckCircle2 } from 'lucide-vue-next'
+import { CheckCircle2, HelpCircle } from 'lucide-vue-next'
 import type { CampaignStatus, DeliveryProgress, LocaleInfo } from '../types'
 import { channelAverage, deliveryTotals, duration } from '../utils/dashboard'
 import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
@@ -49,6 +49,9 @@ watch(
   { immediate: true },
 )
 const sending = computed(() => !finished.value && !props.delivery.done)
+// The provider's limit per channel; the busiest second ("En yüksek (1 sn)") must stay under it.
+const LIMIT = 100
+const PROVIDER_429 = 'Sağlayıcının test amaçlı döndürdüğü 429\'lar; bizim hız sınırımız aşılmadı.'
 const speedRows = computed(() =>
   rows.value
     .filter((r) => r.p.total > 0)
@@ -61,6 +64,8 @@ const speedRows = computed(() =>
         live: sending.value && live.length >= 2 ? `${Math.round(ratePerSecond(live))}/sn` : '–',
         avg: avg ? `${Math.round(avg.perSecond)}/sn` : '–',
         time: avg ? duration(avg.seconds) : '–',
+        peak: r.p.peak_per_second ? `${r.p.peak_per_second}/sn` : '–',
+        over: (r.p.peak_per_second ?? 0) > LIMIT,
         retries: r.p.retries,
         limited: r.p.rate_limited,
       }
@@ -123,9 +128,12 @@ const ringLabel = computed(
               <th scope="col">Kanal</th>
               <th v-if="sending" scope="col" class="r">Anlık</th>
               <th scope="col" class="r">Ortalama</th>
+              <th scope="col" class="r" data-testid="speed-peak-head">En yüksek (1 sn)</th>
               <th scope="col" class="r">{{ sending ? 'Geçen süre' : 'Süre' }}</th>
               <th scope="col" class="r">Tekrar deneme</th>
-              <th scope="col" class="r">429</th>
+              <th scope="col" class="r" data-testid="speed-429-head">
+                <span class="q-head">429 (provider)<span class="q" :title="PROVIDER_429" :aria-label="PROVIDER_429" role="img"><HelpCircle :size="13" aria-hidden="true" /></span></span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -133,6 +141,7 @@ const ringLabel = computed(
               <th scope="row">{{ r.name }}</th>
               <td v-if="sending" class="r num" data-testid="speed-live">{{ r.live }}</td>
               <td class="r num" data-testid="speed-avg">{{ r.avg }}</td>
+              <td class="r num" :class="{ bad: r.over }" data-testid="speed-peak">{{ r.peak }}</td>
               <td class="r num" data-testid="speed-time">{{ r.time }}</td>
               <td class="r num">{{ count(r.retries) }}</td>
               <td class="r num">{{ count(r.limited) }}</td>
@@ -276,6 +285,16 @@ h3.label {
 }
 .speed tbody th {
   font-weight: 500;
+}
+.q-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.q {
+  display: inline-flex;
+  color: var(--muted);
+  cursor: help;
 }
 .speed .r {
   text-align: right;

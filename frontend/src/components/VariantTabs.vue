@@ -1,21 +1,24 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { Loader2, MoreVertical, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { Loader2, MoreVertical, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { Variant } from '../types'
 
-// The variants of the campaign as tabs, the way Insider's experiment screen shows them:
-// "Varyant A | Varyant B ⋮ | +". A always exists; "+" writes B, B's menu writes it again or
-// removes it. A variant that needs attention (a stale translation, an unsaved edit, a problem)
-// carries a dot; one being written spins.
+// The variants of an A/B test as tabs, the way Insider's experiment screen shows them:
+// "Varyant A · Merak | Varyant B · Fayda ⋮". The strip exists only while there is a Variant B
+// (the card header's "A/B testi" button writes it); B's menu writes it again or removes it.
+// A variant that needs attention (a stale translation, an unsaved edit, a problem) carries a
+// dot; one being written spins.
 const props = defineProps<{
   modelValue: Variant
   variants: Variant[]
+  /** Each tab's text, e.g. "Varyant A · Merak". */
+  labels: Record<Variant, string>
   /** Per variant: needs attention / being written now. */
   status: Record<Variant, { dot: boolean; writing: boolean }>
-  /** Nothing can be added or removed (approved, or busy). */
+  /** B can be neither written again nor removed (approved, or busy). */
   locked: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [Variant]; add: []; regenerate: [Variant]; remove: [Variant] }>()
+const emit = defineEmits<{ 'update:modelValue': [Variant]; regenerate: [Variant]; remove: [Variant] }>()
 
 const menuOpen = ref(false)
 const root = ref<HTMLElement | null>(null)
@@ -69,7 +72,7 @@ function act(what: 'regenerate' | 'remove') {
           :data-testid="`variant-tab-${v}`"
           @click="pick(v)"
         >
-          Varyant {{ v }}
+          {{ labels[v] }}
           <Loader2 v-if="status[v]?.writing" :size="14" class="vt__spin" aria-label="yazılıyor" />
           <span v-else-if="status[v]?.dot" class="vt__dot" aria-label="dikkat gerekiyor" />
         </button>
@@ -98,12 +101,6 @@ function act(what: 'regenerate' | 'remove') {
             </li>
           </ul>
         </div>
-      </template>
-      <template v-if="!variants.includes('B') && !locked">
-        <span class="vt__sep" aria-hidden="true">|</span>
-        <button type="button" class="vt__add" aria-label="Varyant B ekle" title="Varyant B ekle" data-testid="variant-add" @click="emit('add')">
-          <Plus :size="16" aria-hidden="true" />
-        </button>
       </template>
     </div>
   </div>
@@ -164,33 +161,21 @@ function act(what: 'regenerate' | 'remove') {
 .vt__menu {
   position: relative;
 }
-.vt__kebab,
-.vt__add {
+.vt__kebab {
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
+  border: 0;
   border-radius: var(--r-sm);
+  background: none;
   color: var(--muted);
   cursor: pointer;
-}
-.vt__kebab {
-  border: 0;
-  background: none;
 }
 .vt__kebab:hover,
 .vt__kebab[aria-expanded='true'] {
   background: var(--surface-2);
   color: var(--fg);
-}
-.vt__add {
-  border: 1px dashed var(--border-strong);
-  background: var(--surface);
-  color: var(--accent);
-}
-.vt__add:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
 }
 .vt__pop {
   position: absolute;

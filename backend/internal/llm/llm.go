@@ -64,6 +64,12 @@ type MessageRequest struct {
 	// different words; code rejects a copy of it.
 	Variant string
 	Avoid   *content.Content
+	// AvoidApproach is the other variant's approach ("" when none): the text
+	// must take another one (content.Approaches). Deadline says whether the
+	// brief gives a last day or a duration: without one "aciliyet" and any
+	// time pressure are refused.
+	AvoidApproach string
+	Deadline      bool
 }
 
 // TranslateRequest asks for the source text in one target locale.

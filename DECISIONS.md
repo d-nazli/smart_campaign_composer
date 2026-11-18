@@ -623,6 +623,21 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Onay:** herhangi bir varyantta eksik/güncel olmayan çeviri → 409 `stale_translations` (`details.variants` hangi varyantın hangi locale'i beklediğini söyler; `missing`/`stale` A'nın, eski istemciler için). B = A → 422 `variant_duplicate` (kayıtta ve onayda; harf büyüklüğü ve boşluk sayılmaz; üç alan birden aynıysa). Kalite uyarıları varyant adıyla gelir.
 - **Arayüz:** Mesajlar kartında `Varyant A | Varyant B ⋮ | +` sekmeleri (⋮: Yeniden üret, Sil; silme onay penceresiyle). Dikkat isteyen varyantın sekmesinde nokta, yazılanında dönen ikon. Taslaklar varyant başına tutulur: A'daki kaydedilmemiş düzenleme B'ye bakınca kaybolmaz; "Çevir ve göster" iki varyantı da kaydedip çevirir. Onay kartında %50 / %50 çubuğu ve varyant başına kişi/SMS/e-posta; gönderim raporunun en altında varyant karşılaştırma tablosu (kişi, SMS, e-posta, başarısız, toplam). Açıklama cümlesi yok (D90).
 
+## D105 — Yaklaşım sabit bir listeden seçilir · `Kesin (kullanıcı kararı)`
+- Mesaj JSON'unda zorunlu `approach`: `aciliyet`, `duygusal`, `fayda`, `merak`, `kisisel`. Claude brief'e uyanı seçer (şemada enum, prompt'ta anlamları); B'nin yaklaşımı A'nınkiyle aynıysa, liste dışıysa ya da alan yoksa cevap doğrulamada reddedilir ve model onarıma geri gönderilir. Teklif, tutarlar, tarihler ve ücretsiz kargo iki varyantta aynı olmalı (`content.VariantFacts`); ifade ve değişkenler farklı olabilir.
+- **Neden sabit liste:** A ile B arasındaki fark tesadüf değil, adı konmuş bir seçim olsun. Serbest metin ("eğlenceli ama ciddi") kodla denetlenemez, iki varyantın gerçekten farklı yaklaştığı karşılaştırılamaz ve ileride yapılacak ölçüm (başka proje) gruplanamaz. Liste koddadır (`content.Approaches`) ve veritabanı CHECK'iyle de korunur (`00013`); yeni yaklaşım eklemek iki satırdır.
+- Yaklaşım yalnız kaynak (tr-TR) satırında saklanır; çeviri kaynağınkini taşır. Hazır şablonun yaklaşımı yoktur (NULL). Sekmede "Varyant A · Merak".
+- Mock kelimelere göre seçer: özel gün → duygusal, son tarih/süre → aciliyet, sepet → merak, diğerleri → fayda; B sıradaki uygun yaklaşımı alır (`brief.SuggestApproaches`). Bozuk senaryolar: `mock.SameApproach`, `mock.UnknownApproach`.
+
+## D106 — Uydurma aciliyet ve stok iddiası engellenir · `Kesin (kullanıcı kararı)`
+- Brief'te son tarih (teklifin `expires_at`'i) ya da süre ("48 saat boyunca", "bugüne özel", "hafta sonuna kadar") yoksa `aciliyet` seçilemez ve hiçbir metin okuru acele ettiremez: "son gün", "sınırlı süre", "acele et", "süre doluyor"… geçen metin reddedilir. Brief stoktan söz etmiyorsa "stoklar tükeniyor" gibi cümleler de (`content.UnsupportedClaims`).
+- **Neden:** müşteriye olmayan bir son tarih ya da stok sıkıntısı söylemek yanıltıcı reklamdır ve tıklamayı artıran ama güveni bozan tek hamledir. A/B testi "hangisi daha çok tıklatır" sorusuna kayınca model en kolay farkı (sahte aciliyet) üretmeye meyillidir; bu yüzden prompt'a bırakılmadı, kodla denetlenir. "Son 30 günde sepete ekleyen" bir kitle penceresidir, son tarih değildir (testli).
+
+## D107 — Hız tablosunda en yoğun saniye; 429'lar sağlayıcının · `Kesin (kullanıcı kararı)`
+- Worker her provider çağrısının başlangıcını teslimata ekler (`deliveries.call_starts`, retry'lar dahil). Kampanya sayfası kanal başına **herhangi bir 1 saniyelik kayan pencerede** başlatılan en çok çağrıyı gösterir ("En yüksek (1 sn)"); 100'ü geçerse kırmızı. Liste sorgusu bunu hesaplamaz (2 sn'de bir yoklanır). `TestRealPaceNeverTriggersTheProvidersRateLimit` gerçek saatle gönderip kaydedilen en yoğun saniyenin 100'ü geçmediğini de denetler.
+- "429" sütunu "429 (provider)" oldu, tooltip: "Sağlayıcının test amaçlı döndürdüğü 429'lar; bizim hız sınırımız aşılmadı." (kaosun enjekte ettiği 429'lar, D101).
+- **Başarısız sayıları:** SMS ve e-postada eşit çıkan başarısız sayısı (16/16) aynı kişiler değildi (kesişim 0). Mock provider'ın kalıcı hatası adresin biçimidir (400 `invalid_recipient`), kişiye bağlı bir hash yoktur; seed bozuk telefonları ve bozuk e-postaları iki bağımsız karışımla ama aynı oranda (%0,5) üretir, eşitlik oradan. Test: geniş kitlede iki kanalın başarısız kişileri aynı küme değil (`TestTheTwoChannelsFailForDifferentPeople`).
+
 ---
 
 ## Açık / onay bekleyenler

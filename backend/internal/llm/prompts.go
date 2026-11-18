@@ -62,10 +62,16 @@ func MessagesSystemPrompt(p content.Policy) string {
 // MessagesSystemPromptFor is MessagesSystemPrompt for a source locale.
 func MessagesSystemPromptFor(p content.Policy, l content.Locale) string {
 	var b strings.Builder
-	b.WriteString(`You write one SMS and one email for a marketing campaign. Reply with ONLY a JSON object with the string fields "sms_body", "email_subject" and "email_body".
+	b.WriteString(`You write one SMS and one email for a marketing campaign. Reply with ONLY a JSON object with the string fields "sms_body", "email_subject", "email_body" and "approach".
 
 `)
 	writeLimits(&b, p)
+	b.WriteString("\nApproach: first choose the ONE approach that fits this brief best and write both texts in it. \"approach\" is exactly one of:\n")
+	for _, a := range content.Approaches {
+		fmt.Fprintf(&b, "- %s: %s\n", a, content.ApproachMeanings[a])
+	}
+	b.WriteString(`Code rejects any other value. "aciliyet" is refused when the brief gives no last day or duration. Whatever the approach, claim nothing the brief does not say: no "son gün", "sınırlı süre", "acele et" without a deadline in the brief, no stock running out unless the brief mentions stock, no invented numbers.
+`)
 	b.WriteString(`
 
 Style:
@@ -157,18 +163,31 @@ func MessagesUserPromptFor(req MessageRequest) string {
 	} else {
 		s += "\n\nThe brief promises no offer: do not mention any discount."
 	}
+	if req.Deadline {
+		s += "\n\nThe brief gives a last day or a duration: \"aciliyet\" is allowed."
+	} else {
+		s += "\n\nThe brief gives NO last day and NO duration: do not choose \"aciliyet\" and do not hurry the reader."
+	}
 	if req.Avoid != nil {
-		s += "\n\n" + variantNote(*req.Avoid)
+		s += "\n\n" + variantNote(req.Variant, *req.Avoid, req.AvoidApproach)
 	}
 	return s
 }
 
-// variantNote asks for Variant B of an A/B test, showing Variant A.
-func variantNote(a content.Content) string {
-	raw, _ := json.Marshal(a)
-	return "This is Variant B of an A/B test. Variant A is below. Write a clearly different text: a different opening and hook, " +
-		"a different email subject and a different SMS sentence, with exactly the same offer, terms and facts and under the same rules. " +
-		"Code rejects a copy of Variant A.\n<variant_a>\n" + string(raw) + "\n</variant_a>"
+// variantNote asks for one variant of an A/B test, showing the other one.
+func variantNote(variant string, other content.Content, otherApproach string) string {
+	this, that := "B", "A"
+	if variant != "B" {
+		this, that = "A", "B"
+	}
+	raw, _ := json.Marshal(other)
+	s := "This is Variant " + this + " of an A/B test. Variant " + that + " is below. Write a clearly different text: a different opening and hook, " +
+		"a different email subject and a different SMS sentence, with exactly the same offer, terms, numbers and dates and under the same rules. " +
+		"Code rejects a copy of Variant " + that + " and any different number or date."
+	if otherApproach != "" {
+		s += " Variant " + that + "'s approach is \"" + otherApproach + "\": choose a different approach that also fits the brief; the same one is rejected."
+	}
+	return s + "\n<variant_" + strings.ToLower(that) + ">\n" + string(raw) + "\n</variant_" + strings.ToLower(that) + ">"
 }
 
 // themeLine writes the theme as one line: "special day: Kadınlar Günü; topic:

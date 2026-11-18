@@ -351,3 +351,5 @@ Notu olmayan maddeler olduğu gibi çalışıyor; notlu maddeler yeni yerini ya 
 - [x] F119 Varyant başına taslak, güncellik ve "B, A ile aynı" hatası
 - [x] F120 Onayda %50 / %50 çubuğu ve varyant başına kişi sayısı
 - [x] F121 Gönderimde varyant karşılaştırma tablosu (kişi, SMS, e-posta, başarısız)
+- [x] F122 Sekmede yaklaşım ("Varyant A · Merak"); B yokken yalnız "+ A/B testi" düğmesi (D105)
+- [x] F123 Hız tablosunda "En yüksek (1 sn)" ve "429 (provider)" (?) açıklaması (D107)

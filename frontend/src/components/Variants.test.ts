@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { Campaign, DeliveryProgress as Delivery, Segment, StoredContent } from '../types'
-import { comparisonRows, forVariant, hasVariantB, pendingOf, splitShares, variantsOf } from '../utils/variants'
+import { comparisonRows, forVariant, hasVariantB, pendingOf, splitShares, variantLabel, variantsOf } from '../utils/variants'
 import ApprovalCard from './ApprovalCard.vue'
 import DeliveryProgress from './DeliveryProgress.vue'
 import VariantTabs from './VariantTabs.vue'
@@ -77,24 +77,29 @@ describe('the campaign seen through a variant', () => {
 
 describe('VariantTabs', () => {
   const status = { A: { dot: false, writing: false }, B: { dot: true, writing: false } }
+  const labels = { A: 'Varyant A · Merak', B: 'Varyant B · Fayda' }
   const make = (o: Record<string, unknown> = {}) =>
-    mount(VariantTabs, { props: { modelValue: 'A', variants: ['A', 'B'], status, locked: false, ...o }, attachTo: document.body })
+    mount(VariantTabs, { props: { modelValue: 'A', variants: ['A', 'B'], labels, status, locked: false, ...o }, attachTo: document.body })
 
-  it('shows "Varyant A | Varyant B ⋮" with the selected one marked, and no third variant', () => {
+  it('shows "Varyant A · Merak | Varyant B · Fayda ⋮" with the selected one marked, and no third variant', () => {
     const w = make()
     const tabs = w.findAll('[role="tab"]')
-    expect(tabs.map((t) => t.text())).toEqual(['Varyant A', 'Varyant B'])
+    expect(tabs.map((t) => t.text())).toEqual(['Varyant A · Merak', 'Varyant B · Fayda'])
     expect(tabs[0].attributes('aria-selected')).toBe('true')
     expect(w.find('[data-testid="variant-menu"]').exists()).toBe(true)
-    expect(w.find('[data-testid="variant-add"]').exists()).toBe(false)
+    expect(w.find('[data-testid="variant-add"]').exists()).toBe(false) // adding B lives in the card header
     expect(w.get('[data-testid="variant-tab-B"]').find('.vt__dot').exists()).toBe(true)
   })
 
-  it('offers "+" while there is only A', async () => {
-    const w = make({ variants: ['A'] })
-    expect(w.find('[data-testid="variant-menu"]').exists()).toBe(false)
-    await w.get('[data-testid="variant-add"]').trigger('click')
-    expect(w.emitted('add')).toHaveLength(1)
+  it('the tab names the approach of each variant', () => {
+    const withApproaches = {
+      ...campaign,
+      content: { ...campaign.content!, approach: 'merak' as const },
+      variant_b: { ...campaign.variant_b!, content: { ...campaign.variant_b!.content!, approach: 'kisisel' as const } },
+    }
+    expect(variantLabel(withApproaches, 'A')).toBe('Varyant A · Merak')
+    expect(variantLabel(withApproaches, 'B')).toBe('Varyant B · Kişisel')
+    expect(variantLabel(campaign, 'A')).toBe('Varyant A') // a text without an approach (template, older)
   })
 
   it('B\'s menu writes B again or removes it; Escape closes it', async () => {
@@ -118,10 +123,9 @@ describe('VariantTabs', () => {
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['B'])
   })
 
-  it('after approval nothing can be added or removed', () => {
+  it('after approval B can be neither written again nor removed', () => {
     const w = make({ locked: true })
     expect(w.find('[data-testid="variant-menu"]').exists()).toBe(false)
-    expect(make({ locked: true, variants: ['A'] }).find('[data-testid="variant-add"]').exists()).toBe(false)
   })
 })
 
@@ -187,5 +191,35 @@ describe('the sending step with Variant B', () => {
     expect(comparisonRows(undefined)).toEqual([])
     const w = mount(DeliveryProgress, { props: { delivery: { ...delivery, variants: undefined }, status: 'completed' } })
     expect(w.find('[data-testid="variant-comparison"]').exists()).toBe(false)
+  })
+})
+
+describe('the speed table', () => {
+  const ch = (o = {}) => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
+  const at = (s: number) => new Date(Date.UTC(2026, 10, 18, 12, 0, s)).toISOString()
+  const make = (peak: number) =>
+    mount(DeliveryProgress, {
+      props: {
+        delivery: {
+          sms: ch({ total: 300, sent: 300, first_sent_at: at(0), last_sent_at: at(3), peak_per_second: peak, rate_limited: 4 }),
+          email: ch(),
+          done: true,
+        },
+        status: 'completed',
+      },
+    })
+
+  it('shows the busiest second next to the average, and names the 429s as the provider\'s', () => {
+    const w = make(97)
+    const heads = w.get('[data-testid="speed"]').findAll('thead th').map((t) => t.text())
+    expect(heads).toEqual(['Kanal', 'Ortalama', 'En yüksek (1 sn)', 'Süre', 'Tekrar deneme', '429 (provider)'])
+    expect(w.get('[data-testid="speed-sms"] [data-testid="speed-peak"]').text()).toBe('97/sn')
+    const tip = w.get('[data-testid="speed-429-head"] [role="img"]')
+    expect(tip.attributes('title')).toBe('Sağlayıcının test amaçlı döndürdüğü 429\'lar; bizim hız sınırımız aşılmadı.')
+  })
+
+  it('marks a busiest second over the provider\'s 100', () => {
+    expect(make(97).get('[data-testid="speed-peak"]').classes()).not.toContain('bad')
+    expect(make(101).get('[data-testid="speed-peak"]').classes()).toContain('bad')
   })
 })

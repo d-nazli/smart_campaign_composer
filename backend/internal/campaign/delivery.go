@@ -23,6 +23,9 @@ type ChannelProgress struct {
 	// derives the average speed from them (sent / the time in between).
 	FirstSentAt *time.Time `json:"first_sent_at,omitempty"`
 	LastSentAt  *time.Time `json:"last_sent_at,omitempty"`
+	// PeakPerSecond is the most provider calls started in any one second
+	// (PeakPerSecond; only on a campaign's own page, 0 in the list).
+	PeakPerSecond int `json:"peak_per_second"`
 }
 
 // DeliveryView is the sending progress of an approved campaign.
@@ -123,7 +126,42 @@ func (s *Service) deliveryProgress(ctx context.Context, id int64) (*DeliveryView
 	if err != nil {
 		return nil, err
 	}
+	// The busiest second is read for one campaign only (the campaign's own
+	// page), not for every row of the list the dashboard polls.
+	peaks, err := PeakPerSecond(ctx, s.pool, id)
+	if err != nil {
+		return nil, err
+	}
+	m[id].SMS.PeakPerSecond, m[id].Email.PeakPerSecond = peaks["sms"], peaks["email"]
 	return m[id].finish(), nil
+}
+
+// PeakPerSecond is, per channel, the largest number of provider calls the
+// campaign started inside any one second (a sliding window over every call,
+// retries included). The provider allows 100 per second and channel; the
+// pacer keeps it at 97 (D101), so a value over 100 means the limit was broken.
+func PeakPerSecond(ctx context.Context, db queryer, id int64) (map[string]int, error) {
+	rows, err := db.Query(ctx, `
+		WITH calls AS (SELECT channel, unnest(call_starts) AS at FROM deliveries WHERE campaign_id = $1)
+		SELECT channel, max(n)::int FROM (
+			SELECT channel, count(*) OVER (PARTITION BY channel ORDER BY at
+			                               RANGE BETWEEN CURRENT ROW AND interval '999999 microseconds' FOLLOWING) AS n
+			FROM calls) t
+		GROUP BY channel`, id)
+	if err != nil {
+		return nil, fmt.Errorf("peak per second: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var ch string
+		var n int
+		if err := rows.Scan(&ch, &n); err != nil {
+			return nil, fmt.Errorf("peak per second: %w", err)
+		}
+		out[ch] = n
+	}
+	return out, rows.Err()
 }
 
 // deliveryProgressFor does the same for many campaigns in one query. Every id
