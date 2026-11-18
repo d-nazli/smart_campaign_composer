@@ -43,54 +43,87 @@ func TestEveryLocaleOfTheMockIsValidAndConsistent(t *testing.T) {
 	}
 }
 
-func TestEachPhraseBookLocaleIsReallyThatLanguage(t *testing.T) {
+func TestEachLocaleIsReallyThatLanguage(t *testing.T) {
 	policy, _ := content.NewPolicy(nil)
 	set := writeAll(t, policy, "Sepet hatırlatması", offer.Offer{Kind: offer.KindPercent, Value: 30})
-	for code, want := range map[string]string{"tr-TR": "indirim", "en-GB": "30% off", "de-DE": "30 % Rabatt"} {
+	for code, want := range map[string]string{
+		"tr-TR": "%30 indirim", "en-GB": "30% off", "de-DE": "30 % Rabatt", "fr-FR": "30 % de réduction", "es-MX": "30 % de descuento",
+		"it-IT": "30% di sconto", "nl-NL": "30% korting", "pt-BR": "30% de desconto", "ar-SA": "خصم 30%",
+	} {
 		if !strings.Contains(set[code].SMSBody, want) {
 			t.Errorf("%s: %s should contain %q", code, set[code].SMSBody, want)
 		}
 	}
 }
 
-// A locale without a phrase book gets the source text marked with its code:
-// the facts and {{placeholders}} are the source's own, and a new locale needs
-// no code. The mark is dropped where it would break a limit.
-func TestALocaleWithoutAPhraseBookGetsTheMarkedSource(t *testing.T) {
-	policy, _ := content.NewPolicy(nil)
-	src := content.Content{SMSBody: "{{first_name}}, %30 indirim seni bekliyor!", EmailSubject: "%30 indirim", EmailBody: "Merhaba {{first_name}},\n\n%30 indirim."}
-	out, err := mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: src, SourceLocale: trTR, Target: frFR, Policy: policy}, nil)
-	if err != nil {
-		t.Fatal(err)
+// The translation follows the Turkish text as it is now, not the brief: a
+// number, a code, a date changed by hand, a sentence removed or added (from
+// the bank) changes every language. A sentence the bank does not know is left
+// out rather than shown in Turkish; the facts in it are kept.
+func TestAnEditedSourceChangesEveryTranslation(t *testing.T) {
+	p, _ := content.NewPolicy(nil)
+	o := offer.Offer{Kind: offer.KindPercent, Value: 30, Code: "ANNELER", MinSpend: 1000, ExpiresAt: "2026-05-10"}
+	b := "Anneler Günü'ne özel kampanya, samimi olsun"
+	m := mock.New(0)
+	set := writeAll(t, p, b, o)
+	src := set["tr-TR"]
+
+	edited := src
+	r := strings.NewReplacer("%30", "%45", "ANNELER", "BAHAR45", "10.05.2026", "15.06.2026", "1000 TL", "1500 TL")
+	edited.SMSBody = r.Replace(src.SMSBody)
+	edited.EmailSubject = r.Replace(src.EmailSubject)
+	edited.EmailBody = r.Replace(src.EmailBody) + "\n\nGörüşmek üzere!\n\nYarın mağazamız kapalı."
+	for _, l := range targets {
+		c := translateChecked(t, m, p, edited, l, b, o)
+		before := set[l.Code]
+		all := c.SMSBody + "\n" + c.EmailSubject + "\n" + c.EmailBody
+		for _, want := range []string{"45", "BAHAR45", "15.06.2026", "1500"} {
+			if !strings.Contains(all, want) {
+				t.Errorf("%s: the edited %q is not in the translation:\n%s", l.Code, want, all)
+			}
+		}
+		for _, old := range []string{"ANNELER", "10.05.2026", "1000 TL"} {
+			if strings.Contains(all, old) {
+				t.Errorf("%s: the old %q is still in the translation:\n%s", l.Code, old, all)
+			}
+		}
+		if c.EmailBody == before.EmailBody || len(c.EmailBody) <= len(before.EmailBody) {
+			t.Errorf("%s: the added sentence is not translated:\n%s", l.Code, c.EmailBody)
+		}
 	}
-	var c content.Content
-	_ = json.Unmarshal([]byte(out.Raw), &c)
-	if c.SMSBody != mock.PseudoPrefix("fr-FR")+src.SMSBody || c.EmailSubject != "[fr-FR] %30 indirim" || !strings.HasPrefix(c.EmailBody, "[fr-FR] Merhaba") {
-		t.Fatalf("%+v", c)
+	en := translateChecked(t, m, p, edited, enGB, b, o)
+	if !strings.HasSuffix(en.EmailBody, "\n\nSee you soon!") {
+		t.Errorf("the added bank sentence is translated, the unknown one left out:\n%s", en.EmailBody)
 	}
-	long := src
-	long.SMSBody = strings.Repeat("a", 155)
-	out, _ = mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: long, SourceLocale: trTR, Target: frFR, Policy: policy}, nil)
-	_ = json.Unmarshal([]byte(out.Raw), &c)
-	if c.SMSBody != long.SMSBody {
-		t.Fatalf("the mark would break 160: %q", c.SMSBody)
+
+	// A sentence removed from the source is removed from every language.
+	cut := src
+	cut.SMSBody = strings.TrimSpace(src.SMSBody[:strings.Index(src.SMSBody, "!")+1])
+	for _, l := range targets {
+		if c := translateChecked(t, m, p, cut, l, b, o); strings.Contains(c.SMSBody, "ANNELER") {
+			t.Errorf("%s: the removed code is still in the SMS: %s", l.Code, c.SMSBody)
+		}
 	}
 }
 
-// When the source was edited by hand, a phrase book cannot say the same thing
-// (it writes from the offer): the mock then falls back to the marked copy.
-func TestAPhraseBookThatDisagreesWithAnEditedSourceIsNotUsed(t *testing.T) {
-	policy, _ := content.NewPolicy(nil)
-	edited := content.Content{SMSBody: "{{first_name}}, bugün %45 indirim!", EmailSubject: "%45 indirim", EmailBody: "Merhaba,\n\n%45 indirim."}
-	out, err := mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: edited, SourceLocale: trTR, Target: enGB, Policy: policy,
-		Brief: "Herkese %30 indirim", Offer: offer.Offer{Kind: offer.KindPercent, Value: 30}}, nil)
+// A source the bank cannot read at all is never shown in Turkish: its facts
+// stay, its words go; a language the bank does not have is an error.
+func TestNoTurkishEverReachesAnotherLanguage(t *testing.T) {
+	p, _ := content.NewPolicy(nil)
+	free := content.Content{SMSBody: "{{first_name}}, bugün mağazada %45 indirimi kaçırma!", EmailSubject: "Yarın kapalıyız", EmailBody: "Merhaba {{first_name}},\n\nYarın mağazamız kapalı."}
+	out, err := mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: free, SourceLocale: trTR, Target: frFR, Policy: p}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var c content.Content
 	_ = json.Unmarshal([]byte(out.Raw), &c)
-	if !strings.HasPrefix(c.SMSBody, "[en-GB] ") || len(content.ConsistentWith(trTR, edited, enGB, c)) != 0 {
-		t.Fatalf("%+v", c)
+	if w := turkishIn(c); w != "" || !strings.Contains(c.SMSBody, "{{first_name}}") || !strings.Contains(c.SMSBody, "%45") || c.EmailBody != "Bonjour {{first_name}}," {
+		t.Fatalf("%q: %+v", w, c)
+	}
+	_, err = mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: free, SourceLocale: trTR, Policy: p,
+		Target: content.Locale{Code: "ja-JP", Name: "Japanese (Japan)", Direction: "ltr"}}, nil)
+	if err == nil {
+		t.Fatal("a language outside the bank must be an error, never the Turkish text")
 	}
 }
 

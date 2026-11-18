@@ -4,15 +4,14 @@ import { Loader2, MoreVertical, RefreshCw, Trash2 } from 'lucide-vue-next'
 import type { Variant } from '../types'
 
 // The variants of an A/B test as tabs, the way Insider's experiment screen shows them:
-// "Varyant A · Merak | Varyant B · Fayda ⋮". The strip exists only while there is a Variant B
-// (the card header's "A/B testi" button writes it); B's menu writes it again or removes it.
-// A variant that needs attention (a stale translation, an unsaved edit, a problem) carries a
-// dot; one being written spins.
+// "Varyant A | Varyant B ⋮". Each variant's approach stays in the data (the backend keeps B's
+// approach different from A's) but is not shown on the tab. The strip exists only while there
+// is a Variant B (the card header's "A/B testi" button writes it); B's menu writes it again or
+// removes it. A variant that needs attention (a stale translation, an unsaved edit, a problem)
+// carries a dot; one being written spins.
 const props = defineProps<{
   modelValue: Variant
   variants: Variant[]
-  /** Each tab's text, e.g. "Varyant A · Merak". */
-  labels: Record<Variant, string>
   /** Per variant: needs attention / being written now. */
   status: Record<Variant, { dot: boolean; writing: boolean }>
   /** B can be neither written again nor removed (approved, or busy). */
@@ -72,7 +71,7 @@ function act(what: 'regenerate' | 'remove') {
           :data-testid="`variant-tab-${v}`"
           @click="pick(v)"
         >
-          {{ labels[v] }}
+          Varyant {{ v }}
           <Loader2 v-if="status[v]?.writing" :size="14" class="vt__spin" aria-label="yazılıyor" />
           <span v-else-if="status[v]?.dot" class="vt__dot" aria-label="dikkat gerekiyor" />
         </button>

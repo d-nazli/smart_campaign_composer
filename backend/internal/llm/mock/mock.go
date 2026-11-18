@@ -9,6 +9,7 @@ package mock
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -169,6 +170,10 @@ func (c *Client) Translate(ctx context.Context, req llm.TranslateRequest, onDelt
 		c.trIdx[req.Target.Code] = idx
 	}
 	c.mu.Unlock()
+	if lang := req.Target.Lang(); step.Kind == Smart && lang != req.SourceLocale.Lang() && !bankHas(lang) {
+		// Never the Turkish text in another language: the bank cannot write it.
+		return llm.Output{}, fmt.Errorf("mock: the sentence bank has no %q (%s)", lang, req.Target.Code)
+	}
 	return c.play(ctx, step, func() string { return smartTranslate(req) }, onDelta)
 }
 

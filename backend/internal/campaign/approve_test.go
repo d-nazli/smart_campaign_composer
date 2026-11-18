@@ -271,8 +271,9 @@ func TestApproveRejectsContentThatBreaksTheLimitsAndChangesNothing(t *testing.T)
 func TestApproveWithAnEditedMessageThatLostTheOfferStillWorksAndWarns(t *testing.T) {
 	svc, _ := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
+	// Sentences of the mock's bank, so that the mock can translate the edit (D108).
 	_, err := saveSource(context.Background(), svc, id, (content.Content{
-		SMSBody: "{{first_name}}, sepetin seni bekliyor!", EmailSubject: "Sepetin seni bekliyor", EmailBody: "Merhaba {{first_name}}, sepetin hâlâ burada.",
+		SMSBody: "{{first_name}}, sepetindekiler seni bekliyor!", EmailSubject: "Sepetindekiler seni bekliyor", EmailBody: "Merhaba {{first_name}},\n\nSepetindeki ürünler seni unutmadı.",
 	}))
 	if err != nil {
 		t.Fatal(err)

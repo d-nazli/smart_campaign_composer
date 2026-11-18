@@ -190,7 +190,7 @@ var (
 		regexp.MustCompile(`(` + numberPattern + `)\s*(?:tl|try|₺|lira)`),
 		regexp.MustCompile(`₺\s*(` + numberPattern + `)`),
 	}
-	// Free shipping as the brief, the source text and the mock's phrase books
+	// Free shipping as the brief, the source text and the mock's sentence bank
 	// write it (folded). Every locale also has its own words
 	// (locales.free_shipping_terms, see HasFreeShippingIn).
 	freeShippingPhrases = []string{

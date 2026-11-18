@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode"
 
 	"smartcampaign/internal/brief"
 	"smartcampaign/internal/content"
@@ -14,14 +15,20 @@ import (
 	"smartcampaign/internal/trtext"
 )
 
-// Test locales: the source, two locales the mock has phrase books for and two
-// it has none for (they get the marked copy of the source).
+// Test locales: the source and one locale per language of the sentence bank,
+// with the free-shipping words of the locales table.
 var (
 	trTR = content.Locale{Code: "tr-TR", Name: "Turkish (Türkiye)", Direction: "ltr", IsSource: true, FreeShippingTerms: []string{"ücretsiz kargo"}}
 	enGB = content.Locale{Code: "en-GB", Name: "English (United Kingdom)", Direction: "ltr", FreeShippingTerms: []string{"free shipping", "free delivery"}}
 	deDE = content.Locale{Code: "de-DE", Name: "German (Germany)", Direction: "ltr", FreeShippingTerms: []string{"kostenloser versand", "versandkostenfrei"}}
 	frFR = content.Locale{Code: "fr-FR", Name: "French (France)", Direction: "ltr", FreeShippingTerms: []string{"livraison gratuite"}}
-	arSA = content.Locale{Code: "ar-SA", Name: "Arabic (Saudi Arabia)", Direction: "rtl"}
+	esMX = content.Locale{Code: "es-MX", Name: "Spanish (Mexico)", Direction: "ltr", FreeShippingTerms: []string{"envío gratis", "envío gratuito"}}
+	itIT = content.Locale{Code: "it-IT", Name: "Italian (Italy)", Direction: "ltr", FreeShippingTerms: []string{"spedizione gratuita"}}
+	nlNL = content.Locale{Code: "nl-NL", Name: "Dutch (Netherlands)", Direction: "ltr", FreeShippingTerms: []string{"gratis verzending"}}
+	ptBR = content.Locale{Code: "pt-BR", Name: "Portuguese (Brazil)", Direction: "ltr", FreeShippingTerms: []string{"frete grátis"}}
+	arSA = content.Locale{Code: "ar-SA", Name: "Arabic (Saudi Arabia)", Direction: "rtl", FreeShippingTerms: []string{"شحن مجاني"}}
+
+	targets = []content.Locale{enGB, deDE, frFR, esMX, itIT, nlNL, ptBR, arSA}
 )
 
 func decodeChecked(t *testing.T, p content.Policy, raw, what string) content.Content {
@@ -52,18 +59,55 @@ func writeAll(t *testing.T, p content.Policy, b string, o offer.Offer) map[strin
 		t.Fatalf("%q [tr-TR]: %+v\n%+v", b, q, src)
 	}
 	set := map[string]content.Content{trTR.Code: src}
-	for _, l := range []content.Locale{enGB, deDE, frFR, arSA} {
-		out, err := m.Translate(context.Background(), llm.TranslateRequest{Source: src, SourceLocale: trTR, Target: l, Policy: p, Brief: b, Offer: o}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		c := decodeChecked(t, p, out.Raw, b+" ["+l.Code+"]")
-		if issues := content.ConsistentWith(trTR, src, l, c); len(issues) != 0 {
-			t.Fatalf("%q [%s]: the translation disagrees with the source: %+v\n%+v\n%+v", b, l.Code, issues, src, c)
-		}
+	for _, l := range targets {
+		c := translateChecked(t, m, p, src, l, b, o)
 		set[l.Code] = c
 	}
 	return set
+}
+
+// translateChecked translates src into l and checks it as the backend does
+// (limits; the same facts as the source), and that no Turkish is left in it.
+func translateChecked(t *testing.T, m *mock.Client, p content.Policy, src content.Content, l content.Locale, b string, o offer.Offer) content.Content {
+	t.Helper()
+	out, err := m.Translate(context.Background(), llm.TranslateRequest{Source: src, SourceLocale: trTR, Target: l, Policy: p, Brief: b, Offer: o}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := decodeChecked(t, p, out.Raw, b+" ["+l.Code+"]")
+	if issues := content.ConsistentWith(trTR, src, l, c); len(issues) != 0 {
+		t.Fatalf("%q [%s]: the translation disagrees with the source: %+v\n%+v\n%+v", b, l.Code, issues, src, c)
+	}
+	if w := turkishIn(c); w != "" {
+		t.Fatalf("%q [%s]: Turkish %q in the translation:\n%+v", b, l.Code, w, c)
+	}
+	return c
+}
+
+// turkishIn returns a Turkish letter or word found in a translation, or "".
+func turkishIn(c content.Content) string {
+	all := c.SMSBody + " " + c.EmailSubject + " " + c.EmailBody
+	for _, r := range "ğĞşŞıİ" {
+		if strings.ContainsRune(all, r) {
+			return string(r)
+		}
+	}
+	// Words only: a coupon code (BAYRAM10) is the source's data, not Turkish text.
+	var words []string
+	for _, w := range strings.FieldsFunc(trtext.Fold(all), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		if !strings.ContainsAny(w, "0123456789") {
+			words = append(words, w)
+		}
+	}
+	folded := " " + strings.Join(words, " ") + " "
+	for _, w := range []string{"indirim", "kargo", "ucretsiz", "ozel", "firsat", "kupon", "kodu", "kod", "son", "kullanim", "gun",
+		"merhaba", "selam", "sayin", "sana", "size", "seni", "sizi", "sepet", "sepetini", "alisveris", "alisverise", "uzeri", "ve", "ile",
+		"hemen", "simdi", "bekliyor", "sevgiler", "saygilarimizla", "gorusmek", "uzere", "bayram", "yarin", "magazamiz", "kapali"} {
+		if strings.Contains(folded, " "+w+" ") {
+			return w
+		}
+	}
+	return ""
 }
 
 func defaultPolicy(t *testing.T) content.Policy {

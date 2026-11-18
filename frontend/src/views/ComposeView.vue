@@ -6,7 +6,7 @@ import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
 import { failedLocales, initialState, retryNotes } from '../composables/streamState'
 import type { ApproveResult, Campaign, ContentField, Issue, LocaleCode, MessageContent, Variant } from '../types'
-import { VARIANTS, forVariant, hasVariantB, isDuplicate, issueVariant, pendingOf, variantLabel, variantsOf } from '../utils/variants'
+import { VARIANTS, forVariant, hasVariantB, isDuplicate, issueVariant, pendingOf, variantsOf } from '../utils/variants'
 import { approvalDifference, shouldPoll } from '../utils/delivery'
 import {
   FALLBACK_LOCALES,
@@ -802,7 +802,6 @@ onMounted(async () => {
                 <VariantTabs
                   v-model="activeVariant"
                   :variants="tabVariants"
-                  :labels="{ A: variantLabel(campaign, 'A'), B: variantLabel(campaign, 'B') }"
                   :status="variantStatus"
                   :locked="frozen || busy || !campaign?.content"
                   @regenerate="generate('B')"

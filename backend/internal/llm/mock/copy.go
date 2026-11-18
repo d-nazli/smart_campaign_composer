@@ -27,8 +27,11 @@ import (
 // person would. Different briefs get different texts; the same brief always
 // gets the same text, so tests and demos are reproducible.
 
+// The phrases are the Turkish of the sentence bank (bank.go): every one of them
+// has a translation, so the mock translator can write the text in every
+// language of the bank (translate.go).
+
 // pair is one phrase in the informal ("sen") and the formal ("siz") register.
-// English and German have one register; their pairs repeat the phrase.
 type pair [2]string
 
 func (p pair) in(formal bool) string {
@@ -42,16 +45,16 @@ func same(s string) pair { return pair{s, s} }
 
 type kit struct {
 	lang      string
-	greetSMS  []pair // "{{first_name}}," (always with the placeholder)
-	greetBody []pair // "Merhaba {{first_name}},"
-	hooks     map[string][]pair
-	opens     map[string][]pair
-	ctas      map[string][]pair
-	// offerSentence states the offer in the email: %s = the offer with its minimum.
-	offerSentence []pair
-	// subjectOffer is a subject around the main part of the offer (%s).
-	subjectOffer []pair
-	signoff      []pair
+	greetSMS  []line // "{{first_name}}," (always with the placeholder)
+	greetBody []line // "Merhaba {{first_name}},"
+	hooks     map[string][]line
+	opens     map[string][]line
+	ctas      map[string][]line
+	// offerSentence states the offer in the email: {o} = the offer with its minimum.
+	offerSentence []line
+	// subjectOffer is a subject around the main part of the offer ({o}).
+	subjectOffer []line
+	signoff      []line
 	// join puts the minimum basket next to the offer, in this language's order.
 	join func(what, minP string) string
 	// The short forms of the terms, for an SMS that is short of room.
@@ -60,12 +63,11 @@ type kit struct {
 	shortUntil func(d string) string // "Son gün 31.12.2026"
 }
 
-// smartMessagesFor writes the source text (the source locale's phrase book).
+// smartMessagesFor writes the source text from the sentence bank. The source
+// is Turkish; a source locale in another language of the bank gets the
+// Turkish text translated.
 func smartMessagesFor(req llm.MessageRequest) string {
-	k, ok := kitFor(req.Locale.Lang())
-	if !ok {
-		k = turkishKit
-	}
+	k := turkishKit
 	th := req.Theme
 	if th.Topic == "" && th.Occasion == "" && len(th.Tones) == 0 {
 		th = brief.ThemeOf(req.Brief, k.lang) // a caller that did not read the theme
@@ -82,6 +84,9 @@ func smartMessagesFor(req llm.MessageRequest) string {
 	// deadline → aciliyet, a cart → merak, otherwise fayda), and is never the
 	// other variant's.
 	approach, _ := brief.SuggestApproaches(req.Brief, o.ExpiresAt, req.AvoidApproach)
+	if lang := req.Locale.Lang(); lang != k.lang && bankHas(lang) {
+		c = translateContent(c, lang, req.Policy)
+	}
 	return messageJSON(c, approach)
 }
 
@@ -107,7 +112,7 @@ func withApproach(raw, approach string) string {
 const variantStep = 7919
 
 // variantSeed shifts the phrase-bank position for Variant B, so B gets other
-// sentences than A in the source and in every translation.
+// sentences than A (and so do its translations, which follow the source).
 func variantSeed(variant string) int {
 	if variant == "B" {
 		return variantStep
@@ -122,36 +127,6 @@ func sameWords(a, b content.Content) bool {
 	return norm(a.SMSBody) == norm(b.SMSBody) && norm(a.EmailSubject) == norm(b.EmailSubject) && norm(a.EmailBody) == norm(b.EmailBody)
 }
 
-// PseudoPrefix marks a mock translation that is only a copy of the source.
-func PseudoPrefix(code string) string { return "[" + code + "] " }
-
-// smartTranslate is the mock translator. For a locale whose language has a
-// phrase book (en, de) it writes the campaign with that book and keeps it only
-// if it passes the limits and says exactly what the source says (the source
-// may have been edited by hand). Otherwise, and for every other locale, it
-// returns the source text marked with the locale ("[fr-FR] ..."): numbers,
-// dates and {{placeholders}} are then the source's own, and a new locale works
-// without code. The mark is dropped from a field it would push over a limit.
-func smartTranslate(req llm.TranslateRequest) string {
-	if k, ok := kitFor(req.Target.Lang()); ok && req.Target.Lang() != req.SourceLocale.Lang() {
-		th := brief.ThemeOf(req.Brief, k.lang)
-		c := k.write(req.Policy, req.Offer.Normalize(), th, seedOf(req.Brief)+variantSeed(req.Variant))
-		if norm, rep := req.Policy.Validate(c); rep.OK && len(content.ConsistentWith(req.SourceLocale, req.Source, req.Target, norm)) == 0 {
-			return toJSON(norm)
-		}
-	}
-	mark := PseudoPrefix(req.Target.Code)
-	c := req.Source
-	if t := mark + c.SMSBody; req.Policy.EffectiveLength(t) <= content.SMSMaxRunes {
-		c.SMSBody = t
-	}
-	if t := mark + c.EmailSubject; req.Policy.EffectiveLength(t) <= content.SubjectMaxRunes {
-		c.EmailSubject = t
-	}
-	c.EmailBody = mark + c.EmailBody
-	return toJSON(c)
-}
-
 func toJSON(c content.Content) string {
 	raw, _ := json.Marshal(messagesJSON{SMSBody: c.SMSBody, EmailSubject: c.EmailSubject, EmailBody: c.EmailBody})
 	return string(raw)
@@ -162,19 +137,6 @@ type messagesJSON struct {
 	EmailSubject string `json:"email_subject"`
 	EmailBody    string `json:"email_body"`
 	Approach     string `json:"approach,omitempty"`
-}
-
-// kitFor returns the phrase book of a language ("en" for every en-* locale).
-func kitFor(lang string) (kit, bool) {
-	switch lang {
-	case "tr":
-		return turkishKit, true
-	case "en":
-		return englishKit, true
-	case "de":
-		return germanKit, true
-	}
-	return kit{}, false
 }
 
 func seedOf(s string) int {
@@ -230,7 +192,7 @@ func (k kit) write(p content.Policy, o offer.Offer, th llm.Theme, seed int) cont
 	ot := k.offerText(o)
 
 	// The hook banks, most specific first. Tone hooks join the first bank.
-	var tones []pair
+	var tones []line
 	for _, t := range []string{llm.ToneExcited, llm.ToneElegant} {
 		if th.Has(t) {
 			tones = append(tones, k.hooks["tone:"+t]...)
@@ -239,8 +201,8 @@ func (k kit) write(p content.Policy, o offer.Offer, th llm.Theme, seed int) cont
 	if th.Has(llm.ToneUrgent) && o.ExpiresAt != "" {
 		tones = append(tones, k.hooks["tone:"+llm.ToneUrgent]...)
 	}
-	var banks [][]pair
-	var openBanks [][]pair
+	var banks [][]line
+	var openBanks [][]line
 	for _, key := range []string{th.Occasion, th.Topic, llm.TopicGeneral} {
 		if key == "" || (key == llm.TopicGeneral && len(banks) > 0 && th.Topic == llm.TopicGeneral) {
 			continue
@@ -253,12 +215,12 @@ func (k kit) write(p content.Policy, o offer.Offer, th llm.Theme, seed int) cont
 		}
 	}
 	if len(banks) == 0 {
-		banks = [][]pair{k.hooks[llm.TopicGeneral]}
+		banks = [][]line{k.hooks[llm.TopicGeneral]}
 	}
 	if len(openBanks) == 0 {
-		openBanks = [][]pair{k.opens[llm.TopicGeneral]}
+		openBanks = [][]line{k.opens[llm.TopicGeneral]}
 	}
-	banks[0] = append(append([]pair(nil), tones...), banks[0]...)
+	banks[0] = append(append([]line(nil), tones...), banks[0]...)
 	banks = append(banks, k.hooks[llm.TopicGeneral]) // the last resort
 
 	ctaKeys := []string{"general"}
@@ -268,7 +230,7 @@ func (k kit) write(p content.Policy, o offer.Offer, th llm.Theme, seed int) cont
 	if giftDays[th.Occasion] {
 		ctaKeys = append([]string{"gift"}, ctaKeys...)
 	}
-	var ctas []pair
+	var ctas []line
 	for _, key := range ctaKeys {
 		ctas = append(ctas, k.ctas[key]...)
 	}
@@ -279,7 +241,7 @@ func (k kit) write(p content.Policy, o offer.Offer, th llm.Theme, seed int) cont
 }
 
 // pickSMS: greeting × hook × call to action, bank by bank, long terms first.
-func (k kit) pickSMS(p content.Policy, o offer.Offer, ot offerText, banks [][]pair, ctas []pair, formal, short bool, seed int) string {
+func (k kit) pickSMS(p content.Policy, o offer.Offer, ot offerText, banks [][]line, ctas []line, formal, short bool, seed int) string {
 	nc := len(ctas) + 1 // the last choice is "no call to action"
 	if short {
 		nc = 1
@@ -318,7 +280,7 @@ func (k kit) pickSMS(p content.Policy, o offer.Offer, ot offerText, banks [][]pa
 }
 
 // pickEmail: subject × opening × offer sentence × sign-off, bank by bank.
-func (k kit) pickEmail(p content.Policy, o offer.Offer, ot offerText, banks, openBanks [][]pair, ctas []pair, formal, short bool, seed int) (string, string) {
+func (k kit) pickEmail(p content.Policy, o offer.Offer, ot offerText, banks, openBanks [][]line, ctas []line, formal, short bool, seed int) (string, string) {
 	for bi, hooks := range banks {
 		var subjects []string
 		for _, h := range hooks {
@@ -331,7 +293,7 @@ func (k kit) pickEmail(p content.Policy, o offer.Offer, ot offerText, banks, ope
 		}
 		if ot.headline != "" && bi == len(banks)-1 {
 			for _, so := range k.subjectOffer {
-				subjects = append(subjects, strings.Replace(so.in(formal), "%s", ot.headline, 1))
+				subjects = append(subjects, strings.Replace(so.in(formal), "{o}", ot.headline, 1))
 			}
 		}
 		opens := openBanks[min(bi, len(openBanks)-1)]
@@ -353,7 +315,7 @@ func (k kit) pickEmail(p content.Policy, o offer.Offer, ot offerText, banks, ope
 			case o.Kind == offer.KindCouponCode:
 				body += " " + upperFirstIn(k.lang, ot.full) + "." + ot.tail
 			default:
-				body += " " + upperFirstIn(k.lang, strings.Replace(k.offerSentence[os].in(formal), "%s", ot.full, 1)) + ot.tail
+				body += " " + upperFirstIn(k.lang, strings.Replace(k.offerSentence[os].in(formal), "{o}", ot.full, 1)) + ot.tail
 			}
 			body = strings.Replace(body, "\n\n ", "\n\n", 1)
 			body += "\n\n" + ctas[ct].in(formal) + "\n\n" + k.signoff[so].in(formal)

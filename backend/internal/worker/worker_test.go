@@ -568,19 +568,12 @@ func TestEveryProviderCallIsTimed(t *testing.T) {
 
 // ---- locales ---------------------------------------------------------------------
 
-// wording is a word only the text of that locale has: the phrase books write
-// en-* and de-*, every other translation of the mock is the source marked with
-// its code.
+// wording is how the discount reads in that locale's language only (the mock
+// translates every locale from its sentence bank).
 func wording(code string) string {
-	switch {
-	case strings.HasPrefix(code, "en-"):
-		return "off"
-	case strings.HasPrefix(code, "de-"):
-		return "Rabatt"
-	case code == "tr-TR":
-		return "indirim"
-	}
-	return "[" + code + "]"
+	lang, _, _ := strings.Cut(code, "-")
+	return map[string]string{"tr": "indirim", "en": "off", "de": "Rabatt", "fr": "réduction", "es": "descuento",
+		"it": "sconto", "nl": "korting", "pt": "desconto", "ar": "خصم"}[lang]
 }
 
 // Everyone gets the text in THEIR locale (an exact match), and each person
@@ -625,11 +618,7 @@ func TestEveryRecipientGetsTheirOwnLocale(t *testing.T) {
 		}
 		perLocale[code]++
 		text := r.Subject + " " + r.Body
-		// A marked copy keeps its mark in the email body; the SMS may have dropped it to stay within 160.
-		if r.Channel == "sms" && strings.HasPrefix(wording(code), "[") {
-			text = strings.ReplaceAll(r.Body, "indirim", wording(code))
-		}
-		if !strings.Contains(text, wording(code)) {
+		if w := wording(code); w == "" || !strings.Contains(text, w) || (code != "tr-TR" && strings.Contains(text, "indirim")) {
 			t.Fatalf("%s got %q", code, text)
 		}
 	}

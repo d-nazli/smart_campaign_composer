@@ -106,20 +106,22 @@ Insider One'ın Localization yapısı örnek alındı (D92–D97).
 - Güncel olmayan ya da eksik çeviri varken onay backend'de **409 `stale_translations`** ile reddedilir.
 - Her locale'de aynı kurallar: JSON şeması, SMS 160 / konu 80, `{{first_name}}` ve diğer değişkenler kaynakla aynı,
   sayılar/tarihler aynı. Kişi yalnız kendi locale'inin metnini alır; metin yoksa başka locale'e düşülmez.
-- Mock LLM: `en-*` ve `de-*` için kendi kalıp setiyle yazar; diğer locale'lerde kaynak metni `[fr-FR] ` önekiyle döner.
+- Mock LLM: Türkçe metni 9 dilli bir cümle bankasından kurar ve her çeviriyi o anki tr-TR metninden yapar (rakam, tarih,
+  kod ve `{{değişkenler}}` kaynaktan gelir). Elle değişen Türkçe her dile yansır; bankada olmayan kelime çeviriye girmez,
+  hiçbir locale'de Türkçe metin görünmez (D108).
 
 ## A/B varyantları (bonus)
 
 Insider One'ın e-posta Experiment ekranı örnek alındı (D102–D104). Kapsam bilerek dar: **yalnız A ve B**, oran %50 / %50
 sabit, **kazanan seçimi yok**, açılma/tıklama ölçümü yok (bu proje yalnız üretir ve gönderir).
 
-- B yokken Mesajlar kartının başlığında yalnız **+ A/B testi** düğmesi vardır. B eklenince **Varyant A · Merak |
-  Varyant B · Fayda ⋮** sekmeleri çıkar, B silinince kaybolur ve herkes A'yı alır. B'nin **⋮** menüsü: **Yeniden üret**, **Sil**.
+- B yokken Mesajlar kartının başlığında yalnız **+ A/B testi** düğmesi vardır. B eklenince **Varyant A |
+  Varyant B ⋮** sekmeleri çıkar, B silinince kaybolur ve herkes A'yı alır. B'nin **⋮** menüsü: **Yeniden üret**, **Sil**.
 - **Yaklaşım:** her varyant sabit bir listeden bir yaklaşım alır (`aciliyet`, `duygusal`, `fayda`, `merak`, `kisisel`).
   Claude brief'e göre seçer; B'ninki A'nınkinden farklı olmalı, liste dışı değer reddedilir. Teklif, rakamlar ve tarih iki
   varyantta aynıdır. Brief'te son tarih ya da süre yoksa `aciliyet` seçilemez ve hiçbir metin "son gün", "acele et" gibi
   süre baskısı ya da (brief stoktan söz etmiyorsa) stok iddiası yazamaz (D105, D106). Mock: özel gün → duygusal, tarih →
-  aciliyet, sepet → merak, diğerleri → fayda.
+  aciliyet, sepet → merak, diğerleri → fayda. Yaklaşım sekmede gösterilmez, yalnız veride durur (D109).
 - Her varyantın **kendi tr-TR kaynağı ve kendi çevirileri** vardır; elle yalnız tr-TR düzenlenir. A değişince yalnız A'nın
   çevirileri güncel değil olur, B'ninkiler olduğu gibi kalır (ve tersi).
 - **B, A'nın aynısı olamaz** (harf büyüklüğü ve boşluk sayılmaz, üç alan birden aynıysa): kayıtta ve onayda

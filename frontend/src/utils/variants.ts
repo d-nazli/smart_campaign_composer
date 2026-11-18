@@ -1,22 +1,7 @@
-import type { Approach, Campaign, Issue, LocaleCode, Variant, VariantCount, VariantProgress } from '../types'
+import type { Campaign, Issue, LocaleCode, Variant, VariantCount, VariantProgress } from '../types'
 
 /** Every variant a campaign can have, in order. There is no third one. */
 export const VARIANTS: Variant[] = ['A', 'B']
-
-/** How an approach reads on a tab. */
-export const APPROACH_LABELS: Record<Approach, string> = {
-  aciliyet: 'Aciliyet',
-  duygusal: 'Duygusal',
-  fayda: 'Fayda',
-  merak: 'Merak',
-  kisisel: 'Kişisel',
-}
-
-/** A tab's text: "Varyant A · Merak", or "Varyant A" for a text without an approach. */
-export function variantLabel(c: Campaign | null, v: Variant): string {
-  const a = forVariant(c, v)?.content?.approach
-  return a ? `Varyant ${v} · ${APPROACH_LABELS[a] ?? a}` : `Varyant ${v}`
-}
 
 /** The campaign's variants: A, plus B once it was written. */
 export function variantsOf(c: Campaign | null): Variant[] {

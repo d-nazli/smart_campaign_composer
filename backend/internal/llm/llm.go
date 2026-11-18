@@ -80,7 +80,7 @@ type TranslateRequest struct {
 	Policy       content.Policy
 	Previous     []Attempt
 	// The campaign the text belongs to: context for the translator (the mock
-	// writes from it with its phrase books).
+	// translates the source text itself, from its sentence bank).
 	Brief string
 	Offer offer.Offer
 	Theme Theme

@@ -94,8 +94,13 @@ func TestTheSourceIsTranslatedIntoEveryLocaleOfTheAudience(t *testing.T) {
 		t.Fatalf("translations %d, pending %v, mismatches %+v", len(v.Translations), v.Pending, v.Mismatches)
 	}
 	if !strings.Contains(v.Translations["en-GB"].SMSBody, "15% off") || !strings.Contains(v.Translations["de-DE"].SMSBody, "15 % Rabatt") ||
-		!strings.HasPrefix(v.Translations["fr-FR"].EmailBody, "[fr-FR] ") {
-		t.Fatalf("en=%q de=%q fr=%q", v.Translations["en-GB"].SMSBody, v.Translations["de-DE"].SMSBody, v.Translations["fr-FR"].EmailBody)
+		!strings.Contains(v.Translations["fr-FR"].SMSBody, "15 % de réduction") || !strings.Contains(v.Translations["ar-SA"].SMSBody, "خصم 15%") {
+		t.Fatalf("en=%q de=%q fr=%q ar=%q", v.Translations["en-GB"].SMSBody, v.Translations["de-DE"].SMSBody, v.Translations["fr-FR"].SMSBody, v.Translations["ar-SA"].SMSBody)
+	}
+	for code, tr := range v.Translations {
+		if all := tr.SMSBody + tr.EmailSubject + tr.EmailBody; strings.Contains(all, "indirim") || strings.Contains(all, "Merhaba") {
+			t.Errorf("%s: Turkish in the translation: %q", code, all)
+		}
 	}
 }
 
@@ -224,7 +229,9 @@ func TestEditingTheSourceMakesTheTranslationsStale(t *testing.T) {
 	if err != nil || len(again.Pending) != 0 || len(again.TranslationFailures) != 0 {
 		t.Fatalf("%v %+v", err, again)
 	}
-	if again.Translations["fr-FR"].SourceVersion != 2 || again.Translations["fr-FR"].SourceText != nil || !strings.Contains(again.Translations["fr-FR"].EmailBody, "Görüşmek üzere!") {
+	// The added sentence is in every translation, in that language.
+	if fr := again.Translations["fr-FR"]; fr.SourceVersion != 2 || fr.SourceText != nil || !strings.HasSuffix(fr.EmailBody, "À bientôt!") || strings.Contains(fr.EmailBody, "Görüşmek") ||
+		!strings.HasSuffix(again.Translations["de-DE"].EmailBody, "Bis bald!") {
 		t.Fatalf("fr-FR: %+v", again.Translations["fr-FR"])
 	}
 	if _, err := svc.Approve(ctx, id); err != nil {

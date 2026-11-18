@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { Campaign, DeliveryProgress as Delivery, Segment, StoredContent } from '../types'
-import { comparisonRows, forVariant, hasVariantB, pendingOf, splitShares, variantLabel, variantsOf } from '../utils/variants'
+import { comparisonRows, forVariant, hasVariantB, pendingOf, splitShares, variantsOf } from '../utils/variants'
 import ApprovalCard from './ApprovalCard.vue'
 import DeliveryProgress from './DeliveryProgress.vue'
 import VariantTabs from './VariantTabs.vue'
@@ -77,29 +77,25 @@ describe('the campaign seen through a variant', () => {
 
 describe('VariantTabs', () => {
   const status = { A: { dot: false, writing: false }, B: { dot: true, writing: false } }
-  const labels = { A: 'Varyant A · Merak', B: 'Varyant B · Fayda' }
   const make = (o: Record<string, unknown> = {}) =>
-    mount(VariantTabs, { props: { modelValue: 'A', variants: ['A', 'B'], labels, status, locked: false, ...o }, attachTo: document.body })
+    mount(VariantTabs, { props: { modelValue: 'A', variants: ['A', 'B'], status, locked: false, ...o }, attachTo: document.body })
 
-  it('shows "Varyant A · Merak | Varyant B · Fayda ⋮" with the selected one marked, and no third variant', () => {
+  it('shows "Varyant A | Varyant B ⋮" with the selected one marked, and no third variant', () => {
     const w = make()
     const tabs = w.findAll('[role="tab"]')
-    expect(tabs.map((t) => t.text())).toEqual(['Varyant A · Merak', 'Varyant B · Fayda'])
+    expect(tabs.map((t) => t.text())).toEqual(['Varyant A', 'Varyant B'])
     expect(tabs[0].attributes('aria-selected')).toBe('true')
     expect(w.find('[data-testid="variant-menu"]').exists()).toBe(true)
     expect(w.find('[data-testid="variant-add"]').exists()).toBe(false) // adding B lives in the card header
     expect(w.get('[data-testid="variant-tab-B"]').find('.vt__dot').exists()).toBe(true)
   })
 
-  it('the tab names the approach of each variant', () => {
-    const withApproaches = {
-      ...campaign,
-      content: { ...campaign.content!, approach: 'merak' as const },
-      variant_b: { ...campaign.variant_b!, content: { ...campaign.variant_b!.content!, approach: 'kisisel' as const } },
-    }
-    expect(variantLabel(withApproaches, 'A')).toBe('Varyant A · Merak')
-    expect(variantLabel(withApproaches, 'B')).toBe('Varyant B · Kişisel')
-    expect(variantLabel(campaign, 'A')).toBe('Varyant A') // a text without an approach (template, older)
+  it('the tabs never name an approach (it stays in the data only)', () => {
+    const text = make()
+      .findAll('[role="tab"]')
+      .map((t) => t.text())
+      .join(' ')
+    expect(text).not.toMatch(/·|Merak|Fayda|Kişisel|Aciliyet|Duygusal/)
   })
 
   it('B\'s menu writes B again or removes it; Escape closes it', async () => {

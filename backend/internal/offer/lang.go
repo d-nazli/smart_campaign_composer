@@ -1,7 +1,8 @@
 package offer
 
-// The offer's wording for the source text (tr) and for the mock's phrase books
-// (en, de); lang is a language part ("en" for every en-* locale). The offer
+// The offer's wording for the source text (tr), and in English and German
+// (the mock writes every other language from its sentence bank); lang is a
+// language part ("en" for every en-* locale). The offer
 // itself (kind, value, minimum, last day) is language independent; only these
 // phrases change. The numbers, the amounts in TL and the dd.mm.yyyy date are
 // written the same way everywhere on purpose: that is what lets code check
