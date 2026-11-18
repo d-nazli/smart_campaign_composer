@@ -161,6 +161,15 @@ describe('Modal', () => {
     mount(Modal, { props: { modelValue: true, title: 'Silinsin mi?', description: 'Geri alınamaz.', ...props }, slots: { footer }, attachTo: document.body })
   const dialog = () => document.body.querySelector('[role="dialog"]') as HTMLElement | null
 
+  it('is an alert dialog when it interrupts with a question ("Emin misiniz?")', () => {
+    const w = make({ alert: true, title: 'Emin misiniz?' })
+    const d = document.body.querySelector('[role="alertdialog"]') as HTMLElement
+    expect(d).not.toBeNull()
+    expect(dialog()).toBeNull()
+    expect(document.getElementById(d.getAttribute('aria-labelledby')!)!.textContent).toBe('Emin misiniz?')
+    w.unmount()
+  })
+
   it('is a labelled modal dialog', () => {
     const w = make()
     const d = dialog()!

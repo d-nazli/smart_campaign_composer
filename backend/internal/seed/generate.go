@@ -39,10 +39,10 @@ type User struct {
 	TotalSpentCents int64
 	CreatedAt       time.Time
 
-	// Profile fields. Language is always set; Gender and BirthDate are nil for
+	// Profile fields. Locale is always set; Gender and BirthDate are nil for
 	// the few people who did not state them. BirthDate is a calendar date at
 	// 00:00 UTC.
-	Language  string
+	Locale    string
 	Gender    *string
 	BirthDate *time.Time
 }

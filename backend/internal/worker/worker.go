@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -22,7 +23,7 @@ const resultBudget = 5 * time.Second
 
 // Config tunes the worker.
 type Config struct {
-	Concurrency   int           // senders per channel (20)
+	Concurrency   int           // senders per channel (64)
 	BatchSize     int           // rows claimed at once, at most (20)
 	Lease         time.Duration // how long a claimed row is ours (30s)
 	RatePerSecond int           // per channel, strictly paced (90)
@@ -36,7 +37,7 @@ type Config struct {
 // DefaultConfig is the production setting.
 func DefaultConfig() Config {
 	return Config{
-		Concurrency: 20, BatchSize: 20, Lease: 30 * time.Second, RatePerSecond: 90, Poll: 200 * time.Millisecond, RequestTimeout: 5 * time.Second,
+		Concurrency: 64, BatchSize: 20, Lease: 30 * time.Second, RatePerSecond: 90, Poll: 200 * time.Millisecond, RequestTimeout: 5 * time.Second,
 		Policy: RetryPolicy{MaxAttempts: 5, MaxAge: 10 * time.Minute, BaseDelay: 2 * time.Second, MaxDelay: 60 * time.Second, DefaultRetryAfter: time.Second},
 	}
 }
@@ -52,7 +53,7 @@ type Worker struct {
 	pacers map[string]*Pacer
 
 	mu       sync.Mutex
-	contents map[contentKey]content.Content // frozen after approval, so cacheable
+	contents map[contentKey]queue.Template // frozen after approval, so cacheable
 }
 
 func New(q queue.Queue, s Sender, policy content.Policy, clk clock.Clock, log *slog.Logger, cfg Config) *Worker {
@@ -63,7 +64,7 @@ func New(q queue.Queue, s Sender, policy content.Policy, clk clock.Clock, log *s
 		cfg.BatchSize = 1
 	}
 	w := &Worker{q: q, send: s, policy: policy, clk: clk, log: log, cfg: cfg,
-		pacers: map[string]*Pacer{}, contents: map[contentKey]content.Content{}}
+		pacers: map[string]*Pacer{}, contents: map[contentKey]queue.Template{}}
 	for _, ch := range channels {
 		w.pacers[ch] = NewPacer(clk, cfg.RatePerSecond)
 	}
@@ -130,15 +131,22 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) runChannel(ctx context.Context, ch string) {
 	sem := make(chan struct{}, w.cfg.Concurrency)
+	freed := make(chan struct{}, 1) // a sender finished: there may be room to claim
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	// Claiming a handful of rows per query keeps the database out of the way;
+	// waiting for more room than this would leave senders idle.
+	minClaim := w.cfg.Concurrency / 8
+	if minClaim < 1 {
+		minClaim = 1
+	}
 	for ctx.Err() == nil {
 		free := w.cfg.Concurrency - len(sem)
 		if free > w.cfg.BatchSize {
 			free = w.cfg.BatchSize
 		}
 		claimed := 0
-		if free > 0 {
+		if free >= minClaim || (free > 0 && len(sem) == 0) {
 			ds, err := w.q.Claim(ctx, ch, free, w.cfg.Lease, w.clk.Now())
 			if err != nil && ctx.Err() == nil {
 				w.log.Error("claim", "channel", ch, "error", err)
@@ -148,13 +156,28 @@ func (w *Worker) runChannel(ctx context.Context, ch string) {
 				sem <- struct{}{}
 				wg.Add(1)
 				go func() {
-					defer func() { <-sem; wg.Done() }()
+					defer func() {
+						<-sem
+						select {
+						case freed <- struct{}{}:
+						default:
+						}
+						wg.Done()
+					}()
 					w.process(ctx, d)
 				}()
 			}
+			if claimed == 0 {
+				_ = w.clk.Sleep(ctx, w.cfg.Poll) // queue empty
+			}
+			continue
 		}
-		if claimed == 0 {
-			_ = w.clk.Sleep(ctx, w.cfg.Poll)
+		// Not enough room yet: wake as soon as a sender finishes (the short
+		// timer is only a safety net against a missed signal).
+		select {
+		case <-freed:
+		case <-ctx.Done():
+		case <-time.After(20 * time.Millisecond):
 		}
 	}
 }
@@ -174,8 +197,16 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		return
 	}
 
-	lang := content.NormalizeLanguage(d.Language)
-	tmpl, err := w.template(ctx, d.CampaignID, lang)
+	// Exact locale match only: a person whose locale has no text gets nothing
+	// (never another locale's text).
+	tmpl, err := w.template(ctx, d.CampaignID, d.Locale)
+	if errors.Is(err, queue.ErrNoContent) {
+		w.record(func(c context.Context, now time.Time) error {
+			return w.q.Skip(c, d.ID, NoLocaleContent+": "+d.Locale, now)
+		})
+		log.Info("skipped: no text in the recipient's locale", "locale", d.Locale)
+		return
+	}
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Error("cannot load content", "error", err)
@@ -185,7 +216,7 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		}
 		return
 	}
-	text := w.policy.RenderContent(tmpl, content.Recipient{FirstName: d.FirstName, City: d.City, Language: lang})
+	text := w.policy.RenderContent(tmpl.Content, content.Recipient{FirstName: d.FirstName, City: d.City, Fallbacks: tmpl.Fallbacks})
 	// Measured once more as it will be sent: a message over 160 / 80 never
 	// leaves, whatever the configuration. Retrying cannot shorten it: final.
 	if reason := content.RenderedProblem(d.Channel, text); reason != "" {
@@ -218,7 +249,11 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 	case ActionRetry:
 		at := now.Add(dec.Delay)
 		if dec.Kind == queue.RetryRateLimited {
-			pacer.PauseUntil(at) // the whole channel backs off, not just this message
+			// This message waits as told; the whole channel backs off only when
+			// 429s come in a burst (a stray one is not a reason to stall 90/s).
+			if pacer.RateLimited(at) {
+				log.Warn("429 burst: channel paused", "until", at)
+			}
 		}
 		w.record(func(c context.Context, n time.Time) error { return w.q.Retry(c, d.ID, at, dec.Kind, dec.Reason, n) })
 		log.Info("will retry", "after", dec.Delay, "reason", dec.Reason, "rate_limited", dec.Kind == queue.RetryRateLimited)
@@ -240,23 +275,27 @@ func (w *Worker) recipient(d queue.Delivery) (string, bool) {
 	return "", false
 }
 
-// contentKey identifies one language's text of one campaign.
+// NoLocaleContent starts the reason stored for a delivery skipped because the
+// campaign has no text in the recipient's locale.
+const NoLocaleContent = "no content for locale"
+
+// contentKey identifies one locale's text of one campaign.
 type contentKey struct {
 	campaign int64
-	language string
+	locale   string
 }
 
-func (w *Worker) template(ctx context.Context, campaignID int64, lang string) (content.Content, error) {
-	key := contentKey{campaignID, lang}
+func (w *Worker) template(ctx context.Context, campaignID int64, code string) (queue.Template, error) {
+	key := contentKey{campaignID, code}
 	w.mu.Lock()
 	c, ok := w.contents[key]
 	w.mu.Unlock()
 	if ok {
 		return c, nil
 	}
-	c, err := w.q.Content(ctx, campaignID, lang)
+	c, err := w.q.Content(ctx, campaignID, code)
 	if err != nil {
-		return content.Content{}, err
+		return queue.Template{}, err
 	}
 	w.mu.Lock()
 	w.contents[key] = c

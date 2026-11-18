@@ -14,7 +14,7 @@ import (
 // The same brief in the mock's (strict) mode is still asked about.
 func TestGroundedModeLetsTheModelReadTheBrief(t *testing.T) {
 	const b = "Bu ay sepete ürün ekleyip almayanlara %10 indirim"
-	modelRule := `{"status":"ok","match":"all","conditions":[{"field":"days_since_last_cart_add","op":"lte","value":30},{"field":"purchased_since_last_cart_add","op":"eq","value":false}],"explanation":"Bu ay sepete ekleyip almayanlar","question":"","offer":{"kind":"percent","value":10,"code":"","min_spend":0,"expires_at":"","step_spend":0,"max_discount":0,"extras":[]}}`
+	modelRule := `{"name":"Test kampanyası","status":"ok","match":"all","conditions":[{"field":"days_since_last_cart_add","op":"lte","value":30},{"field":"purchased_since_last_cart_add","op":"eq","value":false}],"explanation":"Bu ay sepete ekleyip almayanlar","question":"","offer":{"kind":"percent","value":10,"code":"","min_spend":0,"expires_at":"","step_spend":0,"max_discount":0,"extras":[]}}`
 
 	m := mock.NewScripted([]mock.Step{raw(modelRule)}, nil)
 	svc, _ := newService(t, m)

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { AlertCircle, HelpCircle, Mail, MessageSquare } from 'lucide-vue-next'
-import type { LanguageInfo, Segment } from '../types'
+import type { LocaleInfo, Segment } from '../types'
 import { funnel } from '../utils/funnel'
 import { describeOffer } from '../utils/formatOffer'
 import { sentenceCase } from '../utils/dashboard'
 import { describeCondition } from '../utils/formatRule'
-import { FALLBACK_LANGUAGES, languageSummary } from '../utils/languages'
+import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
 import Badge from './ui/Badge.vue'
 import Button from './ui/Button.vue'
 import Card from './ui/Card.vue'
@@ -14,16 +14,16 @@ import ProgressBar from './ui/ProgressBar.vue'
 import StatTile from './ui/StatTile.vue'
 
 // The audience step. A usable rule: the rule, the reach per channel, the offer and the
-// languages on the left; the estimated audience as one figure with a bar in the right rail.
+// locales on the left; the estimated audience as one figure with a bar in the right rail.
 // A question from the model: the AI surface with a one-click answer when there is one.
-const props = defineProps<{ segment: Segment; busy?: boolean; languages?: LanguageInfo[] }>()
+const props = defineProps<{ segment: Segment; busy?: boolean; locales?: LocaleInfo[] }>()
 const emit = defineEmits<{ (e: 'send-to-all'): void }>()
 
 const chips = computed(() => props.segment.conditions.map(describeCondition))
 const joiner = computed(() => (props.segment.match === 'any' ? 'veya' : 've'))
 const offerText = computed(() => describeOffer(props.segment.offer))
 const f = computed(() => (props.segment.audience ? funnel(props.segment.audience) : null))
-const spoken = computed(() => languageSummary(props.segment.languages, props.languages ?? FALLBACK_LANGUAGES))
+const spoken = computed(() => localeSummary(props.segment.locales, props.locales ?? FALLBACK_LOCALES))
 const hasOffer = computed(() => !!props.segment.offer && props.segment.offer.kind !== 'none')
 const pct = (n: number) => (f.value && f.value.matched > 0 ? Math.round((n / f.value.matched) * 100) : 0)
 const unreachableText = computed(() => (f.value && f.value.unreachable > 0 ? `${f.value.unreachable} kişiye ulaşılamıyor` : 'Hepsine ulaşılabiliyor'))
@@ -69,10 +69,10 @@ const unreachableText = computed(() => (f.value && f.value.unreachable > 0 ? `${
             <dt class="label">Teklif</dt>
             <dd>{{ offerText }}</dd>
           </div>
-          <div v-if="spoken.length" class="ledger__row" data-testid="audience-languages">
-            <dt class="label">Mesaj dili</dt>
-            <dd class="langs">
-              <Badge v-for="l in spoken" :key="l.code">{{ l.display }} <b class="num">{{ l.count }}</b></Badge>
+          <div v-if="spoken.length" class="ledger__row" data-testid="audience-locales">
+            <dt class="label">Locale</dt>
+            <dd class="locs">
+              <Badge v-for="l in spoken" :key="l.code">{{ l.code }} <b class="num">{{ l.count }}</b></Badge>
             </dd>
           </div>
         </dl>
@@ -200,7 +200,7 @@ h3.label {
 dd {
   margin: 0;
 }
-.langs {
+.locs {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;

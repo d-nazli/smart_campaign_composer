@@ -9,7 +9,7 @@ const ch = (o = {}) => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, 
 const LONG =
   'son 30 günde sepetine ürün ekleyip alışveriş yapmayan istanbul’daki kullanıcılara %30 indirim hatırlatması gönder. Samimi ama kısa olsun.'
 
-const draft: CampaignSummary = { id: 1, brief: 'tüm müşterilere yaz', status: 'segment_ready', segment_status: 'ok', matched: 300, created_at: '2026-11-16T10:00:00Z', explanation: 'Tüm müşteriler', audience_languages: { tr: 180, en: 75, de: 45 } }
+const draft: CampaignSummary = { id: 1, brief: 'tüm müşterilere yaz', status: 'segment_ready', segment_status: 'ok', matched: 300, created_at: '2026-11-16T10:00:00Z', explanation: 'Tüm müşteriler', audience_locales: { 'tr-TR': 180, 'en-GB': 75, 'de-DE': 45 } }
 const sending: CampaignSummary = {
   id: 2,
   brief: LONG,
@@ -21,7 +21,7 @@ const sending: CampaignSummary = {
     sms: ch({ total: 10, sent: 6, failed: 1, pending: 3 }),
     email: ch({ total: 10, sent: 10 }),
     done: false,
-    languages: { tr: { total: 12, sent: 12 }, en: { total: 5, sent: 3 }, de: { total: 3, sent: 1 } },
+    locales: { 'tr-TR': { total: 12, sent: 12 }, 'en-GB': { total: 5, sent: 3 }, 'de-DE': { total: 3, sent: 1 } },
   },
 }
 const scheduled: CampaignSummary = { id: 3, brief: 'zamanlı kampanya', status: 'scheduled', segment_status: 'ok', matched: 50, created_at: '2026-11-16T10:00:00Z', scheduled_at: '2026-12-01T09:00:00Z' }
@@ -32,7 +32,7 @@ const make = (campaigns: CampaignSummary[]) => mount(CampaignTable, { props: { c
 describe('CampaignTable', () => {
   it('lists the campaigns as rows of a table with named columns', () => {
     const w = make([draft, sending, scheduled])
-    expect(w.findAll('thead th').map((h) => h.text())).toEqual(['Kampanya', 'Durum', 'Kitle', 'Diller', 'İlerleme', 'Zaman', 'İşlemler'])
+    expect(w.findAll('thead th').map((h) => h.text())).toEqual(['Kampanya', 'Durum', 'Kitle', 'Locale', 'İlerleme', 'Zaman', 'İşlemler'])
     expect(w.findAll('tbody tr')).toHaveLength(3)
     expect(w.find('[data-testid="row-2"]').exists()).toBe(true)
   })
@@ -78,11 +78,20 @@ describe('CampaignTable', () => {
     expect(w.emitted('cancel')?.[0]?.[0]).toMatchObject({ id: 3 })
   })
 
-  it('shows languages as separate cells: the audience before sending, what was sent once it began', () => {
+  it('shows the two largest locales and how many more, the full list in the tooltip', () => {
     const w = make([draft, sending])
-    const cells = (row: number) => w.findAll('tbody tr')[row].findAll('.lang').map((l) => l.text())
-    expect(cells(0)).toEqual(['TR180', 'EN75', 'DE45'])
-    expect(cells(1)).toEqual(['TR12', 'EN3/5', 'DE1/3'])
+    const cell = (row: number) => w.findAll('[data-testid="card-locales"]')[row].find('.locs')
+    expect(cell(0).text()).toBe('tr-TR 180 · en-GB 75 · +1')
+    expect(cell(0).attributes('title')).toBe('tr-TR 180\nen-GB 75\nde-DE 45')
+    expect(cell(1).text()).toBe('tr-TR 12 · en-GB 3/5 · +1')
+  })
+
+  it("shows the model's short name, the audience below it, and the brief for a campaign without a name", () => {
+    const w = make([{ ...draft, name: 'Herkese duyuru' }, sending])
+    expect(w.findAll('[data-testid="card-name"]')[0].text()).toBe('Herkese duyuru')
+    expect(w.findAll('[data-testid="card-name"]')[0].attributes('title')).toBe('tüm müşterilere yaz')
+    expect(w.findAll('[data-testid="card-audience"]')[0].text()).toBe('Tüm müşteriler')
+    expect(w.findAll('[data-testid="card-name"]')[1].text()).not.toBe('')
   })
 
   it('shows progress as a bar and one line of numbers, with the details in a tooltip', () => {

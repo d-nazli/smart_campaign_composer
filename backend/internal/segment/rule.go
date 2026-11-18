@@ -37,6 +37,7 @@ const (
 
 // rawRule is exactly what the LLM returns (the structured-output schema).
 type rawRule struct {
+	Name        string         `json:"name"`
 	Status      string         `json:"status"`
 	Match       string         `json:"match"`
 	Conditions  []rawCondition `json:"conditions"`
@@ -64,6 +65,10 @@ type Condition struct {
 
 // Rule is a validated rule. Only values of this type can be compiled to SQL.
 type Rule struct {
+	// Name is the campaign's short name (at most MaxNameRunes characters),
+	// written by the model. Rules made by code, and rules stored before names
+	// existed, have none.
+	Name        string      `json:"name,omitempty"`
 	Status      string      `json:"status"`
 	Match       string      `json:"match,omitempty"`
 	Conditions  []Condition `json:"conditions"`
@@ -109,6 +114,13 @@ func validate(rr rawRule) (Rule, error) {
 	bad := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
 
 	out := Rule{Status: rr.Status, Conditions: []Condition{}, Offer: offer.Offer{Kind: offer.KindNone}}
+
+	// A name is optional here (a stored rule may have none); when there is one it
+	// must be valid. The model is required to give one (brief.ask).
+	if rr.Name != "" {
+		problems = append(problems, NameProblems(rr.Name)...)
+		out.Name = normalizeName(rr.Name)
+	}
 
 	if utf8.RuneCountInString(rr.Explanation) > MaxExplanation {
 		bad("explanation en fazla %d karakter olmalı", MaxExplanation)

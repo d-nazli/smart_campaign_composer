@@ -22,7 +22,7 @@ func (p Policy) Render(template string, r Recipient) string {
 		}
 		val := strings.Join(strings.Fields(v.Value(r)), " ")
 		if val == "" || utf8.RuneCountInString(val) > p.budgets[v.Name] {
-			return v.FallbackFor(NormalizeLanguage(r.Language))
+			return v.FallbackFor(r)
 		}
 		return val
 	})

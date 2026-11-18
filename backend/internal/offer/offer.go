@@ -190,7 +190,9 @@ var (
 		regexp.MustCompile(`(` + numberPattern + `)\s*(?:tl|try|₺|lira)`),
 		regexp.MustCompile(`₺\s*(` + numberPattern + `)`),
 	}
-	// Free shipping, as it is written in each supported language (folded).
+	// Free shipping as the brief, the source text and the mock's phrase books
+	// write it (folded). Every locale also has its own words
+	// (locales.free_shipping_terms, see HasFreeShippingIn).
 	freeShippingPhrases = []string{
 		"ucretsiz kargo", "kargo ucretsiz", "bedava kargo", "kargo bedava", "ucretsiz gonderim", "ucretsiz teslimat", // tr
 		"free shipping", "free delivery", "shipping is free", "ships free", // en
@@ -221,6 +223,20 @@ func HasFreeShipping(text string) bool {
 	f := trtext.Fold(text)
 	for _, p := range freeShippingPhrases {
 		if strings.Contains(f, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasFreeShippingIn is HasFreeShipping that also knows a locale's own words.
+func HasFreeShippingIn(text string, terms []string) bool {
+	if HasFreeShipping(text) {
+		return true
+	}
+	f := trtext.Fold(text)
+	for _, t := range terms {
+		if t = trtext.Fold(t); t != "" && strings.Contains(f, t) {
 			return true
 		}
 	}

@@ -22,6 +22,24 @@ import (
 // is skipped (docker compose's backend-test service always sets it).
 func New(t *testing.T) (pool *pgxpool.Pool, dsn string) {
 	t.Helper()
+	dsn = NewEmpty(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := store.Migrate(ctx, dsn); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool, dsn
+}
+
+// NewEmpty creates a throwaway database without any migration and returns its
+// address. It is dropped when the test ends.
+func NewEmpty(t *testing.T) (dsn string) {
+	t.Helper()
 	adminDSN := os.Getenv("TEST_DATABASE_URL")
 	if adminDSN == "" {
 		t.Skip("TEST_DATABASE_URL not set; run integration tests via `make test`")
@@ -51,16 +69,7 @@ func New(t *testing.T) (pool *pgxpool.Pool, dsn string) {
 	u.Path = "/" + name
 	dsn = u.String()
 
-	if err := store.Migrate(ctx, dsn); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err = pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	t.Cleanup(func() {
-		pool.Close()
 		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer ccancel()
 		c, err := pgx.Connect(cctx, adminDSN)
@@ -70,5 +79,5 @@ func New(t *testing.T) (pool *pgxpool.Pool, dsn string) {
 		defer c.Close(cctx)
 		_, _ = c.Exec(cctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
 	})
-	return pool, dsn
+	return dsn
 }

@@ -1,6 +1,6 @@
 # Smart Campaign Composer
 
-**Insider One · AI Developer Case Study · 2026**
+**· AI Developer Case Study · 2026**
 
 Pazarlamacının doğal dille yazdığı bir kampanya isteğini Claude ile hedef kitleye ve SMS ve email mesajlarına çeviren; onaya sunan ve gönderip durumunu canlı gösteren uçtan uca bir sistem kuracaksın.
 
@@ -15,7 +15,7 @@ Pazarlamacının doğal dille yazdığı bir kampanya isteğini Claude ile hedef
 
 ## İş bağlamı
 
-Insider One müşterileri her gün milyonlarca kişiye SMS ve email gönderiyor. Bir kampanya hazırlamak için kitleyi tanımlamak, her kanal için metin yazmak ve karakter limitlerine uymak gerekiyor. Bu case'te pazarlamacının yalnızca ne istediğini yazdığı, gerisini Claude'un önerdiği ve son kararı insanın verdiği bir araç kurmanı istiyoruz.
+Şirket, müşterilerine her gün milyonlarca kişiye SMS ve email gönderiyor. Bir kampanya hazırlamak için kitleyi tanımlamak, her kanal için metin yazmak ve karakter limitlerine uymak gerekiyor. Bu case'te pazarlamacının yalnızca ne istediğini yazdığı, gerisini Claude'un önerdiği ve son kararı insanın verdiği bir araç kurmanı istiyoruz.
 
 ---
 
@@ -128,4 +128,4 @@ Case boyunca Claude ile yaptığın tüm çalışma session'larının export'lar
 
 Projen incelenip olumlu bulunduğu takdirde seninle 30 dakikalık bir review görüşmesi yapacağız. Görüşmede çözümünü ve verdiğin kararları birlikte konuşacağız. Soruların olursa veya ek süreye ihtiyacın olursa bize yazman yeterli.
 
-*Insider One · AI Developer Case Study · 2026*
+* · AI Developer Case Study · 2026*

@@ -5,14 +5,25 @@ import (
 	"time"
 )
 
-func TestLanguageSplitIsExact(t *testing.T) {
+// wantLocales is the exact split of 5000 users.
+var wantLocales = map[string]int{
+	"tr-TR": 2000, "en-GB": 400, "en-US": 400, "de-DE": 400, "fr-FR": 300, "es-ES": 250, "pt-BR": 250,
+	"en-AU": 200, "es-MX": 200, "it-IT": 200, "nl-NL": 200, "ar-SA": 200,
+}
+
+func TestLocaleSplitIsExact(t *testing.T) {
 	ds := mustGenerate(t, 42, testNow, DefaultUsers)
 	got := map[string]int{}
 	for _, u := range ds.Users {
-		got[u.Language]++
+		got[u.Locale]++
 	}
-	if got["tr"] != 3000 || got["en"] != 1250 || got["de"] != 750 || len(got) != 3 {
-		t.Fatalf("languages = %v, want tr=3000 en=1250 de=750", got)
+	if len(got) != len(wantLocales) {
+		t.Fatalf("locales = %v", got)
+	}
+	for code, n := range wantLocales {
+		if got[code] != n {
+			t.Fatalf("locales = %v, want %v", got, wantLocales)
+		}
 	}
 }
 
@@ -66,7 +77,7 @@ func TestBirthDatesAreAdultsAndMostlyPresent(t *testing.T) {
 	}
 }
 
-// Language, gender and age are independent of the city and of the brief
+// Locale, gender and age are independent of the city and of the brief
 // cohort: every group has a real mix, none is all-Turkish or all-female.
 func TestProfileFieldsAreMixedInsideTheBriefCohort(t *testing.T) {
 	ds := mustGenerate(t, 42, testNow, DefaultUsers)
@@ -77,7 +88,7 @@ func TestProfileFieldsAreMixedInsideTheBriefCohort(t *testing.T) {
 			continue
 		}
 		cohort++
-		langs[u.Language]++
+		langs[u.Locale]++
 		if u.Gender != nil {
 			genders[*u.Gender]++
 		}
@@ -85,10 +96,13 @@ func TestProfileFieldsAreMixedInsideTheBriefCohort(t *testing.T) {
 	if cohort != 300 {
 		t.Fatalf("cohort = %d, want 300 (profile fields must not move it)", cohort)
 	}
-	for _, l := range []string{"tr", "en", "de"} {
-		if langs[l] < 20 {
-			t.Fatalf("only %d %s speakers in the brief cohort: %v", langs[l], l, langs)
+	for code := range wantLocales {
+		if langs[code] < 3 {
+			t.Fatalf("only %d people with %s in the brief cohort: %v", langs[code], code, langs)
 		}
+	}
+	if langs["tr-TR"] < 80 {
+		t.Fatalf("the source locale is the largest group: %v", langs)
 	}
 	if genders["female"] < 50 || genders["male"] < 50 {
 		t.Fatalf("genders in the cohort not mixed: %v", genders)

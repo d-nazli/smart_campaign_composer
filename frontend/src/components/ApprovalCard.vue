@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AlertTriangle, Clock, Send, Users } from 'lucide-vue-next'
-import type { Issue, LanguageInfo, Segment } from '../types'
+import type { Issue, LocaleInfo, Segment } from '../types'
 import { sentenceCase } from '../utils/dashboard'
 import { describeOffer } from '../utils/formatOffer'
-import { FALLBACK_LANGUAGES, languageSummary } from '../utils/languages'
+import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
 import { quickTimes, scheduleBounds, toLocalInput } from '../utils/schedule'
 import AnimatedNumber from './AnimatedNumber.vue'
 import Badge from './ui/Badge.vue'
@@ -15,7 +15,8 @@ import SegmentedControl, { type SegmentOption } from './ui/SegmentedControl.vue'
 
 // What will be sent, to whom, and when: the choice of time and the summary on the left,
 // the audience and the warnings in the right rail. The buttons live in the wizard's
-// bottom bar; `confirming` is the second step of the approval: the card asks "are you sure?".
+// bottom bar; `confirming` is the second step of the approval: the wizard asks "are you sure?"
+// in an alert dialog, and the card's controls wait.
 // The picker only offers times the server accepts: from a minute from now to 30 days
 // ahead (or the offer's last day, if sooner).
 const props = defineProps<{
@@ -25,7 +26,7 @@ const props = defineProps<{
   /** Already approved: the card is read-only. */
   frozen: boolean
   error: string | null
-  languages?: LanguageInfo[]
+  locales?: LocaleInfo[]
   /** Send now, or at a chosen time (the audience is then decided when the time comes). */
   mode: 'now' | 'later'
   /** The chosen time as a datetime-local value (the viewer's own zone). */
@@ -57,7 +58,7 @@ const people = computed(() => {
   return a ? a.sms_reachable + a.email_reachable - a.both_reachable : 0
 })
 const offer = computed(() => describeOffer(props.segment.offer))
-const spoken = computed(() => languageSummary(props.segment.languages, props.languages ?? FALLBACK_LANGUAGES))
+const spoken = computed(() => localeSummary(props.segment.locales, props.locales ?? FALLBACK_LOCALES))
 const later = computed(() => props.mode === 'later' && !props.frozen)
 </script>
 
@@ -105,20 +106,13 @@ const later = computed(() => props.mode === 'later' && !props.frozen)
             <dd>{{ sentenceCase(segment.explanation) }}</dd>
           </div>
           <div v-if="spoken.length" class="ledger__row">
-            <dt class="label">Diller</dt>
-            <dd class="langs" data-testid="approval-languages">
-              <Badge v-for="l in spoken" :key="l.code">{{ l.display }} <b class="num">{{ l.count }}</b></Badge>
+            <dt class="label">Locale</dt>
+            <dd class="locs" data-testid="approval-locales">
+              <Badge v-for="l in spoken" :key="l.code">{{ l.code }} <b class="num">{{ l.count }}</b></Badge>
             </dd>
           </div>
         </dl>
 
-        <Transition name="fade">
-          <p v-if="confirming" class="notice warn confirm" role="alertdialog" aria-labelledby="confirm-title">
-            <strong id="confirm-title">Emin misiniz?</strong>
-            <template v-if="mode === 'later'">Mesajlar seçtiğiniz zamanda kendiliğinden gönderilir. Başlamadan önce iptal edebilirsiniz.</template>
-            <template v-else>Mesajlar hemen gönderilir. Onaydan sonra metin ve kitle değişmez.</template>
-          </p>
-        </Transition>
         <p v-if="error" class="notice error" role="alert">{{ error }}</p>
       </div>
     </Card>
@@ -131,8 +125,8 @@ const later = computed(() => props.mode === 'later' && !props.frozen)
       </RailCard>
       <RailCard v-if="warnings.length" tone="warn" title="Uyarılar" :icon="AlertTriangle">
         <ul class="warnings" aria-label="Uyarılar">
-          <li v-for="w in warnings" :key="(w.language ?? '') + w.field + w.code + w.message">
-            <span><strong v-if="w.language">{{ w.language.toUpperCase() }}</strong> {{ w.message }}</span>
+          <li v-for="w in warnings" :key="(w.locale ?? '') + w.field + w.code + w.message">
+            <span><strong v-if="w.locale">{{ w.locale }}</strong> {{ w.message }}</span>
           </li>
         </ul>
       </RailCard>
@@ -174,7 +168,7 @@ const later = computed(() => props.mode === 'later' && !props.frozen)
 dd {
   margin: 0;
 }
-.langs {
+.locs {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -203,9 +197,6 @@ dd {
   gap: 6px;
   margin: 0;
   padding-left: var(--s-4);
-}
-.confirm strong {
-  margin-right: 4px;
 }
 @media (max-width: 767px) {
   .when__pick {

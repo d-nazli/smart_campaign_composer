@@ -20,15 +20,16 @@ const props = defineProps<{
   serverIssues?: Issue[]
   /** Quality warnings for the saved text (offer missing, repeated word); they do not block saving. */
   warnings?: Issue[]
-  /** The language being edited: decides which fallback word the hint names. */
-  language?: string
-  /** That language's own name, shown over the previews. */
-  languageName?: string
+  /** The locale being edited: decides which fallback word the hint names; shown over the previews. */
+  locale?: string
+  /** Its writing direction: the fields and the previews follow it. */
+  dir?: 'ltr' | 'rtl'
 }>()
 
-// Layout: the "Mesajlar" panel (the wizard fills its header and the area above the fields
-// through slots: model status, notices, language tabs) and, on the right, the previews
-// of the language on screen. 65 / 35, the previews stay in view; one column below 1280px.
+// Layout: the "Mesajlar" panel (the wizard fills its header, the locale column on the left and
+// the area above the fields through slots) and, on the right, the previews of the locale on
+// screen. 65 / 35, the previews stay in view; one column below 1280px, where the locale
+// column becomes a picker above the fields.
 const emit = defineEmits<{ 'update:modelValue': [MessageContent] }>()
 
 const check = computed(() => checkContent(props.modelValue, props.limits, props.variables))
@@ -40,7 +41,7 @@ const tokens = computed(() =>
     name: v.name,
     token: '{{' + v.name + '}}',
     budget: v.budget,
-    hint: `${v.budget} karakter pay ayrılır; kişinin değeri bundan uzunsa veya boşsa “${v.fallbacks?.[props.language ?? ''] ?? v.fallback}” yazılır`,
+    hint: `${v.budget} karakter pay ayrılır; kişinin değeri bundan uzunsa veya boşsa “${v.fallbacks?.[props.locale ?? ''] ?? v.fallback}” yazılır`,
   })),
 )
 
@@ -62,8 +63,10 @@ function update(field: ContentField, value: string) {
 
 <template>
   <div class="split split--wide">
-    <Card title="Mesajlar">
+    <Card title="Mesajlar" :flush="!!$slots.locales">
       <template v-if="$slots.actions" #actions><slot name="actions" /></template>
+      <div :class="{ msg: !!$slots.locales }">
+      <div v-if="$slots.locales" class="msg__locales"><slot name="locales" /></div>
       <div class="editor">
         <slot name="top" />
 
@@ -80,6 +83,7 @@ function update(field: ContentField, value: string) {
           <textarea
             id="sms"
             rows="3"
+            :dir="dir"
             :value="modelValue.sms_body"
             :readonly="readonly"
             :aria-invalid="issuesFor('sms_body').length > 0"
@@ -97,6 +101,7 @@ function update(field: ContentField, value: string) {
           <input
             id="subject"
             type="text"
+            :dir="dir"
             :value="modelValue.email_subject"
             :readonly="readonly"
             :aria-invalid="issuesFor('email_subject').length > 0"
@@ -111,6 +116,7 @@ function update(field: ContentField, value: string) {
           <textarea
             id="body"
             rows="8"
+            :dir="dir"
             :value="modelValue.email_body"
             :readonly="readonly"
             :aria-invalid="issuesFor('email_body').length > 0"
@@ -122,14 +128,17 @@ function update(field: ContentField, value: string) {
 
         <slot name="bottom" />
       </div>
+      </div>
     </Card>
 
     <aside aria-label="Önizleme">
       <Card title="Önizleme">
-        <template v-if="languageName" #actions><Badge>{{ languageName }}</Badge></template>
+        <template v-if="locale" #actions><Badge data-testid="preview-locale">{{ locale }}</Badge></template>
         <div class="previews">
-          <PhonePreview :text="modelValue.sms_body" :typing="writing === 'sms_body'" />
+          <PhonePreview :text="modelValue.sms_body" :typing="writing === 'sms_body'" :dir="dir" :lang="locale" />
           <EmailPreview
+            :dir="dir"
+            :lang="locale"
             :subject="modelValue.email_subject"
             :body="modelValue.email_body"
             :typing-in="writing === 'email_subject' || writing === 'email_body' ? writing : null"
@@ -141,6 +150,33 @@ function update(field: ContentField, value: string) {
 </template>
 
 <style scoped>
+.msg {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+.msg__locales {
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.msg .editor {
+  padding: var(--s-6);
+  min-width: 0;
+}
+@media (max-width: 1279px) {
+  .msg {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .msg__locales {
+    border-right: 0;
+    padding: var(--s-4) var(--s-6) 0;
+  }
+}
+@media (max-width: 767px) {
+  .msg__locales,
+  .msg .editor {
+    padding-inline: var(--s-4);
+  }
+}
 .editor {
   display: flex;
   flex-direction: column;

@@ -2,6 +2,7 @@ package queue_test
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"testing"
@@ -31,7 +32,7 @@ func setup(t *testing.T, nSMS, nEmail int) fixture {
 	if err := pool.QueryRow(ctx, `INSERT INTO campaigns (brief, status) VALUES ('b', 'approved') RETURNING id`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, sms_body, email_subject, email_body, source) VALUES ($1,'sms {{first_name}}','konu','govde','llm')`, id); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, locale, sms_body, email_subject, email_body, source) VALUES ($1,'tr-TR','sms {{first_name}}','konu','govde','llm')`, id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -311,14 +312,37 @@ func TestFinishCompletesACampaignWithNoRecipients(t *testing.T) {
 	}
 }
 
-func TestContentReturnsTheFrozenTemplates(t *testing.T) {
+func TestContentReturnsTheFrozenTemplatesWithTheLocalesWords(t *testing.T) {
 	f := setup(t, 0, 0)
-	c, err := f.q.Content(ctx, f.campaign, "tr")
+	tmpl, err := f.q.Content(ctx, f.campaign, "tr-TR")
+	c := tmpl.Content
 	if err != nil || c.SMSBody != "sms {{first_name}}" || c.EmailSubject != "konu" || c.EmailBody != "govde" {
 		t.Fatalf("%+v %v", c, err)
 	}
-	if _, err := f.q.Content(ctx, 424242, "tr"); err == nil {
-		t.Fatal("unknown campaign must be an error")
+	if tmpl.Fallbacks["first_name"] != "değerli müşterimiz" {
+		t.Fatalf("fallbacks = %v", tmpl.Fallbacks)
+	}
+	if _, err := f.q.Content(ctx, 424242, "tr-TR"); !errors.Is(err, queue.ErrNoContent) {
+		t.Fatalf("unknown campaign: %v", err)
+	}
+	if _, err := f.q.Content(ctx, f.campaign, "fr-FR"); !errors.Is(err, queue.ErrNoContent) {
+		t.Fatalf("a locale without a text: %v", err)
+	}
+}
+
+// The locale a message is written in is read at claim time and kept on the row.
+func TestClaimReadsTheLocaleNowAndKeepsItOnTheDelivery(t *testing.T) {
+	f := setup(t, 1, 0)
+	if _, err := f.pool.Exec(ctx, `UPDATE users SET locale='ar-SA'`); err != nil {
+		t.Fatal(err)
+	}
+	got := claim(t, f, "sms", 1, f.now)
+	if len(got) != 1 || got[0].Locale != "ar-SA" {
+		t.Fatalf("%+v", got)
+	}
+	var stored string
+	if err := f.pool.QueryRow(ctx, `SELECT locale FROM deliveries WHERE id=$1`, got[0].ID).Scan(&stored); err != nil || stored != "ar-SA" {
+		t.Fatalf("stored locale %q %v", stored, err)
 	}
 }
 

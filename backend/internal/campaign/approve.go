@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"smartcampaign/internal/content"
+	"smartcampaign/internal/locale"
 	"smartcampaign/internal/offer"
 	"smartcampaign/internal/segment"
 )
@@ -49,12 +50,11 @@ type ApproveResult struct {
 	// scheduled campaign). It can differ from what the screen showed earlier: the
 	// data moves on and "the last 30 days" slides. Queued is the truth.
 	Audience *segment.Audience `json:"audience,omitempty"`
-	// Warnings are the soft issues of the stored text (D46), each marked with
-	// its language. They never block.
+	// Warnings are the soft issues of the stored source text (D46). They never block.
 	Warnings []content.Issue `json:"warnings"`
-	// Languages is how many people receive each language (reachable on at
-	// least one channel), counted at approval time.
-	Languages map[string]int `json:"languages,omitempty"`
+	// Locales is how many people receive each locale (reachable on at least
+	// one channel), counted at approval time.
+	Locales map[string]int `json:"locales,omitempty"`
 }
 
 // Approve freezes the campaign and enqueues one delivery per reachable
@@ -110,16 +110,40 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 		return nil, fmt.Errorf("stored rule is corrupt: %w", err)
 	}
 
-	// The text is validated again, in every language: what is sent must satisfy
-	// every limit, and the languages must say the same thing.
-	set, err := checkContents(ctx, tx, s.policy, id)
+	compiled, err := segment.Compile(rule, now)
+	if err != nil {
+		return nil, fmt.Errorf("compile stored rule: %w", err)
+	}
+
+	// The campaign's locales are those of the audience NOW: a locale that gained
+	// a person since the messages were written needs its translation first.
+	ls, err := locale.Load(ctx, tx, s.policy)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := segment.CountByLocale(ctx, tx, compiled)
+	if err != nil {
+		return nil, err
+	}
+	countsJSON, err := json.Marshal(counts)
 	if err != nil {
 		return nil, err
 	}
 
-	compiled, err := segment.Compile(rule, now)
+	// The text is validated again, in every locale of the campaign: what is
+	// sent must satisfy every limit, every translation must be up to date and
+	// say what the source says.
+	set, err := checkContents(ctx, tx, s.policy, ls, id, campaignLocales(ls, counts))
 	if err != nil {
-		return nil, fmt.Errorf("compile stored rule: %w", err)
+		var st *StaleTranslationsError
+		if errors.As(err, &st) {
+			_ = tx.Rollback(ctx)
+			// The screen shows the new locales as missing.
+			if _, uerr := s.pool.Exec(ctx, `UPDATE campaigns SET locale_counts=$2, updated_at=now() WHERE id=$1`, id, countsJSON); uerr != nil {
+				s.log.Error("could not store locale counts", "campaign_id", id, "error", uerr)
+			}
+		}
+		return nil, err
 	}
 
 	if at != nil {
@@ -128,11 +152,14 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 		if err := checkScheduleAgainstOffer(*at, rule.Offer); err != nil {
 			return nil, err
 		}
+		if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2 WHERE id=$1`, id, countsJSON); err != nil {
+			return nil, fmt.Errorf("store locale counts: %w", err)
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, fmt.Errorf("commit approval: %w", err)
 		}
 		return &ApproveResult{ID: id, Status: StatusScheduled, ScheduledAt: at,
-			Warnings: s.warningsFor(set, rule.Offer.Normalize())}, nil
+			Warnings: s.warningsFor(set, ls, rule.Offer.Normalize())}, nil
 	}
 
 	// The audience is counted now, with the same rule, consent and contact
@@ -145,23 +172,15 @@ func (s *Service) ApproveAt(ctx context.Context, id int64, at *time.Time) (*Appr
 	if err != nil {
 		return nil, err
 	}
-	langs, err := segment.CountByLanguage(ctx, tx, compiled)
-	if err != nil {
-		return nil, err
-	}
-	langJSON, err := json.Marshal(langs)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE campaigns SET language_counts=$2 WHERE id=$1`, id, langJSON); err != nil {
-		return nil, fmt.Errorf("store language counts: %w", err)
+	if _, err := tx.Exec(ctx, `UPDATE campaigns SET locale_counts=$2 WHERE id=$1`, id, countsJSON); err != nil {
+		return nil, fmt.Errorf("store locale counts: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit approval: %w", err)
 	}
 
-	return &ApproveResult{ID: id, Status: StatusApproved, Queued: q, Audience: &aud, Languages: langs,
-		Warnings: s.warningsFor(set, rule.Offer.Normalize())}, nil
+	return &ApproveResult{ID: id, Status: StatusApproved, Queued: q, Audience: &aud, Locales: counts,
+		Warnings: s.warningsFor(set, ls, rule.Offer.Normalize())}, nil
 }
 
 // enqueueAudience creates one delivery per reachable ADDRESS and channel for
@@ -195,46 +214,53 @@ func enqueueAudience(ctx context.Context, tx pgx.Tx, id int64, compiled segment.
 	return q, nil
 }
 
-// checkContents loads the text of every language and checks it as sending
-// requires: all languages present, each within the limits, all saying the same.
-func checkContents(ctx context.Context, q queryer, policy content.Policy, id int64) (map[string]content.Content, error) {
+// checkContents loads the text of the given locales and checks it as sending
+// requires: the source and every translation present, every translation made
+// from the current source (else StaleTranslationsError), each within the
+// limits and every translation saying what the source says.
+func checkContents(ctx context.Context, q queryer, policy content.Policy, ls content.Locales, id int64, required []string) (map[string]content.Content, error) {
 	stored, err := loadContents(ctx, q, id)
 	if err != nil {
 		return nil, err
 	}
+	srcLocale := ls.Source()
+	src, ok := stored[srcLocale.Code]
+	if !ok {
+		return nil, &StateError{"kaynak metin (" + srcLocale.Code + ") yok; önce mesajlar üretilmeli"}
+	}
+	if missing, stale := pendingLocales(ls, required, stored); len(missing)+len(stale) > 0 {
+		return nil, &StaleTranslationsError{Missing: missing, Stale: stale}
+	}
 	set := map[string]content.Content{}
-	for code, sc := range stored {
-		set[code] = sc.Content
-	}
-	if err := requireAllLanguages(set); err != nil {
-		return nil, err
-	}
 	var issues []content.Issue
-	for _, l := range content.Languages {
-		if _, rep := policy.Validate(set[l.Code]); !rep.OK {
+	for _, code := range required {
+		l, _ := ls.Get(code)
+		c := stored[code].Content
+		set[code] = c
+		if _, rep := policy.Validate(c); !rep.OK {
 			for _, i := range rep.Issues {
-				i.Language = l.Code
+				i.Locale = code
 				issues = append(issues, i)
 			}
+			continue
+		}
+		if !l.IsSource {
+			issues = append(issues, content.ConsistentWith(srcLocale, src.Content, l, c)...)
 		}
 	}
-	issues = append(issues, content.Consistency(set)...)
 	if len(issues) > 0 {
 		return nil, &InvalidContentError{Report: content.Report{OK: false, Issues: issues, Warnings: []content.Issue{}}}
 	}
 	return set, nil
 }
 
-// warningsFor collects the soft issues of every language, marked with it.
-func (s *Service) warningsFor(set map[string]content.Content, o offer.Offer) []content.Issue {
+// warningsFor collects the soft issues of the source text (the Turkish offer
+// checks; translations are held to the source by checkContents).
+func (s *Service) warningsFor(set map[string]content.Content, ls content.Locales, o offer.Offer) []content.Issue {
 	out := []content.Issue{} // never nil: the API sends [] rather than null
-	for _, l := range content.Languages {
-		c, ok := set[l.Code]
-		if !ok {
-			continue
-		}
+	if c, ok := set[ls.Source().Code]; ok {
 		for _, i := range s.policy.Quality(c, o) {
-			i.Language = l.Code
+			i.Locale = ls.Source().Code
 			out = append(out, i)
 		}
 	}
@@ -263,12 +289,16 @@ func (s *Service) alreadyApprovedOrRefuse(ctx context.Context, id int64) (*Appro
 		return nil, fmt.Errorf("count deliveries: %w", err)
 	}
 	warnings := []content.Issue{}
+	ls, err := s.loadLocales(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if stored, err := loadContents(ctx, s.pool, id); err == nil {
 		set := map[string]content.Content{}
 		for code, sc := range stored {
 			set[code] = sc.Content
 		}
-		warnings = s.warningsFor(set, rowOffer(row))
+		warnings = s.warningsFor(set, ls, rowOffer(row))
 	}
 	return &ApproveResult{ID: id, Status: row.status, AlreadyApproved: true, Queued: q, ScheduledAt: row.scheduledAt, Warnings: warnings}, nil
 }

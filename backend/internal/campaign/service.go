@@ -26,7 +26,7 @@ const (
 	maxBriefRunes    = 2000
 	maxRawLogBytes   = 8 << 10
 	segmentTimeout   = 60 * time.Second
-	messagesTimeout  = 180 * time.Second // the reference language first, then the others
+	messagesTimeout  = 180 * time.Second // the source text first, then the translations
 	auditWriteBudget = 5 * time.Second
 )
 
@@ -39,9 +39,10 @@ const (
 
 // Content sources.
 const (
-	SourceLLM      = "llm"
-	SourceFallback = "fallback"
-	SourceEdited   = "edited"
+	SourceLLM        = "llm"
+	SourceFallback   = "fallback"
+	SourceEdited     = "edited" // the source text, edited by a person (translations never are)
+	SourceTranslated = "translated"
 )
 
 // Fallback reasons reported to the UI.
@@ -72,6 +73,9 @@ func NewService(pool *pgxpool.Pool, client llm.Client, policy content.Policy, lo
 // Policy returns the content policy (limits/budgets) in force.
 func (s *Service) Policy() content.Policy { return s.policy }
 
+// Locales returns the locales table, checked against the policy.
+func (s *Service) Locales(ctx context.Context) (content.Locales, error) { return s.loadLocales(ctx) }
+
 // ---- views ----------------------------------------------------------------
 
 type SegmentView struct {
@@ -87,30 +91,50 @@ type SegmentView struct {
 	// Note is a sentence shown with an ok audience, for example why everyone was
 	// chosen ("Kitle belirtilmediği için tüm müşteriler seçildi.").
 	Note string `json:"note,omitempty"`
-	// Languages is how many reachable people speak each language (for example
-	// {"tr": 120, "en": 45}); it is recounted when the audience is built.
-	Languages map[string]int `json:"languages,omitempty"`
+	// Locales is how many reachable people each locale has (for example
+	// {"tr-TR": 120, "en-GB": 45}); it is recounted when the audience is built.
+	Locales map[string]int `json:"locales,omitempty"`
 }
 
 type ContentView struct {
 	content.Content
-	Language  string         `json:"language"`
-	Source    string         `json:"source"`
-	Report    content.Report `json:"report"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	Locale string `json:"locale"`
+	Source string `json:"source"`
+	// Version counts the source text's changes; SourceVersion is the source
+	// version a translation was made from. Stale: made from an older one.
+	Version       int  `json:"version"`
+	SourceVersion int  `json:"source_version,omitempty"`
+	Stale         bool `json:"stale"`
+	// SourceText is the source text a stale translation was made from (so the
+	// screen can show what changed); absent when the translation is up to date.
+	SourceText *content.Content `json:"source_text,omitempty"`
+	Report     content.Report   `json:"report"`
+	UpdatedAt  time.Time        `json:"updated_at"`
 }
 
 type View struct {
-	ID      int64        `json:"id"`
-	Brief   string       `json:"brief"`
+	ID    int64  `json:"id"`
+	Brief string `json:"brief"`
+	// Name is the campaign's short name written by the model ("" when it has none).
+	Name    string       `json:"name,omitempty"`
 	Status  string       `json:"status"`
 	Segment *SegmentView `json:"segment,omitempty"`
-	// Content is the reference (default) language's text; Translations holds
-	// the other languages, which must say the same thing (Mismatches lists
-	// where they do not).
+	// SourceLocale is the locale the text is written in first; Content is that
+	// text. Locales are the campaign's locales: the source and every locale with
+	// a reachable person. Translations holds their texts (and texts of locales
+	// that left the audience). Pending lists the campaign's translations that
+	// are missing or stale: while it is not empty the campaign cannot be
+	// approved. Mismatches lists up-to-date translations that do not say what
+	// the source says.
+	SourceLocale string                  `json:"source_locale"`
+	Locales      []string                `json:"locales"`
 	Content      *ContentView            `json:"content,omitempty"`
 	Translations map[string]*ContentView `json:"translations,omitempty"`
+	Pending      []string                `json:"pending_locales"`
 	Mismatches   []content.Issue         `json:"mismatches"`
+	// TranslationFailures names the locales a translate request could not
+	// translate, with the reason (only in the answer to that request).
+	TranslationFailures map[string]string `json:"translation_failures,omitempty"`
 	// Delivery is present once the campaign has been approved.
 	Delivery *DeliveryView `json:"delivery,omitempty"`
 	// ScheduledAt is when a scheduled campaign starts (set from approval on).
@@ -138,7 +162,7 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	genCtx, cancel := context.WithTimeout(ctx, segmentTimeout)
 	defer cancel()
 
-	rule, err := briefs.ResolveSegmentWith(genCtx, s.llm, brief, llm.Hooks{OnLog: s.recorder(id, "segment", content.DefaultLanguage)}, s.segmentMode)
+	rule, err := briefs.ResolveSegmentWith(genCtx, s.llm, brief, llm.Hooks{OnLog: s.recorder(id, "segment", "")}, s.segmentMode)
 	if err != nil {
 		return nil, s.generationError(err, "Kitle kuralı üretilemedi")
 	}
@@ -150,8 +174,8 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = s.pool.Exec(ctx, `UPDATE campaigns SET segment_status=$2, explanation=$3, question=$4, segment_rule=$5, updated_at=now() WHERE id=$1`,
-			id, rule.Status, rule.Explanation, rule.Question, ruleJSON)
+		_, err = s.pool.Exec(ctx, `UPDATE campaigns SET segment_status=$2, explanation=$3, question=$4, segment_rule=$5, name=$6, updated_at=now() WHERE id=$1`,
+			id, rule.Status, rule.Explanation, rule.Question, ruleJSON, rule.Name)
 		if err != nil {
 			return nil, fmt.Errorf("store segment status: %w", err)
 		}
@@ -166,11 +190,11 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	langs, err := segment.CountByLanguage(ctx, s.pool, compiled)
+	counts, err := segment.CountByLocale(ctx, s.pool, compiled)
 	if err != nil {
 		return nil, err
 	}
-	langJSON, err := json.Marshal(langs)
+	countsJSON, err := json.Marshal(counts)
 	if err != nil {
 		return nil, err
 	}
@@ -180,9 +204,9 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	}
 	_, err = s.pool.Exec(ctx, `
 		UPDATE campaigns SET status='segment_ready', segment_status='ok', segment_rule=$2, explanation=$3, question='',
-		       matched=$4, sms_reachable=$5, email_reachable=$6, both_reachable=$7, language_counts=$8, updated_at=now()
+		       matched=$4, sms_reachable=$5, email_reachable=$6, both_reachable=$7, locale_counts=$8, name=$9, updated_at=now()
 		WHERE id=$1`,
-		id, ruleJSON, rule.Explanation, aud.Matched, aud.SMSReachable, aud.EmailReachable, aud.BothReachable, langJSON)
+		id, ruleJSON, rule.Explanation, aud.Matched, aud.SMSReachable, aud.EmailReachable, aud.BothReachable, countsJSON, rule.Name)
 	if err != nil {
 		return nil, fmt.Errorf("store segment: %w", err)
 	}
@@ -194,6 +218,7 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 type campaignRow struct {
 	id             int64
 	brief          string
+	name           string
 	status         string
 	segmentStatus  *string
 	segmentRule    []byte
@@ -203,7 +228,7 @@ type campaignRow struct {
 	smsReachable   *int
 	emailReachable *int
 	bothReachable  *int
-	languageCounts []byte
+	localeCounts   []byte
 	scheduledAt    *time.Time
 	scheduleError  string
 	createdAt      time.Time
@@ -214,11 +239,11 @@ func (s *Service) loadRow(ctx context.Context, q interface {
 }, id int64) (*campaignRow, error) {
 	var r campaignRow
 	err := q.QueryRow(ctx, `
-		SELECT id, brief, status, segment_status, segment_rule, explanation, question,
-		       matched, sms_reachable, email_reachable, both_reachable, language_counts, scheduled_at, schedule_error, created_at
+		SELECT id, brief, name, status, segment_status, segment_rule, explanation, question,
+		       matched, sms_reachable, email_reachable, both_reachable, locale_counts, scheduled_at, schedule_error, created_at
 		FROM campaigns WHERE id=$1`, id).
-		Scan(&r.id, &r.brief, &r.status, &r.segmentStatus, &r.segmentRule, &r.explanation, &r.question,
-			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.languageCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt)
+		Scan(&r.id, &r.brief, &r.name, &r.status, &r.segmentStatus, &r.segmentRule, &r.explanation, &r.question,
+			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.localeCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -234,7 +259,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &View{ID: r.id, Brief: r.brief, Status: r.status, ScheduledAt: r.scheduledAt, ScheduleError: r.scheduleError, CreatedAt: r.createdAt}
+	v := &View{ID: r.id, Brief: r.brief, Name: r.name, Status: r.status, ScheduledAt: r.scheduledAt, ScheduleError: r.scheduleError, CreatedAt: r.createdAt}
 
 	if r.segmentStatus != nil {
 		sv := &SegmentView{Status: *r.segmentStatus, Conditions: []segment.Condition{}, Explanation: r.explanation, Question: r.question,
@@ -250,37 +275,55 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 			sv.Audience = &segment.Audience{Matched: *r.matched, SMSReachable: *r.smsReachable,
 				EmailReachable: *r.emailReachable, BothReachable: *r.bothReachable}
 		}
-		if len(r.languageCounts) > 0 {
-			_ = json.Unmarshal(r.languageCounts, &sv.Languages)
-		}
+		sv.Locales = rowCounts(r)
 		v.Segment = sv
 	}
 
+	ls, err := s.loadLocales(ctx)
+	if err != nil {
+		return nil, err
+	}
+	srcLocale := ls.Source()
+	v.SourceLocale = srcLocale.Code
+	v.Locales = campaignLocales(ls, rowCounts(r))
 	stored, err := loadContents(ctx, s.pool, id)
 	if err != nil {
 		return nil, err
 	}
 	v.Mismatches = []content.Issue{}
-	set := map[string]content.Content{}
-	for _, lang := range content.LanguageCodes() {
-		sc, ok := stored[lang]
+	src, hasSource := stored[srcLocale.Code]
+	for _, l := range ls.All() {
+		sc, ok := stored[l.Code]
 		if !ok {
 			continue
 		}
-		cv := &ContentView{Content: sc.Content, Language: lang, Source: sc.Source, UpdatedAt: sc.UpdatedAt}
+		cv := &ContentView{Content: sc.Content, Locale: l.Code, Source: sc.Source, Version: sc.Version,
+			SourceVersion: sc.SourceVersion, UpdatedAt: sc.UpdatedAt}
 		_, cv.Report = s.policy.Validate(cv.Content)
-		cv.Report.Warnings = s.policy.Quality(cv.Content, rowOffer(r))
-		set[lang] = sc.Content
-		if lang == content.DefaultLanguage {
+		if l.IsSource {
+			cv.Report.Warnings = s.policy.Quality(cv.Content, rowOffer(r))
 			v.Content = cv
 			continue
+		}
+		cv.Report.Warnings = []content.Issue{}
+		if hasSource {
+			cv.Stale = isStale(src, sc)
+			if cv.Stale {
+				cv.SourceText = sc.SourceText
+			} else {
+				v.Mismatches = append(v.Mismatches, content.ConsistentWith(srcLocale, src.Content, l, sc.Content)...)
+			}
 		}
 		if v.Translations == nil {
 			v.Translations = map[string]*ContentView{}
 		}
-		v.Translations[lang] = cv
+		v.Translations[l.Code] = cv
 	}
-	v.Mismatches = append(v.Mismatches, content.Consistency(set)...)
+	missing, stale := pendingLocales(ls, v.Locales, stored)
+	v.Pending = ls.Ordered(toSet(append(missing, stale...)))
+	if v.Pending == nil {
+		v.Pending = []string{}
+	}
 	switch r.status {
 	case StatusApproved, StatusSending, StatusCompleted:
 		d, err := s.deliveryProgress(ctx, id)
@@ -295,14 +338,9 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 // validateMessages parses the model's JSON strictly and applies the content
 // rules. The returned problems are fed back to the model on a retry.
 func (s *Service) validateMessages(raw string, promised offer.Offer) (content.Content, []string) {
-	var c content.Content
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil {
-		return c, []string{"geçerli bir JSON nesnesi değil veya şemaya uymuyor (sms_body, email_subject, email_body): " + err.Error()}
-	}
-	if dec.More() {
-		return c, []string{"JSON nesnesinden sonra fazladan içerik var"}
+	c, err := decodeStrict(raw)
+	if err != nil {
+		return c, []string{err.Error()}
 	}
 	norm, rep := s.policy.Validate(c)
 	problems := rep.Messages()
@@ -313,6 +351,23 @@ func (s *Service) validateMessages(raw string, promised offer.Offer) (content.Co
 		return c, problems
 	}
 	return norm, nil
+}
+
+// rowCounts is the stored number of reachable people per locale.
+func rowCounts(r *campaignRow) map[string]int {
+	counts := map[string]int{}
+	if len(r.localeCounts) > 0 {
+		_ = json.Unmarshal(r.localeCounts, &counts)
+	}
+	return counts
+}
+
+func toSet(codes []string) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range codes {
+		out[c] = true
+	}
+	return out
 }
 
 // rowOffer is the offer stored with the campaign's segment rule (none for
@@ -332,7 +387,8 @@ func rowOffer(r *campaignRow) offer.Offer {
 
 // recorder writes every attempt (valid or not) to llm_generations. It must work
 // even when the request context was cancelled, hence WithoutCancel.
-func (s *Service) recorder(campaignID int64, kind, lang string) func(llm.AttemptLog) {
+// code is the locale written; "" for the segment step (stored as the source).
+func (s *Service) recorder(campaignID int64, kind, code string) func(llm.AttemptLog) {
 	return func(a llm.AttemptLog) {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), auditWriteBudget)
 		defer cancel()
@@ -348,10 +404,11 @@ func (s *Service) recorder(campaignID int64, kind, lang string) func(llm.Attempt
 		}
 		_, err := s.pool.Exec(ctx, `
 			INSERT INTO llm_generations (campaign_id, kind, attempt, mode, model, valid, problems, raw_output,
-			                             input_tokens, output_tokens, latency_ms, error, refused, language)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+			                             input_tokens, output_tokens, latency_ms, error, refused, locale)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+			        coalesce(nullif($14, ''), (SELECT code FROM locales WHERE is_source)))`,
 			campaignID, kind, a.N, s.llm.Mode(), s.llm.Model(), a.Valid, problems, strings.ToValidUTF8(raw, ""),
-			a.Usage.InputTokens, a.Usage.OutputTokens, a.Latency.Milliseconds(), errText, isRefusal(a.Err), lang)
+			a.Usage.InputTokens, a.Usage.OutputTokens, a.Latency.Milliseconds(), errText, isRefusal(a.Err), code)
 		if err != nil {
 			s.log.Error("could not record LLM attempt", "campaign_id", campaignID, "error", err)
 		}
@@ -365,12 +422,12 @@ func isRefusal(err error) bool {
 
 // markFallback flags the last recorded attempt of the message run that just
 // ended in the built-in template, so the metrics count it exactly.
-func (s *Service) markFallback(campaignID int64, lang string) {
+func (s *Service) markFallback(campaignID int64, code string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), auditWriteBudget)
 	defer cancel()
 	_, err := s.pool.Exec(ctx, `
 		UPDATE llm_generations SET fell_back = true
-		WHERE id = (SELECT max(id) FROM llm_generations WHERE campaign_id = $1 AND kind = 'messages' AND language = $2)`, campaignID, lang)
+		WHERE id = (SELECT max(id) FROM llm_generations WHERE campaign_id = $1 AND kind = 'messages' AND locale = $2)`, campaignID, code)
 	if err != nil {
 		s.log.Error("could not mark LLM fallback", "campaign_id", campaignID, "error", err)
 	}

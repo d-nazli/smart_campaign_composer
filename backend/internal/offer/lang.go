@@ -1,10 +1,11 @@
 package offer
 
-// The offer's wording in each supported language. The offer itself (kind,
-// value, minimum, last day) is language independent; only these phrases change.
-// The numbers, the amounts in TL and the dd.mm.yyyy date are written the same
-// way in every language on purpose: that is what lets code check that all
-// languages promise the same thing.
+// The offer's wording for the source text (tr) and for the mock's phrase books
+// (en, de); lang is a language part ("en" for every en-* locale). The offer
+// itself (kind, value, minimum, last day) is language independent; only these
+// phrases change. The numbers, the amounts in TL and the dd.mm.yyyy date are
+// written the same way everywhere on purpose: that is what lets code check
+// that every translation promises what the source promises.
 
 // FormatNumberIn writes 12.5 as "12,5" in Turkish and German and "12.5" in
 // English.

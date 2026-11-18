@@ -109,9 +109,9 @@ func TestTwoRecordsWithTheSameAddressGetOneMessage(t *testing.T) {
 	for _, emailExpr := range []string{"email", "'  ' || upper(email) || ' '"} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO users (first_name, last_name, email, phone, city, sms_consent, email_consent,
-			                   last_cart_add_at, last_order_at, order_count, total_spent, created_at, language, gender, birth_date)
+			                   last_cart_add_at, last_order_at, order_count, total_spent, created_at, locale, gender, birth_date)
 			SELECT first_name, last_name, `+emailExpr+`, phone, city, sms_consent, email_consent,
-			       last_cart_add_at, last_order_at, order_count, total_spent, created_at, language, gender, birth_date
+			       last_cart_add_at, last_order_at, order_count, total_spent, created_at, locale, gender, birth_date
 			FROM users WHERE id=$1`, userID); err != nil {
 			t.Fatal(err)
 		}
@@ -271,7 +271,7 @@ func TestApproveRejectsContentThatBreaksTheLimitsAndChangesNothing(t *testing.T)
 func TestApproveWithAnEditedMessageThatLostTheOfferStillWorksAndWarns(t *testing.T) {
 	svc, _ := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
-	_, err := svc.SaveContents(context.Background(), id, allLanguages(content.Content{
+	_, err := saveSource(context.Background(), svc, id, (content.Content{
 		SMSBody: "{{first_name}}, sepetin seni bekliyor!", EmailSubject: "Sepetin seni bekliyor", EmailBody: "Merhaba {{first_name}}, sepetin hâlâ burada.",
 	}))
 	if err != nil {

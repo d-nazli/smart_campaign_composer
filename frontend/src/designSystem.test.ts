@@ -36,9 +36,9 @@ describe('the shared building blocks exist', () => {
 })
 
 describe('the screens are built from them', () => {
-  it('Dashboard uses the table, stat tiles, a button and a modal', () => {
+  it('Dashboard uses the table, a button and a modal', () => {
     const dash = sources['./views/DashboardView.vue']
-    for (const part of ['CampaignTable', 'StatTile', 'ui/Button.vue', 'ui/Modal.vue']) expect(dash, part).toContain(part)
+    for (const part of ['CampaignTable', 'ui/Button.vue', 'ui/Modal.vue']) expect(dash, part).toContain(part)
   })
   it('Approval uses the toggle and the date-time field', () => {
     const a = sources['./components/ApprovalCard.vue']
@@ -103,5 +103,40 @@ describe('motion and accessibility floor', () => {
   })
   it('keeps a visible keyboard focus', () => {
     expect(styles).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\)/)
+  })
+})
+
+describe('locale codes are written as they are', () => {
+  // A Turkish page upper-cases "it-IT" to "İT-İT": no locale code may sit in an upper-cased element
+  // (the .label class, table heads), and no script upper-cases one.
+  const shouty = /<(\w+)[^>]*\bclass="[^"]*\b(label|group)\b[^"]*"[^>]*>([^<]*)<|<th\b[^>]*>([^<]*)</g
+  const codeInside = /\{\{[^}]*\b(code|locale|activeLocale|sourceCode)\b[^}]*\}\}/
+
+  it('no upper-cased element shows a locale code', () => {
+    const offenders: string[] = []
+    for (const [file, src] of Object.entries(sources)) {
+      for (const m of src.matchAll(shouty)) {
+        const inner = m[3] ?? m[4] ?? ''
+        if (codeInside.test(inner)) offenders.push(`${file}: ${inner.trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('no script upper-cases text with toUpperCase (Turkish-aware toLocaleUpperCase only for sentences)', () => {
+    const scripts = import.meta.glob('./**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+    const offenders = Object.entries({ ...sources, ...scripts })
+      .filter(([file]) => !file.endsWith('.test.ts'))
+      .filter(([, src]) => /\.toUpperCase\(/.test(src))
+      .map(([file]) => file)
+    expect(offenders).toEqual([])
+  })
+
+  it('the locale detail has no yellow "stale" box: the badge and the translate button say it', () => {
+    const compose = Object.entries(sources).find(([file]) => file.endsWith('ComposeView.vue'))![1]
+    expect(compose).not.toContain('data-testid="stale"')
+    expect(compose).not.toContain('çeviri v')
+    expect(compose).toContain('data-testid="source-diff"') // the "tr-TR değişikliği" fold stays
+    expect(compose).toContain('Güncel olmayanları çevir')
   })
 })

@@ -302,7 +302,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Metin gönderim anında alıcıya göre render edilir (uzun isimler yedek sözcüğe düşer, SMS ≤160 garantisi). Test: tüm istekler için SMS ≤160, konu ≤80 tek satır, kalmış `{{…}}` yok, teklif mesajda var.
 - `Idempotency-Key` = delivery id. Kapanışta uçuştaki gönderimlerin sonucu kendi süresiyle (5 sn) yazılır; kapanış yüzünden yarıda kesilen çağrı "başarısız deneme" sayılmaz, lease dolunca yeniden alınır.
 - Bir `RunOnce` (test/tek seferlik) ve sürekli `Run` (kanal başına claimer + `WORKER_CONCURRENCY` gönderici) aynı `process` kodunu kullanır.
-- Ayarlar: `WORKER_RATE_PER_SEC` (90), `WORKER_CONCURRENCY` (20), `WORKER_MAX_ATTEMPTS` (5), `WORKER_REQUEST_TIMEOUT_MS` (5000; provider'ın 10 sn "asılma" kaosundan kısa).
+- Ayarlar: `WORKER_RATE_PER_SEC` (90), `WORKER_CONCURRENCY` (64), `WORKER_MAX_ATTEMPTS` (5), `WORKER_REQUEST_TIMEOUT_MS` (5000; provider'ın 10 sn "asılma" kaosundan kısa).
 
 ## D56 — Arayüz: onay kutusu ve 1 sn polling · `Önerildi → uygulandı`
 - "Onayla ve gönder" iki adımlı (sayılar + uyarılar gösterilir, "Evet, gönder"). Kaydedilmemiş düzenleme varken onay kapalı. Onaydan sonra editör salt okunur, kitle/metin kilitli.
@@ -368,6 +368,7 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Mock bir modeli taklit eder: kodun kararı olan `suggestion` alanını çıktısından çıkarır (katı ayrıştırıcı model çıktısında bu alanı reddeder; test bunu yakaladı).
 
 ## D67 — Kullanıcı profili: dil, cinsiyet, doğum tarihi · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D92):** dil alanı (`tr|en|de`) yerine locale geldi; aşağıdaki kural D92'de yeniden yazıldı.
 - **Bonus başlangıcı:** "kullanıcının diline göre içerik" ve "zamanlanmış gönderim" bonusları kullanıcı isteğiyle kapsama alındı (önceki "bonuslar dışarıda" kararı bu iki bonus için kalktı; A/B ve CI hâlâ dışarıda). Üç faz: 1 profil alanları, 2 dil, 3 zamanlama.
 - **Şema (`00006_user_profile.sql`):** `users.language` (`tr|en|de`, `NOT NULL DEFAULT 'tr'`, CHECK), `users.gender` (`female|male|other`, NULL = belirtmemiş), `users.birth_date` (`DATE`, NULL = belirtmemiş). Dil için varsayılan, mevcut satırların geçerli kalmasını sağlar; liste veritabanında CHECK ile de korunur (uygulama kodu atlansa bile `fr` girilemez).
 - **Seed dağılımı (tam sayılar, rastgele yerleşim):** dil %60 tr / %25 en / %15 de (5000 kişide 3000/1250/750); cinsiyet %48 kadın / %48 erkek / %2 other / %2 belirtmemiş; doğum tarihi 18–75 yaş arasında düzgün dağılmış, %3'ü boş. Her alan karıştırılmış bir listeden dağıtılır (rıza alanlarındaki gibi): toplamlar şansa bırakılmaz, ama kişiler arasında şehirle, rızayla veya brief kohortuyla ilişki yoktur. Testle: örnek brief kohortunda üç dil de ve iki cinsiyet de bulunur.
@@ -376,12 +377,14 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Mevcut veritabanı:** seed "users boş değilse atla" kuralıyla çalıştığı için eski bir volume'da yeni alanlar boş kalır (dil hep `tr`). Yeniden seed: `make clean` (`docker compose down -v`).
 
 ## D68 — Diller: `tr`, `en`, `de`; tek kayıt yeri, varsayılan = referans · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D92):** dil alanı (`tr|en|de`) yerine locale geldi; aşağıdaki kural D92'de yeniden yazıldı.
 - **Liste tek yerde:** `content.Languages` (kod, İngilizce ad, kendi adı). Değişken fallback'leri, yerleşik şablonlar, mock metinleri ve `users.language` CHECK'i bu listeyle birlikte genişler; yeni dil eklemek için gereken adımlar `lang.go` başında yazılı. `/api/info` listeyi arayüze verir.
 - **`tr` varsayılan ve referanstır.** Dili boş ya da bilinmeyen biri Türkçe alır. Diğer diller referansın söylediğini söylemek zorundadır (D70).
 - **Şema (`00007_content_languages.sql`):** `campaign_contents` PK'si `(campaign_id, language)`; `llm_generations.language` (denetim kaydı hangi dilin denemesi olduğunu bilir); `campaigns.language_counts` (kitlenin dil dağılımı). Mevcut satırlar `tr` olur. Dil eklenmeden önce üretilmiş bir kampanya tüm diller olmadan onaylanamaz; mesajlar yeniden üretilmelidir (onay açık bir hata verir).
 - **Metin sayımı:** SMS 160 / konu 80 sınırı üç dilde de karakter (rune) sayısıyla uygulanır (CASE.md'deki limitler aynen). Almanca metinler daha uzun olmaya meyillidir; bu yüzden prompt ve yerleşik şablonlar kısa tutulur.
 
 ## D69 — Üretim: önce referans, sonra diğerleri paralel; hepsi ya da hiçbiri · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D93):** dil alanı (`tr|en|de`) yerine locale geldi; aşağıdaki kural D93'te yeniden yazıldı.
 - Her kampanya **üç dilde birden** üretilir (hemen ya da zamanlı gönderimde hangi dillerin lazım olacağı onay anında bilinemeyebilir). Önce `tr` yazılır ve doğrulanır; sonra `en` ve `de` **paralel** yazılır. Çevirilere referans metin prompt'ta gösterilir; "kelimesi kelimesine çevirme, doğal yaz, aynı sayıları ve değişkenleri kullan" denir.
 - Her dil kendi `ask → validate → repair` döngüsünde (en çok 3 deneme) çalışır; çevirinin ek doğrulaması referansla tutarlılıktır (D70) ve sebep modele geri bildirim olur. Denetim kaydı dil başına tutulur.
 - **Hiçbir şey, tüm diller hazır olana dek saklanmaz** (tek transaction). **Bir dil üretilemezse (3 geçersiz deneme, ret, zaman aşımı) üç dil de yerleşik şablona düşer:** model metniyle şablon metni karışırsa birbirlerini çelişkili bırakabilir. Şablonlar yan yana üretilir: ya hepsi kişiselleştirilir ya hiçbiri, böylece değişkenleri de aynıdır. Bedeli: tek dil başarısızsa iyi üretilmiş diğerleri de atılır; kişi sonradan düzenleyebilir.
@@ -389,12 +392,14 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - Mock: `NewScripted` betiği referans dili anlatır; diğer diller `WithMessages(dil, ...)` ile ayrıca betiklenir, yoksa akıllı mock cevap verir.
 
 ## D70 — Diller aynı şeyi söylemeli: sert doğrulama · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D94):** dil alanı (`tr|en|de`) yerine locale geldi; aşağıdaki kural D94'te yeniden yazıldı.
 - `content.Consistency`: referansla her dil karşılaştırılır. **SMS** ve **e-posta (konu+metin birlikte)** için ayrı ayrı: indirim oranları, TL tutarları, tarihler, "ücretsiz kargo" vaadi ve `{{değişkenler}}` kümeleri aynı olmalı. Küme karşılaştırması: kaç kez ve hangi sırayla geçtiği değil, **hangi değerlerin** geçtiği önemlidir.
 - Sayılar dilden bağımsız okuyucularla bulunur (`%30`, `30% off`, `30 % Rabatt` hepsi 30); bu yüzden tüm dillerde sayılar, `1000 TL` ve `dd.mm.yyyy` aynı yazılır (prompt ister). Ücretsiz kargo ifadeleri üç dilde tanınır.
 - **Üç yerde zorunlu:** (1) üretimde çeviri tutarsızsa model düzeltmeye gönderilir (mesajda iki dil, fark ve değerler yazar); (2) elle kayıtta (`PUT /content` `{"languages": {...}}`; tek dil gönderilse bile bütün set kontrol edilir) → 422 `invalid_content`, her sorun `language` taşır; (3) onayda bütün diller yeniden doğrulanır. Bu, **uyarı değil hata**dır; eski "teklif eksik" uyarıları (D46) olduğu gibi yumuşak kalır.
 - Bir tek dili düzenleyip teklifi değiştirmek bu yüzden reddedilir; kişi teklifi değiştirmek istiyorsa üç dili birlikte kaydeder (arayüz hepsini birlikte gönderir).
 
 ## D71 — Gönderimde dil · `Kesin (uygulama)`
+- **Güncelleme (D95):** dil alanı (`tr|en|de`) yerine locale geldi; aşağıdaki kural D95'te yeniden yazıldı.
 - Alıcının dili **gönderim anında** `users.language`'dan okunur (kuyruk satırında dil yoktur): onaydan sonra dilini değiştiren kişi yeni dilindeki metni alır. Metin `(kampanya, dil)` anahtarıyla önbelleğe alınır.
 - Kişinin dilinin metni yoksa başka dile **düşülmez**; teslimat bekler ve yeniden denenir (testli). Onay bunu zaten engeller; bu, bozuk veriye karşı ikinci savunmadır.
 - Ad/şehir boşsa ya da bütçeyi aşıyorsa yerine **alıcının dilindeki** sözcük yazılır ("değerli müşterimiz" / "valued customer" / "geschätzter Kunde"). Fallback sözcüklerinin hepsi bütçeye sığmak zorundadır; sığmayan bütçe başlangıçta reddedilir.
@@ -425,10 +430,12 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - İptal tekrarında hata yok (idempotent); `cancelled`/`failed` kampanya yeniden onaylanamaz. Dashboard'da ve gönderim adımında iki adımlı "İptal et" düğmesi vardır.
 
 ## D76 — Dil değişikliği ve zamanlama · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D95):** dil alanı (`tr|en|de`) yerine locale geldi; aşağıdaki kural D95'te yeniden yazıldı.
 - Teslimatlar başlangıçta oluştuğu ve dil gönderim anında okunduğu (D71) için iki durum da doğru çalışır ve testlidir: (a) kişi **zamanlamadan sonra, başlamadan önce** dilini değiştirirse kitle zaten yeni haliyle çıkar; (b) **başladıktan sonra, gönderilmeden önce** değiştirirse mesaj yine yeni dilde gider. Her iki durumda sağlayıcıya o kişiye bir SMS ve bir e-posta gider, yeni dilde, iki kez değil.
 - Dil dağılımı (`language_counts`) kampanya başlarken yeniden sayılır; onay ve kampanya ekranları o anki gerçek sayıyı gösterir.
 
 ## D77 — Elle denemeden gelen düzeltmeler · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D95):** dil alanı (`tr|en|de`) yerine locale geldi; aşağıdaki kural D95'te yeniden yazıldı.
 - **"Yeni kampanya" temiz açılır.** Sekme tıklaması adresten `?c=` parametresini siler ve `ComposeView`'ı yeni anahtarla yeniden kurar (state sıfırlanır); dashboard'dan `#/` ile dönüş de aynı yolu izler. Sebep: aynı bileşen yeniden kullanılıyordu ve açılışta adresteki `?c=` eski kampanyayı yüklüyordu (`utils/route.ts`, testli).
 - **Kampanya yüklenemezse adres korunur.** Yalnız 404 (kampanya yok) adresi temizler; sunucuya geçici ulaşılamama bir hata gösterir ve yenilemeyle kampanya yine açılabilir. Önceden her hata sessizce boş bir Brief açıp adresi siliyordu.
 - **Dil kırılımı.** `deliveries` satırında dil tutulmaz; gönderim ekranı ve kartlar `users.language` ile birleştirip sayar (`DeliveryView.languages`: toplam ve gönderilen, SMS+e-posta birlikte). Sınırı: gönderildikten sonra dilini değiştiren kişi yeni dilinde sayılır. Gönderilirken gerçek dil satıra yazılsaydı bu da çözülürdü; şimdilik gereksiz görüldü. Gönderim sürerken "TR 120/171", bitince "TR 171"; başlamadan önce kitle dilleri "tahmini" etiketiyle.
@@ -538,6 +545,59 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Testler:**
   - Backend: `schedule_test.go` (geçmiş, 30 gün + 5 dk, 31 gün, 1 yıl → ScheduleError; 30 gün − 5 dk kabul) ve `httpapi_test.go` (geçmiş, 30 gün + 10 dk, 2 ay → 422 `invalid_schedule`).
   - Frontend: `schedule.test.ts` (30 günlük pencere, seçici sınırları), `DeliveryAndApproval.test.ts` (seçicide dün ve 30 gün sonrası yok) ve `api/approve.test.ts` (422 → `ApiError` ve mesaj).
+
+## D92 — Locale tablosu; dil alanı kalktı · `Kesin (kullanıcı kararı)`
+- **Kaynak:** Insider One Localization (locale = dil ve/veya ülke; mesaj başına locale; eşleşmeyene mesaj gitmez).
+- **Şema (`00009_locales.sql`):** `locales(code PK 'en-GB', name, native_name, direction ltr|rtl, is_source, fallbacks JSONB, free_shipping_terms[])`. Tek kaynak: kısmi unique index. `users.locale` → `locales.code` (FK, varsayılan `tr-TR`). `campaign_contents`, `llm_generations`, `deliveries` da locale taşır; `language_counts` → `locale_counts`.
+- **Taşıma:** `tr→tr-TR`, `en→en-GB`, `de→de-DE`; eski kolonlar silindi, `Down` geri alır (yalnız bu üç locale). Eski migration dosyaları (00006/00007) geçmiş olduğu için dokunulmadı.
+- **Seed (12 locale, tam sayılar):** tr-TR %40; en-GB, en-US, de-DE %8; fr-FR %6; es-ES, pt-BR %5; en-AU, es-MX, it-IT, nl-NL, ar-SA %4.
+- **Yeni locale = bir satır.** Kodda locale listesi yok; açılışta değil her işlemde tablodan okunur ve doğrulanır (kod biçimi, tek kaynak, her değişkene bütçeye sığan yedek kelime). Testli (`fr-CA` satırı eklenip kampanya onaylanıyor).
+
+## D93 — Kaynak tr-TR, diğerleri çeviri; kampanyanın locale'leri kitleden · `Kesin (kullanıcı kararı)`
+- Önce tr-TR yazılır (eski repair döngüsü ve hazır şablon aynen). Sonra kampanyanın locale'lerine **çevrilir**: kitlede en az bir ulaşılabilir kişisi olan locale'ler. Kişisi olmayan çevrilmez, onayı beklemez. Kitle sayıları onayda yeniden sayılır; yeni bir locale belirirse onay bekler.
+- Çeviri: `llm.Client.Translate`, aynı JSON şeması, en çok 3 deneme, aynı anda en çok 4. Başarısız çeviri hazır şablona **düşmez**; locale "çeviri yok" kalır, olay `failed`.
+- Gerçek Claude: ayrı çeviri prompt'u (aynı sınırlar, rakam/tutar/tarih/kupon aynen, `{{değişkenler}}` korunur, RTL notu), effort low.
+- Mock: dilin kalıp seti varsa (`en-*`, `de-*`) onunla yazar ve kaynakla tutarlıysa kullanır; yoksa (veya tutarsızsa) kaynak metin `[fr-FR] ` önekiyle döner, önek sınırı aşarsa atılır. Yeni locale mock'ta da kodsuz çalışır.
+
+## D94 — Güncellik: sürüm numarası, elle düzenleme koruması · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D97):** çeviriler artık elle düzenlenmiyor; elle düzenleme koruması, `overwrite`, 409 `edited_translation` ve "Güncel işaretle" kaldırıldı. Sürüm numarası ve kaynak farkı aynen.
+- Kaynak satırı `version` sayar (metin gerçekten değişince artar). Çeviri `source_version` ve o kaynağın metnini (`source_text`) saklar. `source_version < version` = güncel değil; ekran eski/yeni farkı gösterir. Hash yerine sayı: SQL taşımasıyla Go aynı sonucu üretmek zorunda kalmaz.
+- Elle düzenlenmiş çeviri (`source='edited'`): yeniden üretim dokunmaz; `POST /translations` yalnız `overwrite` listesindeyse yazar, değilse **409 `edited_translation`**. Yazma anında da kontrol edilir (yarış durumu).
+- "Güncel işaretle" (`POST /translations/current`): metin aynı kalır, kaynakla tutarlıysa sürüm güncellenir, değilse 422.
+- Elle kaydedilen güncel bir çeviri kaynakla tutarlı olmalı (422 `locale_mismatch`); güncel olmayan bir çeviri işaretlenirken veya çevrilirken kontrol edilir.
+
+## D95 — Onay, eşleme ve gönderim · `Kesin (kullanıcı kararı)`
+- Eksik veya güncel olmayan çeviri varken onay backend'de **409 `stale_translations`** (`missing`, `stale` listeleri). Her locale yeniden doğrulanır: JSON şeması, SMS 160 / konu 80 (değişken bütçeleriyle), değişken kümesi kaynakla aynı (`{{first_name}}` kaybolamaz), sayılar/tarihler/ücretsiz kargo aynı.
+- **Yalnız tam eşleşme:** kişi kendi locale'inin metnini alır; metin yoksa başka locale'e düşülmez, teslimat `skipped` (`no content for locale`). Zamanlanmış kampanyada sonradan beliren locale bu yüzden mesaj almaz (testli).
+- Locale gönderim anında okunur ve teslimata (`deliveries.locale`) yazılır; locale kırılımı artık gerçek gönderilen locale'i sayar (D77'deki sınır kalktı).
+- Değişmeyenler: adres başına tek mesaj (D79), izin kontrolü iki kez, kanal başına tek hız sınırı (90/sn, sağlayıcı 100/sn) tüm locale'ler için toplam.
+
+## D96 — Arayüz: Mesajlar kartında locale sütunu · `Kesin (kullanıcı kararı)`
+- **Güncelleme (D97):** çeviri alanları salt okunur; her çeviride yalnız "Yeniden çevir". Onay penceresi elle düzenleme için değil, değişen Türkçe metin için.
+- Kabuk, akış barı, Geri / Onayla, kart stili ve tema aynen. Mesajlar kartında solda dar locale sütunu (Kaynak + Çeviriler, kişi sayısı, durum noktası); 1280px altında aynı listeyi açan düğme (yerel `<select>` tasarım kuralı gereği yok). Önizleme seçili locale'i gösterir, ar-SA sağdan sola.
+- Güncel değil uyarısı + sürümler + kaynak farkı, "Claude ile çevir", "Güncel işaretle", "Güncel olmayanları çevir (N)", elle düzenleme için onay penceresi, alt çubukta "N çeviri güncel değil" ve kapalı onay. Açıklama cümlesi yok. Liste: `design/FEATURES.md` F111–F116.
+
+## D97 — Çeviriler elle düzenlenmez; yalnız tr-TR düzenlenir · `Kesin (kullanıcı kararı)`
+- **Neden:** Bir çeviri her zaman kaynağın o anki çevirmen çıktısıdır. Elle düzenlenen çeviri kaynakla bağını kaybeder: kaynak değişince "üzerine yazılsın mı?" sorusu, ayrı doğrulama yolu ve "güncel işaretle" gibi istisnalar gerekir, ve onaylanan metnin tr-TR'yi gerçekten yansıttığı artık tek bir kurala dayanmaz. Tek düzenleme yeri (tr-TR) ile her locale'in ne söylediği bellidir; bir düzeltme gerekiyorsa Türkçe düzeltilir ve yeniden çevrilir.
+- **Backend:** `PUT /content` yalnız kaynak locale'i kabul eder; başka bir locale **422 `translation_read_only`**. `POST /translations` metin almaz (yalnız `{locales}`); `overwrite` ve `/translations/current` kaldırıldı. Veritabanı da korur: çeviri satırı yalnız `translated` olabilir, kaynak satırı asla (CHECK, `00010_read_only_translations.sql`). O migration eski elle düzenlenmiş çevirileri `translated` ve güncel değil (`source_version 0`) yapar; yeniden çevrilmeden onay verilmez.
+- **Kalanlar:** güncel olmayan çeviriyle onay 409 `stale_translations`; her çeviri JSON şeması, 160/80, `{{first_name}}` ve sayı/tarih tutarlılığından geçer.
+- **Arayüz:** çeviri alanları salt okunur, her çeviride yalnız "Yeniden çevir". Türkçe değiştiyse "Onayla" önce "Türkçe metni değiştirdiniz. N çeviri güncellenecek." penceresini açar; "Çevir ve göster" kaydeder, çevirir ve Mesajlar'da kalır; kişi bakıp tekrar "Onayla"ya basar.
+
+## D98 — Kampanya adı modelin kitle çıktısında · `Kesin (kullanıcı kararı)`
+- Kitle adımının JSON şemasına zorunlu `name` eklendi (Türkçe, en fazla 40 karakter, tek satır, `{{ }}` yok). Model vermezse veya uzun verirse sebebiyle yeniden sorulur (`segment.NameProblems`, `brief.ask`). Kitle adımında, çünkü kampanya listede bu adımdan itibaren görünür.
+- Saklanan eski kurallar ve koddan çıkan kurallar (ör. kimseyi anlatmayan brief) adsız olabilir: `Parse` adı yalnız varsa denetler; liste o zaman brief'i gösterir. Veritabanı da sınırı korur (`campaigns.name`, CHECK ≤ 40, `00011_campaign_name.sql`).
+- Mock aynı alanı brief'ten kurar (`brief.SuggestName`): şehir veya özel gün, konu, teklif — örnek brief için "İstanbul sepet hatırlatma · %30".
+
+## D99 — Liste ekranı: onay penceresi, locale özeti, sistem sağlığı · `Kesin (kullanıcı kararı)`
+- "Emin misiniz?" artık satır içi değil, `alertdialog` penceresi; alt çubuk arkada ilk etiketini korur.
+- Locale sütunu tüm çipler yerine en büyük iki locale ve kalan sayısı ("tr-TR 828 · en-US 174 · +10"); tam liste tooltip'te. Locale kodları hiçbir yerde büyük harfe çevrilmez: Türkçe sayfada `text-transform: uppercase` "it-IT"yi "İT-İT" yapar. Bir tasarım testi büyük harfli öğelerde (`.label`, tablo başlıkları) locale kodu ve kodda `toUpperCase` olmadığını denetler.
+- Sistem sağlığı alttaki karttan üst bara taşındı: sağlıklıysa küçük "Sistem sağlıklı" rozeti (servisler tooltip'te), bir servis düşerse rozet kırmızı ve liste sayfasının üstünde uyarı. Yoklama kabukta (5 sn), her sayfada.
+
+## D100 — Kanal başına ~90/sn: tek 429 kanalı durdurmaz · `Kesin (kullanıcı kararı)`
+- Ölçüm (gürültülü varsayılan provider, ~2.500 mesaj): kanal başına yalnız 13–17 kabul/sn. Sebep: her 429 tüm kanalı `Retry-After` (1–3 sn) kadar durduruyordu; %3 enjekte 429 × 90/sn ≈ 2,7 durdurma/sn ile kanal çoğu zaman bekliyordu. İkincil: 20 gönderici (1 sn'lik asılan çağrı 5 sn yer tutar) ve küçük DB havuzu.
+- Karar: tek 429 yalnız kendi mesajını bekletir. Kanal, 1 sn içinde ≥10 429 gelirse durur (`Pacer.RateLimited`); pacer 90/sn'de kaldığı için dağınık 429 gürültüdür, kümelenen 429 gerçek sınırlamadır. D12'deki "kanalı duraklat" bu koşula bağlandı.
+- `WORKER_CONCURRENCY` 20→64; claim döngüsü gönderici boşalınca haber alır (eskiden boş slotta 200 ms uyuyordu ≈ en çok 100 claim/sn); worker DB havuzu `Concurrency/2+4` bağlantı.
+- Sonuç: kanal başına ~90 çağrı/sn, ~80 kabul/sn (kalanı kaos yüzünden retry); hiçbir 1 sn penceresi 100'ü aşmaz. Testler: `TestEachChannelSendsNearButNeverAbove100PerSecond`, `TestALone429DelaysOnlyItsOwnMessage`, pacer'da yığın/dağınık 429 testleri.
 
 ---
 

@@ -81,22 +81,6 @@ export function statusTone(c: Pick<CampaignSummary, 'status' | 'segment_status'>
   return 'draft'
 }
 
-/** Totals over every campaign, for the cards at the top of the dashboard. */
-export function overallTotals(list: CampaignSummary[]): Totals {
-  const t = deliveryTotals(undefined)
-  for (const c of list) {
-    const d = deliveryTotals(c.delivery)
-    t.total += d.total
-    t.sent += d.sent
-    t.failed += d.failed
-    t.skipped += d.skipped
-    t.pending += d.pending
-    t.retries += d.retries
-    t.rateLimited += d.rateLimited
-  }
-  return t
-}
-
 /** Both channels added together (zeros before approval). */
 export function deliveryTotals(d: DeliveryProgress | undefined): Totals {
   const t: Totals = { total: 0, sent: 0, failed: 0, skipped: 0, pending: 0, retries: 0, rateLimited: 0 }
@@ -174,36 +158,95 @@ export function progressTitle(d: DeliveryProgress | undefined): string {
   return parts.join(', ')
 }
 
-export interface LanguageCell {
-  code: string
-  /** "171", or "120/171" while some still wait; the audience size before sending. */
+export interface LocaleLine {
+  /** The two largest locales and how many more: "tr-TR 828 · en-US 174 · +10". */
   text: string
+  /** The same in pieces ("tr-TR 828", "en-US 174", "+10"), so a narrow column wraps between them. */
+  parts: string[]
+  /** Every locale, one per line, largest first (the tooltip). */
+  title: string
 }
 
 /**
- * What the languages column shows: sent per language once sending has begun ("120/171" until it is
- * done), the audience per language before that. Languages nobody gets are left out.
+ * What the locales column shows: sent per locale once sending has begun ("120/171" until it is
+ * done), the audience per locale before that. The two largest locales are named, the rest
+ * counted ("+10"); the tooltip lists them all. Ties keep the table order. Codes are shown as
+ * written (tr-TR): never upper-cased, which a Turkish page would turn "it" into "İT".
  */
-export function languageCells(
-  c: Pick<CampaignSummary, 'delivery' | 'audience_languages'>,
-  order: { code: string }[],
-): LanguageCell[] {
-  const sent = c.delivery?.languages
-  if (sent) {
-    return order
-      .filter((l) => (sent[l.code]?.total ?? 0) > 0)
-      .map((l) => {
-        const p = sent[l.code]
-        return { code: l.code.toUpperCase(), text: c.delivery!.done || p.sent === p.total ? String(p.sent) : `${p.sent}/${p.total}` }
-      })
+export function localeLine(c: Pick<CampaignSummary, 'delivery' | 'audience_locales'>, order: { code: string }[]): LocaleLine | null {
+  const rank = (code: string) => {
+    const i = order.findIndex((l) => l.code === code)
+    return i < 0 ? order.length : i
   }
-  const audience = c.audience_languages
-  if (!audience) return []
-  return order.filter((l) => (audience[l.code] ?? 0) > 0).map((l) => ({ code: l.code.toUpperCase(), text: String(audience[l.code]) }))
+  let rows: { code: string; size: number; text: string }[]
+  const sent = c.delivery?.locales
+  if (sent) {
+    rows = Object.entries(sent)
+      .filter(([, p]) => p.total > 0)
+      .map(([code, p]) => ({ code, size: p.total, text: c.delivery!.done || p.sent === p.total ? String(p.sent) : `${p.sent}/${p.total}` }))
+  } else {
+    rows = Object.entries(c.audience_locales ?? {})
+      .filter(([, n]) => n > 0)
+      .map(([code, n]) => ({ code, size: n, text: String(n) }))
+  }
+  if (rows.length === 0) return null
+  rows.sort((a, b) => b.size - a.size || rank(a.code) - rank(b.code) || a.code.localeCompare(b.code))
+  const shown = rows.slice(0, 2).map((r) => `${r.code} ${r.text}`)
+  if (rows.length > 2) shown.push(`+${rows.length - 2}`)
+  return { text: shown.join(' · '), parts: shown, title: rows.map((r) => `${r.code} ${r.text}`).join('\n') }
 }
 
 /** A sentence that starts with a capital letter (Turkish rules: "i" becomes "İ"). Everything else stays as written. */
 export function sentenceCase(text: string): string {
   const t = text.trim()
   return t === '' ? t : t.charAt(0).toLocaleUpperCase('tr-TR') + t.slice(1)
+}
+
+/** A campaign that is being sent right now: approved or sending, with something still waiting. */
+export function isSending(c: Pick<CampaignSummary, 'status' | 'delivery'>): boolean {
+  return (c.status === 'approved' || c.status === 'sending') && !c.delivery?.done
+}
+
+/** "26 sn" / "1 dk 5 sn". */
+function duration(seconds: number): string {
+  const s = Math.max(1, Math.round(seconds))
+  return s < 60 ? `${s} sn` : s % 60 === 0 ? `${s / 60} dk` : `${Math.floor(s / 60)} dk ${s % 60} sn`
+}
+
+export interface ChannelRates {
+  sms: number
+  email: number
+}
+
+/**
+ * The speed of a campaign, per channel (the limit is 100/s for each channel, not for both together):
+ * while it is sending, the live rate of each channel ("SMS 98/sn · E-posta 97/sn");
+ * once it is done, the average and how long it took ("ort. 95/sn, 26 sn'de bitti").
+ * null when there is nothing to say (never sent, or no live rate measured yet).
+ */
+export function sendSpeed(c: Pick<CampaignSummary, 'status' | 'delivery'>, live?: ChannelRates): string | null {
+  const d = c.delivery
+  if (!d) return null
+  if (isSending(c)) {
+    if (!live) return null
+    const parts: string[] = []
+    if (d.sms.total > 0) parts.push(`SMS ${Math.round(live.sms)}/sn`)
+    if (d.email.total > 0) parts.push(`E-posta ${Math.round(live.email)}/sn`)
+    return parts.length ? parts.join(' · ') : null
+  }
+  if (c.status !== 'completed') return null
+  let first = Infinity
+  let last = -Infinity
+  const averages: number[] = []
+  for (const ch of [d.sms, d.email]) {
+    if (!ch.first_sent_at || !ch.last_sent_at || ch.sent === 0) continue
+    const from = Date.parse(ch.first_sent_at)
+    const to = Date.parse(ch.last_sent_at)
+    first = Math.min(first, from)
+    last = Math.max(last, to)
+    averages.push(ch.sent / Math.max(1, (to - from) / 1000))
+  }
+  if (averages.length === 0) return null
+  const avg = averages.reduce((a, b) => a + b, 0) / averages.length
+  return `ort. ${Math.round(avg)}/sn, ${duration((last - first) / 1000)}'de bitti`
 }

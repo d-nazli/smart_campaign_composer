@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { fillSample } from '../utils/preview'
 
 // An SMS inside a phone screen. {{first_name}} is replaced with a sample name.
-const props = defineProps<{ text: string; typing?: boolean }>()
+const props = defineProps<{ text: string; typing?: boolean; dir?: 'ltr' | 'rtl'; lang?: string }>()
 const shown = computed(() => fillSample(props.text))
 </script>
 
@@ -11,7 +11,7 @@ const shown = computed(() => fillSample(props.text))
   <figure class="phone" aria-label="SMS önizlemesi">
     <div class="screen">
       <div class="status" aria-hidden="true"><span>09:41</span><span class="notch" /><span>5G</span></div>
-      <div class="thread">
+      <div class="thread" :dir="dir" :lang="lang">
         <div class="who">MARKA</div>
         <div class="bubble" :class="{ empty: !shown && !typing }">
           <template v-if="shown || typing">
@@ -79,13 +79,17 @@ const shown = computed(() => fillSample(props.text))
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.thread[dir='rtl'] .bubble {
+  border-radius: 18px 18px 5px 18px;
+}
 .bubble.empty {
   background: transparent;
   border: 1px dashed var(--device-dot);
   color: var(--device-muted);
 }
 .time {
-  margin: 4px 0 0 6px;
+  margin-block: 4px 0;
+  margin-inline: 6px 0;
   font-size: 0.7rem;
   color: var(--device-muted);
 }

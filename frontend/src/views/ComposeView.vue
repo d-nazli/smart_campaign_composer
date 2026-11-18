@@ -1,17 +1,29 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '../api/info'
-import { approveCampaign, cancelCampaign, createCampaign, getCampaign, saveContent } from '../api/campaigns'
+import { approveCampaign, cancelCampaign, createCampaign, getCampaign, saveContent, translateCampaign } from '../api/campaigns'
 import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
-import { allResults, retryNotes } from '../composables/streamState'
-import type { ApproveResult, Campaign, Issue, LanguageCode, MessageContent } from '../types'
+import { failedLocales, retryNotes } from '../composables/streamState'
+import type { ApproveResult, Campaign, ContentField, Issue, LocaleCode, MessageContent } from '../types'
 import { approvalDifference, shouldPoll } from '../utils/delivery'
-import { DEFAULT_LANGUAGE, FALLBACK_LANGUAGES, changedLanguages, draftsFrom, emptyMessage, hasAllLanguages, storedByLanguage } from '../utils/languages'
+import {
+  FALLBACK_LOCALES,
+  SOURCE_LOCALE,
+  campaignLocales,
+  changedLocales,
+  countsLine,
+  draftsFrom,
+  emptyMessage,
+  localeInfo,
+  localeState,
+  pendingLocales,
+  stateLabel,
+  storedByLocale,
+} from '../utils/locales'
 import { checkContent } from '../utils/limits'
 import { campaignIdFromUrl, urlForCampaign, urlWithoutCampaign } from '../utils/route'
 import { checkSchedule, formatWhen, fromLocalInput, toLocalInput, untilText } from '../utils/schedule'
-import { countsLine } from '../utils/languages'
 import { ArrowLeft, Clock, FileText, RefreshCw, Sparkles, XCircle } from 'lucide-vue-next'
 import { briefTitle, statusLabel } from '../utils/dashboard'
 import { attemptLabel } from '../utils/preview'
@@ -20,7 +32,7 @@ import { currentStep, type StepKey } from '../utils/steps'
 import { barAction, direction, nextStep, prevStep, reachableSteps } from '../utils/wizard'
 import ApprovalCard from '../components/ApprovalCard.vue'
 import DeliveryProgress from '../components/DeliveryProgress.vue'
-import LanguageTabs, { type TabStatus } from '../components/LanguageTabs.vue'
+import LocaleList, { type LocaleStatus } from '../components/LocaleList.vue'
 import MessageEditor from '../components/MessageEditor.vue'
 import SegmentCard from '../components/SegmentCard.vue'
 import StepBar from '../components/StepBar.vue'
@@ -54,16 +66,32 @@ const createError = ref<ApiError | null>(null)
 
 const { state: stream, start: startStream, reset: resetStream } = useGenerationStream()
 
-// One text per language. The tabs switch which one the editor shows; saving sends all of them,
-// because the languages must say the same thing.
-const languages = computed(() => props.info?.languages ?? FALLBACK_LANGUAGES)
-const codes = computed(() => languages.value.map((l) => l.code))
-const drafts = ref<Record<LanguageCode, MessageContent>>(draftsFrom(null, FALLBACK_LANGUAGES))
-const activeLang = ref<LanguageCode>(DEFAULT_LANGUAGE)
+// One text per locale of the campaign (the source and every locale with a reachable person).
+// The locale column switches which one the editor shows; only the source is edited, the translations are read-only.
+const allLocales = computed(() => props.info?.locales ?? FALLBACK_LOCALES)
+const sourceCode = computed(() => campaign.value?.source_locale ?? props.info?.source_locale ?? SOURCE_LOCALE)
+const locales = computed(() => campaignLocales(campaign.value, allLocales.value))
+const codes = computed(() => locales.value.map((l) => l.code))
+const drafts = ref<Record<LocaleCode, MessageContent>>(draftsFrom(null, [SOURCE_LOCALE]))
+const activeLocale = ref<LocaleCode>(SOURCE_LOCALE)
 const draft = computed<MessageContent>({
-  get: () => drafts.value[activeLang.value] ?? emptyMessage(),
-  set: (v) => (drafts.value = { ...drafts.value, [activeLang.value]: v }),
+  get: () => drafts.value[activeLocale.value] ?? emptyMessage(),
+  set: (v) => (drafts.value = { ...drafts.value, [activeLocale.value]: v }),
 })
+const activeInfo = computed(() => localeInfo(activeLocale.value, allLocales.value))
+const activeIsSource = computed(() => activeLocale.value === sourceCode.value)
+const activeStored = computed(() => storedByLocale(campaign.value)[activeLocale.value] ?? null)
+const activeState = computed(() => localeState(campaign.value, activeLocale.value))
+// Translations missing or stale: approval waits for them (the server refuses it too).
+const pending = computed(() => pendingLocales(campaign.value))
+const translationTotal = computed(() => Math.max(codes.value.length - 1, 0))
+const upToDate = computed(() => translationTotal.value - pending.value.length)
+
+// Translating again on request: which locales are being written, why some could not be.
+const translating = ref<LocaleCode[]>([])
+const translateError = ref<string | null>(null)
+// "Onayla" with a changed source: how many translations will be made again before approval.
+const retranslateAsk = ref<number | null>(null)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const serverIssues = ref<Issue[]>([])
@@ -83,11 +111,12 @@ const approved = ref<ApproveResult | null>(null)
 
 // After approval the text is frozen: earlier steps still open, read-only.
 const frozen = computed(() => ['scheduled', 'approved', 'sending', 'completed', 'cancelled', 'failed'].includes(campaign.value?.status ?? ''))
-const unsaved = computed(() => changedLanguages(campaign.value, drafts.value).length > 0)
+const changed = computed(() => changedLocales(campaign.value, drafts.value))
+const unsaved = computed(() => changed.value.length > 0)
 const streaming = computed(() => stream.value.phase === 'streaming')
 const mismatches = computed<Issue[]>(() => [
   ...(campaign.value?.mismatches ?? []),
-  ...serverIssues.value.filter((i) => i.code === 'language_mismatch' && !(campaign.value?.mismatches ?? []).some((m) => m.message === i.message)),
+  ...serverIssues.value.filter((i) => i.code === 'locale_mismatch' && !(campaign.value?.mismatches ?? []).some((m) => m.message === i.message)),
 ])
 // Why the chosen time cannot be used; null when sending now or when the time is fine.
 const scheduleError = computed(() =>
@@ -97,8 +126,10 @@ const canApprove = computed(
   () =>
     campaign.value?.status === 'content_ready' &&
     scheduleError.value === null &&
-    hasAllLanguages(campaign.value, languages.value) &&
+    !!campaign.value?.content &&
+    pending.value.length === 0 &&
     (campaign.value?.mismatches?.length ?? 0) === 0 &&
+    translating.value.length === 0 &&
     !streaming.value &&
     !saving.value &&
     !unsaved.value &&
@@ -111,13 +142,13 @@ const difference = computed(() =>
 const limits = computed(() => props.info?.limits)
 const variables = computed(() => props.info?.variables ?? [])
 const segmentReady = computed(() => campaign.value?.segment?.status === 'ok' && campaign.value.status !== 'draft')
-const hasContent = computed(() => allResults(stream.value, codes.value) || campaign.value?.content != null)
+const hasContent = computed(() => !!stream.value.locales[sourceCode.value]?.result || campaign.value?.content != null)
 const briefChanged = computed(() => !!campaign.value && brief.value.trim() !== campaign.value.brief.trim())
-const busy = computed(() => creating.value || streaming.value || saving.value || approving.value)
+const busy = computed(() => creating.value || streaming.value || saving.value || approving.value || translating.value.length > 0)
 
-// The limits are checked per language; saving needs every language clean.
+// The limits are checked per locale; saving needs every locale clean.
 const localChecks = computed(() => {
-  const out: Record<LanguageCode, { issues: Issue[] }> = {}
+  const out: Record<LocaleCode, { issues: Issue[] }> = {}
   for (const code of codes.value) {
     out[code] = limits.value ? checkContent(drafts.value[code] ?? emptyMessage(), limits.value, variables.value) : { issues: [] }
   }
@@ -156,7 +187,8 @@ const bar = computed(() =>
     hasCampaign: campaign.value !== null,
     briefChanged: briefChanged.value,
     hasContent: hasContent.value,
-    confirming: confirming.value,
+    // The question is asked in the alert dialog; the bar keeps its first label behind it.
+    confirming: false,
     scheduling: sendMode.value === 'later',
   }),
 )
@@ -192,7 +224,7 @@ const barDisabled = computed(() => {
       return false
   }
 })
-const barTestId = computed(() => (bar.value.action === 'ask' ? 'approve' : bar.value.action === 'send' ? 'confirm-approve' : undefined))
+const barTestId = computed(() => (bar.value.action === 'ask' ? 'approve' : undefined))
 
 async function onPrimary() {
   switch (bar.value.action) {
@@ -201,9 +233,10 @@ async function onPrimary() {
     case 'generate':
       return generate()
     case 'save-next':
-      if (unsaved.value) {
-        await save()
-        if (saveError.value) return
+      // The Turkish text changed (or translations wait): translate first and let the person look.
+      if (unsaved.value || pending.value.length > 0) {
+        retranslateAsk.value = unsaved.value ? translationTotal.value : pending.value.length
+        return
       }
       return go('approve')
     case 'ask':
@@ -233,7 +266,17 @@ async function approve() {
     campaign.value = await getCampaign(campaign.value.id)
     go('send')
   } catch (e) {
-    approveError.value = (e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')).message
+    const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
+    approveError.value = err.message
+    confirming.value = false
+    // A refused approval (e.g. a locale that gained a person needs its translation): show the state the server has.
+    if (err.status === 409) {
+      try {
+        adopt(await getCampaign(campaign.value.id))
+      } catch {
+        /* keep what is on screen */
+      }
+    }
   } finally {
     approving.value = false
   }
@@ -290,48 +333,41 @@ onBeforeUnmount(stopPolling)
 onMounted(() => (clockTimer = window.setInterval(() => (clockNow.value = new Date()), 15_000)))
 onBeforeUnmount(() => clockTimer !== null && window.clearInterval(clockTimer))
 
-// While streaming, every language's tab shows its live preview.
+// While streaming, every locale being written shows its live text.
 watch(
-  () => stream.value.langs,
-  (langs) => {
+  () => stream.value.locales,
+  (all) => {
     if (!streaming.value) return
     const next = { ...drafts.value }
-    for (const [code, l] of Object.entries(langs)) next[code] = { ...l.draft }
+    for (const [code, l] of Object.entries(all)) if (l.attempt || l.result) next[code] = { ...l.draft }
     drafts.value = next
   },
   { deep: true },
 )
-// When a generation finishes, the validated (or fallback) texts become editable.
-watch(
-  () => allResults(stream.value, codes.value),
-  (done) => {
-    if (!done) return
-    const next = { ...drafts.value }
-    for (const code of codes.value) {
-      const r = stream.value.langs[code]?.result
-      if (r) next[code] = { ...r.content }
-    }
-    drafts.value = next
-    serverIssues.value = []
-    saveError.value = null
-  },
-)
 
 // Warnings describe the SAVED text; while a new text streams in there is nothing to warn about yet.
-const warningsByLang = computed<Record<LanguageCode, Issue[]>>(() => {
-  const out: Record<LanguageCode, Issue[]> = {}
+const warningsByLocale = computed<Record<LocaleCode, Issue[]>>(() => {
+  const out: Record<LocaleCode, Issue[]> = {}
   if (streaming.value) return out
-  for (const [code, sc] of Object.entries(storedByLanguage(campaign.value))) {
-    out[code] = (sc.report.warnings ?? []).map((w) => ({ ...w, language: code }))
+  for (const [code, sc] of Object.entries(storedByLocale(campaign.value))) {
+    out[code] = (sc.report.warnings ?? []).map((w) => ({ ...w, locale: code }))
   }
   return out
 })
-const warnings = computed<Issue[]>(() => warningsByLang.value[activeLang.value] ?? [])
-const allWarnings = computed<Issue[]>(() => codes.value.flatMap((c) => warningsByLang.value[c] ?? []))
+const warnings = computed<Issue[]>(() => warningsByLocale.value[activeLocale.value] ?? [])
+const allWarnings = computed<Issue[]>(() => codes.value.flatMap((c) => warningsByLocale.value[c] ?? []))
 
 // Where the text on screen came from, as a short badge (no sentence).
 const sourceLabel = computed(() =>
-  source.value === 'llm' ? 'Model metni' : source.value === 'fallback' ? 'Hazır şablon' : source.value === 'edited' ? 'Elle düzenlendi' : null,
+  source.value === 'llm'
+    ? 'Model metni'
+    : source.value === 'fallback'
+      ? 'Hazır şablon'
+      : source.value === 'edited'
+        ? 'Elle düzenlendi'
+        : source.value === 'translated'
+          ? 'Çeviri'
+          : null,
 )
 // The colour of the campaign's state in the report header.
 const statusTone = computed(() => {
@@ -348,35 +384,55 @@ const statusTone = computed(() => {
       return 'accent'
   }
 })
-// A scheduled campaign: the estimated audience by channel and by language.
-const scheduledLanguages = computed(() => countsLine(campaign.value?.segment?.languages, languages.value))
-const scheduledCells = computed(() => (campaign.value?.segment?.audience ? 2 : 0) + (scheduledLanguages.value ? 1 : 0) || 1)
+// A scheduled campaign: the estimated audience by channel and by locale.
+const scheduledLocales = computed(() => countsLine(campaign.value?.segment?.locales, allLocales.value))
+const scheduledCells = computed(() => (campaign.value?.segment?.audience ? 2 : 0) + (scheduledLocales.value ? 1 : 0) || 1)
 const cancelText = computed(
   () =>
     `Kampanya${campaign.value?.scheduled_at ? ' ' + formatWhen(campaign.value.scheduled_at) + ' için' : ''} zamanlanmıştı. İptal edersen hiçbir mesaj gönderilmez.`,
 )
-const source = computed(() => stream.value.langs[activeLang.value]?.result?.source ?? storedByLanguage(campaign.value)[activeLang.value]?.source ?? null)
+const source = computed(() => stream.value.locales[activeLocale.value]?.result?.source ?? activeStored.value?.source ?? null)
 
-// What the tabs show about each language.
-const tabStatus = computed<Record<LanguageCode, TabStatus>>(() => {
-  const out: Record<LanguageCode, TabStatus> = {}
-  const changed = new Set(changedLanguages(campaign.value, drafts.value))
+// What the locale column shows about each locale.
+const localeStatus = computed<Record<LocaleCode, LocaleStatus>>(() => {
+  const out: Record<LocaleCode, LocaleStatus> = {}
+  const edited = new Set(changed.value)
   for (const code of codes.value) {
-    const l = stream.value.langs[code]
+    const l = stream.value.locales[code]
+    const writing = streaming.value
+      ? code === sourceCode.value
+        ? !l?.result
+        : !!l && !l.result && !l.failed
+      : translating.value.includes(code)
     out[code] = {
-      issues: (localChecks.value[code]?.issues.length ?? 0) + serverIssues.value.filter((i) => i.language === code && i.code !== 'language_mismatch').length,
-      writing: streaming.value && !l?.result,
-      mismatch: mismatches.value.some((m) => m.language === code),
-      edited: changed.has(code),
+      state: localeState(campaign.value, code),
+      writing,
+      issues:
+        (localChecks.value[code]?.issues.length ?? 0) +
+        serverIssues.value.filter((i) => i.locale === code).length +
+        mismatches.value.filter((m) => m.locale === code).length,
+      unsaved: edited.has(code),
     }
   }
   return out
 })
 const notes = computed(() => retryNotes(stream.value))
-// Issues of the language on screen (the server names the language of each one it rejects).
-const serverIssuesHere = computed(() => serverIssues.value.filter((i) => i.code !== 'language_mismatch' && (!i.language || i.language === activeLang.value)))
-const activeAttempt = computed(() => stream.value.langs[activeLang.value]?.attempt ?? null)
-const langName = (code: LanguageCode) => languages.value.find((l) => l.code === code)?.display ?? code
+// Issues of the locale on screen (the server names the locale of each one it rejects).
+const serverIssuesHere = computed(() => serverIssues.value.filter((i) => i.code !== 'locale_mismatch' && (!i.locale || i.locale === activeLocale.value)))
+const mismatchesHere = computed(() => mismatches.value.filter((m) => m.locale === activeLocale.value))
+const activeAttempt = computed(() => stream.value.locales[activeLocale.value]?.attempt ?? null)
+const failedNow = computed(() => [...new Set([...failedLocales(stream.value), ...Object.keys(campaign.value?.translation_failures ?? {})])])
+const people = (code: LocaleCode) => (campaign.value?.segment?.locales?.[code] ?? 0).toLocaleString('tr-TR')
+
+// What changed in the source since a stale translation was made (only the changed fields).
+const FIELD_LABELS: Record<ContentField, string> = { sms_body: 'SMS', email_subject: 'E-posta konusu', email_body: 'E-posta metni' }
+const sourceChanges = computed(() => {
+  const was = activeStored.value?.stale ? activeStored.value.source_text : undefined
+  const now = campaign.value?.content
+  if (!was || !now) return []
+  return (Object.keys(FIELD_LABELS) as ContentField[]).filter((f) => was[f] !== now[f]).map((f) => ({ field: f, label: FIELD_LABELS[f], was: was[f], now: now[f] }))
+})
+const canTranslate = computed(() => !!campaign.value?.content && !frozen.value && !busy.value && !unsaved.value)
 
 const fallbackText = computed(() => {
   switch (stream.value.fallbackReason) {
@@ -396,7 +452,39 @@ function setUrl(id: number | null) {
 
 function adopt(c: Campaign) {
   campaign.value = c
-  if (c.content) drafts.value = draftsFrom(c, languages.value)
+  const shown = campaignLocales(c, allLocales.value).map((l) => l.code)
+  if (c.content) drafts.value = draftsFrom(c, shown)
+  if (!shown.includes(activeLocale.value)) activeLocale.value = shown[0] ?? SOURCE_LOCALE
+}
+
+// "Yeniden çevir" / "Güncel olmayanları çevir": translations are only ever made by the translator.
+function askTranslate(list: LocaleCode[]) {
+  if (canTranslate.value && list.length > 0) void runTranslate(list)
+}
+// "Çevir ve göster": save the Turkish text, translate what is stale, stay here to review.
+async function translateAndShow() {
+  retranslateAsk.value = null
+  if (unsaved.value) {
+    await save()
+    if (saveError.value) return
+  }
+  await runTranslate(pending.value)
+}
+async function runTranslate(list: LocaleCode[]) {
+  if (!campaign.value || list.length === 0) return
+  translating.value = list
+  translateError.value = null
+  resetStream()
+  try {
+    const c = await translateCampaign(campaign.value.id, list)
+    adopt(c)
+    const failed = Object.keys(c.translation_failures ?? {})
+    if (failed.length > 0) translateError.value = `Çevrilemedi: ${failed.join(', ')}`
+  } catch (e) {
+    translateError.value = (e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')).message
+  } finally {
+    translating.value = []
+  }
 }
 
 async function submitBrief() {
@@ -407,8 +495,8 @@ async function submitBrief() {
   approved.value = null
   approveError.value = null
   resetStream()
-  drafts.value = draftsFrom(null, languages.value)
-  activeLang.value = DEFAULT_LANGUAGE
+  drafts.value = draftsFrom(null, [SOURCE_LOCALE])
+  activeLocale.value = SOURCE_LOCALE
   try {
     const c = await createCampaign(brief.value)
     adopt(c)
@@ -434,8 +522,9 @@ async function generate() {
   if (!campaign.value || streaming.value) return
   serverIssues.value = []
   go('messages') // the person watches the text arrive
+  translateError.value = null
   await startStream(campaign.value.id)
-  if (allResults(stream.value, codes.value)) {
+  if (stream.value.phase === 'done') {
     try {
       adopt(await getCampaign(campaign.value.id)) // pick up status = content_ready
     } catch {
@@ -450,15 +539,15 @@ async function save() {
   saveError.value = null
   serverIssues.value = []
   try {
-    adopt(await saveContent(campaign.value.id, drafts.value))
+    adopt(await saveContent(campaign.value.id, Object.fromEntries(changed.value.map((code) => [code, drafts.value[code]]))))
     resetStream()
   } catch (e) {
     const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
     saveError.value = err.message
     serverIssues.value = err.details?.report?.issues ?? []
-    // Show the language that has the first problem.
-    const first = serverIssues.value.find((i) => i.language && i.code !== 'language_mismatch')
-    if (first?.language) activeLang.value = first.language
+    // Show the locale that has the first problem.
+    const first = serverIssues.value.find((i) => i.locale)
+    if (first?.locale) activeLocale.value = first.locale
   } finally {
     saving.value = false
   }
@@ -531,7 +620,7 @@ onMounted(async () => {
 
           <!-- 2 · Kitle -->
           <template v-else-if="view === 'audience'">
-            <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" :languages="languages" :busy="creating || frozen" @send-to-all="sendToAll" />
+            <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" :locales="allLocales" :busy="creating || frozen" @send-to-all="sendToAll" />
             <Card v-else title="Kitle" role="status">
               <p class="muted">Kitle çıkarılıyor…</p>
             </Card>
@@ -542,36 +631,84 @@ onMounted(async () => {
             <MessageEditor
               v-if="limits && (hasContent || streaming)"
               v-model="draft"
-              :readonly="streaming || frozen"
-              :typing="streaming"
+              :readonly="streaming || frozen || !activeIsSource || translating.includes(activeLocale)"
+              :typing="streaming || translating.includes(activeLocale)"
               :limits="limits"
               :variables="variables"
               :server-issues="serverIssuesHere"
               :warnings="warnings"
-              :language="activeLang"
-              :language-name="langName(activeLang)"
+              :locale="activeLocale"
+              :dir="activeInfo.direction"
             >
               <template #actions>
-                <Badge v-if="sourceLabel && hasContent && !streaming" data-testid="source">{{ sourceLabel }}</Badge>
+                <Badge v-if="translationTotal > 0 && campaign?.content && !streaming" :tone="pending.length ? 'neutral' : 'ok'" data-testid="up-to-date">
+                  Güncel <b class="num">{{ upToDate }}/{{ translationTotal }}</b>
+                </Badge>
                 <Badge v-if="unsaved && !frozen && !streaming" tone="warn" dot data-testid="unsaved">Kaydedilmedi</Badge>
-                <Button v-if="!frozen && !streaming && hasContent && segmentReady" variant="outline" size="sm" :icon="RefreshCw" @click="generate">Yeniden üret</Button>
+                <Button
+                  v-if="pending.length && !frozen && !streaming"
+                  variant="outline"
+                  size="sm"
+                  :icon="Sparkles"
+                  :disabled="!canTranslate"
+                  :loading="translating.length > 1"
+                  data-testid="translate-pending"
+                  @click="askTranslate(pending)"
+                  >Güncel olmayanları çevir ({{ pending.length }})</Button
+                >
+                <Button v-if="!frozen && !streaming && hasContent && segmentReady" variant="outline" size="sm" :icon="RefreshCw" :disabled="busy" @click="generate">Yeniden üret</Button>
+              </template>
+              <template #locales>
+                <LocaleList v-model="activeLocale" :locales="locales" :status="localeStatus" :counts="campaign?.segment?.locales" />
               </template>
               <template #top>
+                <div class="loc-head" data-testid="locale-head">
+                  <strong class="loc-head__code">{{ activeLocale }}</strong>
+                  <span class="muted" :dir="activeInfo.direction">{{ activeInfo.native_name }}</span>
+                  <Badge :tone="activeState === 'ok' ? 'ok' : activeState === 'source' ? 'accent' : activeState === 'stale' ? 'warn' : 'neutral'" data-testid="locale-state">
+                    {{ stateLabel[activeState] }}
+                  </Badge>
+                  <Badge v-if="sourceLabel && hasContent && !streaming && activeStored" data-testid="source">{{ sourceLabel }}</Badge>
+                  <Badge v-if="activeInfo.direction === 'rtl'" tone="plan">RTL</Badge>
+                  <Badge v-if="activeIsSource && activeStored">v{{ activeStored.version }}</Badge>
+                  <span class="loc-head__people muted num">{{ people(activeLocale) }} alıcı</span>
+                  <Button
+                    v-if="!activeIsSource && !frozen && !streaming"
+                    variant="outline"
+                    size="sm"
+                    :icon="Sparkles"
+                    :disabled="!canTranslate"
+                    :loading="translating.includes(activeLocale)"
+                    data-testid="retranslate"
+                    @click="askTranslate([activeLocale])"
+                    >Yeniden çevir</Button
+                  >
+                </div>
                 <div v-if="streaming" class="agent" :class="{ 'agent--retry': (activeAttempt?.n ?? 1) > 1 }" role="status" data-testid="attempt">
                   <span class="agent__icon" aria-hidden="true"><Sparkles :size="16" /></span>
-                  <span><strong>{{ langName(activeLang) }}:</strong> {{ attemptLabel(activeAttempt) }}</span>
+                  <span><strong>{{ activeLocale }}:</strong> {{ attemptLabel(activeAttempt) }}</span>
                   <ul v-if="notes.length" class="agent__notes">
-                    <template v-for="n in notes" :key="n.language">
-                      <li v-for="p in n.problems" :key="n.language + p">{{ langName(n.language) }}: {{ p }}</li>
+                    <template v-for="n in notes" :key="n.locale">
+                      <li v-for="p in n.problems" :key="n.locale + p">{{ n.locale }}: {{ p }}</li>
                     </template>
                   </ul>
                 </div>
                 <p v-if="stream.fallbackReason" class="notice warn" role="alert"><strong>{{ fallbackText }}</strong> Hazır bir şablon yerleştirildi.</p>
                 <p v-if="stream.error" class="notice error" role="alert">{{ stream.error.message }}</p>
-                <LanguageTabs v-model="activeLang" :languages="languages" :status="tabStatus" />
-                <div v-if="mismatches.length" class="notice error" role="alert" data-testid="mismatch">
-                  <strong>Diller aynı şeyi söylemiyor:</strong>
-                  <span v-for="m in mismatches" :key="m.message" class="block">• {{ m.message }}</span>
+                <p v-if="failedNow.length && !streaming" class="notice error" role="alert" data-testid="translate-failed">Çevrilemedi: {{ failedNow.join(', ') }}</p>
+                <p v-else-if="translateError" class="notice error" role="alert" data-testid="translate-error">{{ translateError }}</p>
+
+                <details v-if="sourceChanges.length" class="diff" data-testid="source-diff">
+                  <summary>{{ sourceCode }} değişikliği</summary>
+                  <div v-for="c in sourceChanges" :key="c.field" class="diff__field">
+                    <span class="label">{{ c.label }}</span>
+                    <del>{{ c.was }}</del>
+                    <ins>{{ c.now }}</ins>
+                  </div>
+                </details>
+                <div v-if="mismatchesHere.length" class="notice error" role="alert" data-testid="mismatch">
+                  <strong>{{ sourceCode }} ile aynı şeyi söylemiyor:</strong>
+                  <span v-for="m in mismatchesHere" :key="m.message" class="block">• {{ m.message }}</span>
                 </div>
               </template>
               <template #bottom>
@@ -595,7 +732,7 @@ onMounted(async () => {
               v-if="campaign?.segment && (campaign.status === 'content_ready' || frozen)"
               :segment="campaign.segment"
               :warnings="allWarnings"
-              :languages="languages"
+              :locales="allLocales"
               :confirming="confirming"
               :frozen="frozen"
               :error="approveError"
@@ -635,8 +772,8 @@ onMounted(async () => {
                   hint="Kitle gönderim anında yeniden belirlenir"
                 />
                 <StatTile v-if="campaign.segment?.audience" label="Tahmini alıcı · E-posta" :value="campaign.segment.audience.email_reachable" />
-                <StatTile v-if="scheduledLanguages" label="Tahmini diller" value="" data-testid="scheduled-languages">
-                  <span class="num">{{ scheduledLanguages }}</span>
+                <StatTile v-if="scheduledLocales" label="Tahmini locale'ler" value="" data-testid="scheduled-locales">
+                  <span class="num">{{ scheduledLocales }}</span>
                 </StatTile>
               </KpiGroup>
               <p v-if="cancelError" class="notice error" role="alert">{{ cancelError }}</p>
@@ -649,7 +786,7 @@ onMounted(async () => {
             </p>
             <template v-else-if="campaign?.delivery">
               <p v-if="difference" class="notice info" role="status">{{ difference }}</p>
-              <DeliveryProgress :delivery="campaign.delivery" :status="campaign.status" :languages="languages" />
+              <DeliveryProgress :delivery="campaign.delivery" :status="campaign.status" :locales="allLocales" />
             </template>
             <Card v-else title="Gönderim"><p class="muted">Kampanya henüz onaylanmadı.</p></Card>
           </div>
@@ -660,13 +797,38 @@ onMounted(async () => {
     <!-- No box: the buttons sit on the page, on the column's edges. The main action comes
          first in the page so it is on top on a phone; on wider screens "Geri" moves left. -->
     <footer class="bar">
+      <Badge v-if="pending.length && !frozen && (view === 'messages' || view === 'approve')" class="bar__note" tone="warn" dot title="Onay: 409 stale_translations" data-testid="pending-note">
+        {{ pending.length }} çeviri güncel değil
+      </Badge>
       <Button class="main" variant="primary" :disabled="barDisabled" :data-testid="barTestId" data-action="primary" @click="onPrimary">
         {{ barLabel }}
       </Button>
       <Button v-if="view !== 'brief'" class="back" variant="outline" :icon="ArrowLeft" :disabled="busy" data-testid="back" @click="onBack">
-        {{ confirming ? 'Vazgeç' : 'Geri' }}
+        Geri
       </Button>
     </footer>
+
+    <Modal
+      :model-value="confirming && view === 'approve'"
+      alert
+      :persistent="approving"
+      title="Emin misiniz?"
+      :description="sendMode === 'later' ? 'Mesajlar seçtiğiniz zamanda kendiliğinden gönderilir. Başlamadan önce iptal edebilirsiniz.' : 'Mesajlar hemen gönderilir. Onaydan sonra metin ve kitle değişmez.'"
+      @update:model-value="(v: boolean) => !v && (confirming = false)"
+    >
+      <template #footer>
+        <Button variant="ghost" :disabled="approving" @click="confirming = false">Vazgeç</Button>
+        <Button variant="primary" :loading="approving" data-testid="confirm-approve" @click="approve">{{ sendMode === 'later' ? 'Evet, zamanla' : 'Evet, gönder' }}</Button>
+      </template>
+    </Modal>
+
+    <Modal :model-value="retranslateAsk !== null" title="Türkçe metni değiştirdiniz." @update:model-value="(v: boolean) => !v && (retranslateAsk = null)">
+      <p class="retranslate" data-testid="retranslate-count">{{ retranslateAsk }} çeviri güncellenecek.</p>
+      <template #footer>
+        <Button variant="ghost" @click="retranslateAsk = null">Vazgeç</Button>
+        <Button variant="primary" :icon="Sparkles" data-testid="translate-and-show" @click="translateAndShow">Çevir ve göster</Button>
+      </template>
+    </Modal>
 
     <Modal v-model="confirmCancel" title="Zamanlanmış gönderim iptal edilsin mi?" :description="cancelText">
       <template #footer>
@@ -877,6 +1039,54 @@ details ul {
   display: flex;
   align-items: center;
   gap: var(--s-3);
+}
+.bar__note {
+  margin-left: auto;
+}
+.bar__note + .main {
+  margin-left: 0;
+}
+.loc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.loc-head__code {
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+.loc-head__people {
+  margin-left: auto;
+  font-size: var(--text-sm);
+}
+.diff {
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.diff summary {
+  cursor: pointer;
+}
+.diff__field {
+  display: grid;
+  gap: 2px;
+  margin-top: var(--s-2);
+}
+.diff del {
+  color: var(--error);
+  white-space: pre-wrap;
+}
+.diff ins {
+  color: var(--ok);
+  text-decoration: none;
+  white-space: pre-wrap;
+}
+.retranslate {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 .back {
   order: -1;

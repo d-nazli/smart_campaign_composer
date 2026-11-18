@@ -3,50 +3,49 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Inbox, Plus } from 'lucide-vue-next'
 import type { AppInfo } from '../api/info'
 import { cancelCampaign, listCampaigns } from '../api/campaigns'
-import { fetchSystem, type SystemHealth as SystemState } from '../api/system'
 import type { CampaignSummary } from '../types'
-import { briefTitle, overallTotals } from '../utils/dashboard'
+import { healthWord, type HealthItem } from '../utils/health'
+import { briefTitle, isSending, type ChannelRates } from '../utils/dashboard'
 import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
 import { formatWhen } from '../utils/schedule'
 import CampaignTable from '../components/CampaignTable.vue'
-import SystemHealth from '../components/SystemHealth.vue'
 import Button from '../components/ui/Button.vue'
 import Modal from '../components/ui/Modal.vue'
-import KpiGroup from '../components/ui/KpiGroup.vue'
-import StatTile from '../components/ui/StatTile.vue'
 
-defineProps<{ info: AppInfo | null }>()
+// down: the services that do not answer (the shell asks /api/system); a red alert tops the list.
+defineProps<{ info: AppInfo | null; down?: HealthItem[] }>()
 
 const POLL_MS = 2000
-const HEALTH_MS = 5000
 
 const campaigns = ref<CampaignSummary[] | null>(null)
 const error = ref<string | null>(null)
-const system = ref<SystemState | null>(null)
-const apiUnreachable = ref(false)
-const samples = ref<Sample[]>([])
+// Sent-so-far readings of each sending campaign's channels, to measure the speed from (last 10 s).
+const samples = ref<Record<string, Sample[]>>({})
 let timer: number | null = null
-let healthTimer: number | null = null
 
 async function refresh() {
   try {
     const list = await listCampaigns()
     campaigns.value = list
     error.value = null
-    samples.value = pushSample(samples.value, { at: performance.now(), sent: overallTotals(list).sent })
+    track(list)
   } catch (e) {
     // Keep showing the last list; say that it may be stale.
     error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
-async function refreshHealth() {
-  try {
-    system.value = await fetchSystem()
-    apiUnreachable.value = false
-  } catch {
-    apiUnreachable.value = true
+function track(list: CampaignSummary[]) {
+  const at = performance.now()
+  const next: Record<string, Sample[]> = {}
+  for (const c of list) {
+    if (!c.delivery || !isSending(c)) continue // a finished campaign shows its average instead
+    for (const ch of ['sms', 'email'] as const) {
+      const key = `${c.id}:${ch}`
+      next[key] = pushSample(samples.value[key] ?? [], { at, sent: c.delivery[ch].sent })
+    }
   }
+  samples.value = next
 }
 
 // Cancelling asks first, in a dialog. The server refuses once a campaign has started;
@@ -85,25 +84,32 @@ const cancelText = computed(() => {
 
 onMounted(() => {
   void refresh()
-  void refreshHealth()
   timer = window.setInterval(refresh, POLL_MS)
-  healthTimer = window.setInterval(refreshHealth, HEALTH_MS)
 })
 onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
-  if (healthTimer !== null) window.clearInterval(healthTimer)
 })
 
-const totals = computed(() => overallTotals(campaigns.value ?? []))
-const rate = computed(() => ratePerSecond(samples.value))
-// Rate is only meaningful while something is being sent.
-const shownRate = computed(() => (totals.value.pending > 0 ? rate.value : 0))
+const active = computed(() => (campaigns.value ?? []).filter(isSending).length)
+// Live speed per sending campaign and channel (needs two readings).
+const rates = computed(() => {
+  const out: Record<number, ChannelRates> = {}
+  for (const c of campaigns.value ?? []) {
+    const sms = samples.value[`${c.id}:sms`]
+    const email = samples.value[`${c.id}:email`]
+    if (sms && sms.length >= 2) out[c.id] = { sms: ratePerSecond(sms), email: ratePerSecond(email ?? []) }
+  }
+  return out
+})
 
 const newCampaign = () => (window.location.hash = '#/')
 </script>
 
 <template>
   <section class="dash">
+    <p v-if="down?.length" class="notice error" role="alert" data-testid="system-alert">
+      <strong>Servis yanıt vermiyor:</strong> {{ down.map((d) => `${d.label} (${healthWord(d.state)})`).join(', ') }}
+    </p>
     <div class="page-head">
       <h1>Kampanyalar</h1>
       <Button variant="cta" :icon="Plus" data-testid="new-campaign" @click="newCampaign">Yeni kampanya</Button>
@@ -112,18 +118,9 @@ const newCampaign = () => (window.location.hash = '#/')
     <p v-if="error" class="notice error" role="alert">Liste güncellenemedi ({{ error }}). Gösterilen bilgi eski olabilir.</p>
     <p v-if="cancelError" class="notice error" role="alert" data-testid="cancel-error">Gönderim iptal edilemedi: {{ cancelError }}</p>
 
-    <KpiGroup :count="4" data-testid="summary">
-      <StatTile label="Gönderilen" :value="totals.sent" tone="ok" hint="SMS ve e-posta birlikte" data-testid="total-sent" />
-      <StatTile
-        label="Başarısız"
-        :value="totals.failed"
-        :tone="totals.failed > 0 ? 'danger' : 'default'"
-        hint="Nedenleri kampanya satırlarında"
-        data-testid="total-failed"
-      />
-      <StatTile label="Kuyrukta" :value="totals.pending" hint="Gönderilmeyi bekleyen mesajlar" data-testid="total-pending" />
-      <StatTile label="Hız" :value="shownRate" :decimals="1" suffix="/sn" hint="Son 10 saniyedeki gönderim hızı" data-testid="rate" />
-    </KpiGroup>
+    <p v-if="campaigns && campaigns.length > 0" class="active num" data-testid="active">
+      Şu an aktif gönderim: <strong>{{ active }}</strong> kampanya
+    </p>
 
     <p v-if="campaigns === null && !error" class="muted">Yükleniyor…</p>
     <div v-else-if="campaigns && campaigns.length === 0" class="empty" data-testid="empty">
@@ -132,9 +129,7 @@ const newCampaign = () => (window.location.hash = '#/')
       <Button variant="cta" :icon="Plus" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
-    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :languages="info?.languages" @cancel="toCancel = $event" />
-
-    <SystemHealth :system="system" :unreachable="apiUnreachable" :info="info" />
+    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :locales="info?.locales" :rates="rates" @cancel="toCancel = $event" />
 
     <Modal v-model="askCancel" title="Zamanlanmış gönderim iptal edilsin mi?" :description="cancelText">
       <template #footer>
@@ -149,6 +144,14 @@ const newCampaign = () => (window.location.hash = '#/')
 .dash {
   display: grid;
   gap: var(--s-5);
+}
+.active {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.active strong {
+  color: var(--fg);
 }
 .empty {
   display: grid;

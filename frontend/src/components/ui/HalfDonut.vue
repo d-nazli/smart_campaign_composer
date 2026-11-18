@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // A half ring: each part is an arc of the semicircle in proportion to its value
-// (used for the reasons deliveries failed). The slot sits in the middle, under the arc.
+// (used for the reasons deliveries failed, against all messages). The slot sits in the middle, under the arc.
 import { computed } from 'vue'
 
 export interface Arc {
@@ -11,11 +11,14 @@ const props = defineProps<{ parts: Arc[]; max?: number; label: string }>()
 
 const R = 70
 const LEN = Math.PI * R
+// Against a larger whole (max) a small part would be a hairline: it keeps a visible minimum so its colour can be seen.
+const MIN_ARC = 3
 const arcs = computed(() => {
   const total = props.max ?? props.parts.reduce((s, p) => s + p.value, 0)
   let at = 0
   return props.parts.map((p) => {
-    const len = total > 0 ? (p.value / total) * LEN : 0
+    let len = total > 0 ? (p.value / total) * LEN : 0
+    if (props.max !== undefined && p.value > 0) len = Math.max(len, MIN_ARC)
     const a = { color: p.color, dash: `${len} ${LEN * 2}`, offset: -at }
     at += len
     return a

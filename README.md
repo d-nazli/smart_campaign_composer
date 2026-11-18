@@ -22,8 +22,8 @@ docker compose up --build      # veya: make up
 
 > ### ⚡ Hızlı demo için
 > Mock provider varsayılan olarak **kasıtlı olarak bozuktur** (%5 5xx, %3 rastgele 429, %1 zaman aşımı, %2 "kabul ettim ama
-> hata döndüm"). Her 429 gönderimi 1–3 sn durdurduğu için bir kampanya **1–2 dakika** sürer. Anında bitmesini istiyorsanız
-> `.env` dosyasına **`PROVIDER_429_RATE=0`** yazıp `docker compose up -d mock-provider` çalıştırın (tüm kaosu kapatmak için
+> hata döndüm"). Başarısız denemeler yeniden denendiği için kampanyanın kuyruğu birkaç saniye uzar (2.500 mesaj ≈ 25–30 sn).
+> Kaosu kapatmak isterseniz `.env` dosyasına **`PROVIDER_429_RATE=0`** yazıp `docker compose up -d mock-provider` çalıştırın (tümünü kapatmak için
 > `PROVIDER_ERROR_RATE=0 PROVIDER_TIMEOUT_RATE=0 PROVIDER_FAIL_AFTER_ACCEPT_RATE=0` da ekleyin).
 
 `.env` zorunlu değil; ayarlar için `copy .env.example .env`. `ANTHROPIC_API_KEY` boşsa mock LLM,
@@ -72,26 +72,30 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
    kez (hatta aynı anda) göndermek çift kayıt üretmez. Aynı telefonu ya da e-postayı paylaşan iki müşteri kaydı da o
    adrese **tek mesaj** alır (ekrandaki "ulaşılabilir" sayıları adres sayısıdır).
 3. `worker` kuyruğu kanal başına **90 mesaj/sn** (`WORKER_RATE_PER_SEC`) hızla boşaltır. Provider'ın 429/5xx/zaman aşımı
-   cevaplarında yeniden dener (429'da `Retry-After`'e uyar ve kanalı bekletir; 5xx'te üstel bekleme + jitter, en fazla 5
+   cevaplarında yeniden dener (429'da o mesaj `Retry-After` kadar bekler; 429'lar art arda gelirse kanal da bekletilir; 5xx'te üstel bekleme + jitter, en fazla 5
    deneme). Aynı mesaj aynı `Idempotency-Key` ile gittiği için provider "kabul ettim ama hata döndüm" durumunda bile
    tek teslimat yapar. Geçersiz telefon/e-posta (`invalid_recipient`) yeniden denenmez, `failed` olur.
 4. Sayfa her saniye ilerlemeyi günceller (gönderildi / başarısız / atlandı / bekliyor); onaydan sonra izni çeken kişi `atlandı`.
 
-Varsayılan provider kaosu %3 rastgele 429 enjekte eder ve her 429 kanalı 1–3 sn durdurur; bu yüzden bir kampanya
-yaklaşık 1–2 dakika sürer. Hızlı demo için `.env`'de `PROVIDER_429_RATE=0` yapıp `docker compose up -d mock-provider` deyin.
+Varsayılan provider kaosu %3 rastgele 429 enjekte eder. Tek bir 429 yalnız kendi mesajını bekletir; bir saniyede 10 ve daha
+fazla 429 gelirse (provider gerçekten sınırlıyor demektir) kanal `Retry-After` kadar durur. Ölçülen hız kanal başına
+~90 çağrı/sn (~80 kabul/sn, geri kalanı kaos yüzünden yeniden denenir); 100/sn hiçbir zaman aşılmaz.
 
-## Çok dilli içerik (bonus)
+## Kullanıcının locale'ine göre içerik (bonus)
 
-- Her kullanıcının bir dili vardır (`users.language`: `tr`, `en`, `de`; seed'de %60 / %25 / %15). Her kampanya **üç dilde birden**
-  üretilir: önce Türkçe (referans), sonra İngilizce ve Almanca paralel. Mesajlar ekranda dil sekmelerinde akar ve düzenlenir.
-- **Üç dil aynı şeyi söylemek zorundadır.** İndirim oranı, TL tutarı, tarih, ücretsiz kargo vaadi ve `{{değişkenler}}`
-  dillerde aynı değilse üretim modele geri bildirimle yeniden yazdırılır, elle kayıt **422 ile reddedilir**, onay yapılmaz
-  (D70). Bu yüzden bir dili düzenlerken teklifi değiştirirseniz üç dili birlikte güncellemelisiniz; ekran hepsini birlikte kaydeder.
-- Bir dil üretilemezse üç dil de yerleşik şablona düşer (karışık metin/şablon olmaz, D69).
-- Gönderimde kişinin dili **gönderim anında** okunur: zamanlamadan sonra dilini değiştiren kişi yeni dilindeki mesajı bir kez alır.
-  Adı boşsa kendi dilindeki sözcük yazılır ("değerli müşterimiz" / "valued customer" / "geschätzter Kunde").
-- Onay ekranı kitlenin dil dağılımını gösterir. Cinsiyet yalnız brief açıkça isterse kitle koşulu olur (aşağıya bakın);
-  doğum tarihi şimdilik yalnız saklanır.
+Insider One'ın Localization yapısı örnek alındı (D92–D97).
+
+- Locale'ler `locales` tablosundadır (`tr-TR`, `en-GB`, `en-US`, `en-AU`, `de-DE`, `fr-FR`, `es-ES`, `es-MX`, `it-IT`,
+  `nl-NL`, `pt-BR`, `ar-SA`). `users.locale` bu tabloya foreign key'dir. **Yeni locale eklemek bir satır eklemektir**;
+  kod değişmez.
+- `tr-TR` kaynaktır: önce o yazılır, sonra kitlede kişisi olan her locale'e çevrilir. Kişisi olmayan locale çevrilmez.
+- **Yalnız tr-TR elle düzenlenir**; çeviriler salt okunurdur (API de `422 translation_read_only` döner, D97). Türkçe
+  değişince çeviriler **güncel değil** olur; "Onayla" önce "N çeviri güncellenecek" diye sorar, "Çevir ve göster" ile
+  çevrilir, kişi bakıp tekrar onaylar. Her çeviride "Yeniden çevir" düğmesi vardır.
+- Güncel olmayan ya da eksik çeviri varken onay backend'de **409 `stale_translations`** ile reddedilir.
+- Her locale'de aynı kurallar: JSON şeması, SMS 160 / konu 80, `{{first_name}}` ve diğer değişkenler kaynakla aynı,
+  sayılar/tarihler aynı. Kişi yalnız kendi locale'inin metnini alır; metin yoksa başka locale'e düşülmez.
+- Mock LLM: `en-*` ve `de-*` için kendi kalıp setiyle yazar; diğer locale'lerde kaynak metni `[fr-FR] ` önekiyle döner.
 
 ## Brief'te özel gün, cinsiyet, birleşik ve kademeli teklif
 
@@ -131,7 +135,17 @@ söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
   İptal ile başlatma yarışırsa tam biri kazanır (testli). Worker kapalıyken zamanı gelen kampanya, worker açılınca hemen başlar.
 - Zamanlanmış bir kampanya düzenlenemez; yanlışsa iptal edip yenisini oluşturun (yeniden zamanlama yok).
 
-## İzleme: dashboard, `/metrics`, `/healthz`
+## İzleme: `/healthz`, `/api/system`, `/metrics`
+
+```bash
+curl localhost:8081/healthz        # {"status":"ok"}  (veritabanı bozuksa 503) — docker healthcheck'i bunu kullanır
+curl localhost:8081/api/system     # {"api":"ok","database":"ok","worker":"ok"}  — arayüzdeki "Sistem sağlıklı" rozeti
+curl localhost:8081/metrics        # Prometheus metin formatı
+curl -s localhost:8081/metrics | grep -E 'send_rate|queue_length'   # anlık hız ve kuyruk uzunluğu (kanal başına)
+curl localhost:9091/healthz        # worker (compose ağının içinden: docker compose exec worker wget -qO- localhost:9091/healthz)
+```
+
+`docker compose ps` her servis için (postgres, mock-provider, api, worker, web) healthcheck durumunu gösterir.
 
 - **Kampanyalar** (`/#/dashboard`, eski adıyla dashboard): tüm kampanyalar, kanal bazlı ilerleme çubuğu, gönderildi / başarısız / tekrar / 429 sayıları;
   her 2 sn'de kendini yeniler. Sade bir ilk sürümdür, arayüz sonra yeniden tasarlanacak.
@@ -148,6 +162,7 @@ söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
   - Mock LLM token harcamaz, token sayaçları yalnız gerçek Claude ile artar.
 - **`GET :8081/healthz`**: api ve veritabanı bağlantısı (200 `{"status":"ok"}` / 503). docker-compose healthcheck'i bunu kullanır.
   Worker'ın `:9091/healthz`'ı da aynı veritabanı kontrolünü yapar.
+- **`GET :8081/api/system`**: api, veritabanı ve worker durumu (`ok` / `down`); api worker'ın `/healthz`'ına kendisi sorar.
 
 **Gönderim kapsamı dışında:** worker tek replica (hız sınırı süreç içi; iki worker kanal başına 180/sn'ye çıkar, D81); e-posta gövdesi düz metin; "delivered" bildirimi
 yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız toplam ve adet (ortalama hesaplanır).
@@ -187,9 +202,9 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
   seferinde taze veritabanı kurduğu için bundan etkilenmez.
 - Seed kodunu veya `SEED`/`SEED_USERS` değerini değiştirirseniz de `make clean` gerekir (seed yalnız
   boş veritabanına yazar).
-- Her kullanıcının ayrıca **dil** (`tr`/`en`/`de`), **cinsiyet** ve **doğum tarihi** vardır (bir kısmı boş bırakılır). Bu
-  alanlar ayrı bir rastgele akıştan gelir; mevcut verinin hiçbir değeri ve "kohort tam 300" garantisi değişmedi. Bu
-  sürüme güncelleyince eski bir veritabanında dil hep `tr` kalır: `make clean` ile seed'i yeniden yükleyin.
+- Her kullanıcının ayrıca **locale**'i (12 locale; tr-TR %40, diğerleri %4–8), **cinsiyeti** ve **doğum tarihi** vardır
+  (bir kısmı boş bırakılır). Bu alanlar ayrı bir rastgele akıştan gelir; "kohort tam 300" garantisi değişmedi. Eski bir
+  veritabanında migration `tr/en/de`'yi `tr-TR/en-GB/de-DE`'ye taşır; 12 locale'lik dağılım için `make clean`.
 - Bilerek eklenen kenar durumlar: izinli ama telefonu/emaili boş kullanıcılar, hiç izni olmayanlar,
   çok uzun isimler, bozuk telefon/email (mock provider kalıcı 400 döner).
 

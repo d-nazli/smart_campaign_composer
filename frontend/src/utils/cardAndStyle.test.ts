@@ -3,39 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import stepBar from '../components/StepBar.vue?raw'
 import { scheduleCaption } from './dashboard'
-import { FALLBACK_LANGUAGES, countsLine, sentLine } from './languages'
 import { currentStep } from './steps'
 import type { Campaign, CampaignStatus } from '../types'
 
 // Plain .css files are not loaded by the test runner (they come back empty), so the file is read directly.
 const styleCss: string = readFileSync(new URL('../style.css', import.meta.url), 'utf-8')
-
-// ---- per-language numbers -----------------------------------------------------------
-
-describe('countsLine', () => {
-  it('writes "TR 171 · EN 72 · DE 42" in language order', () => {
-    expect(countsLine({ de: 42, tr: 171, en: 72 }, FALLBACK_LANGUAGES)).toBe('TR 171 · EN 72 · DE 42')
-  })
-  it('leaves out languages nobody speaks, and says nothing without data', () => {
-    expect(countsLine({ tr: 5, en: 0 }, FALLBACK_LANGUAGES)).toBe('TR 5')
-    expect(countsLine(undefined, FALLBACK_LANGUAGES)).toBe('')
-    expect(countsLine({}, FALLBACK_LANGUAGES)).toBe('')
-  })
-})
-
-describe('sentLine', () => {
-  const langs = { tr: { total: 171, sent: 171 }, en: { total: 72, sent: 60 }, de: { total: 42, sent: 0 } }
-  it('shows what was sent once everything is handled', () => {
-    expect(sentLine(langs, FALLBACK_LANGUAGES, true)).toBe('TR 171 · EN 60 · DE 0')
-  })
-  it('shows sent/total while messages still wait', () => {
-    expect(sentLine(langs, FALLBACK_LANGUAGES, false)).toBe('TR 171/171 · EN 60/72 · DE 0/42')
-  })
-  it('skips a language without messages and says nothing without data', () => {
-    expect(sentLine({ tr: { total: 3, sent: 3 }, en: { total: 0, sent: 0 } }, FALLBACK_LANGUAGES, true)).toBe('TR 3')
-    expect(sentLine(undefined, FALLBACK_LANGUAGES, true)).toBe('')
-  })
-})
 
 // ---- the planned time on a card -----------------------------------------------------
 

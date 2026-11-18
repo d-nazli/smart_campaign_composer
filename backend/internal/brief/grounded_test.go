@@ -152,7 +152,7 @@ func TestGroundedAPersistentInventionBecomesAQuestion(t *testing.T) {
 
 // The schema and offer checks still apply to the real model.
 func TestGroundedTheSchemaAndTheOfferAreStillChecked(t *testing.T) {
-	badField := mock.Step{Kind: mock.Raw, Raw: `{"status":"ok","match":"all","conditions":[{"field":"password","op":"eq","value":"x"}],"explanation":"x","question":"","offer":{"kind":"none","value":0,"code":"","min_spend":0,"expires_at":"","step_spend":0,"max_discount":0,"extras":[]}}`}
+	badField := mock.Step{Kind: mock.Raw, Raw: `{"name":"Test kampanyası","status":"ok","match":"all","conditions":[{"field":"password","op":"eq","value":"x"}],"explanation":"x","question":"","offer":{"kind":"none","value":0,"code":"","min_spend":0,"expires_at":"","step_spend":0,"max_discount":0,"extras":[]}}`}
 	badOffer := rawRule(t, okRule(offer.Offer{Kind: offer.KindAmount, Value: 100, MaxDiscount: 300}, c("all_customers", "eq", true)))
 	for name, step := range map[string]mock.Step{"field outside the whitelist": badField, "an offer that makes no sense": badOffer} {
 		rule, m := grounded(t, "Herkese 100 TL indirim", step, rawRule(t, okRule(amountOf(100), c("all_customers", "eq", true))))

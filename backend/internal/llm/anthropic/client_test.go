@@ -287,3 +287,42 @@ func TestStreamErrorStatusIsMapped(t *testing.T) {
 		t.Fatalf("want AuthError, got %v", err)
 	}
 }
+
+// Translate streams like Messages, with the translation prompt and the same
+// structured output; translating fixed facts needs little reasoning.
+func TestTranslateStreamsWithTheTranslationPrompt(t *testing.T) {
+	const full = `{"sms_body":"Hi {{first_name}}!","email_subject":"Subject","email_body":"Body"}`
+	f := &fake{t: t, handle: func(w http.ResponseWriter, r *http.Request) {
+		b, _ := json.Marshal(full)
+		sse(w,
+			[2]string{"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":30,"output_tokens":1}}}`},
+			[2]string{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
+			[2]string{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + string(b) + `}}`},
+			[2]string{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+			[2]string{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":40}}`},
+			[2]string{"message_stop", `{"type":"message_stop"}`},
+		)
+	}}
+	srv := f.server()
+	defer srv.Close()
+	pol, _ := content.NewPolicy(nil)
+	var got strings.Builder
+	out, err := f.client(srv).Translate(context.Background(), llm.TranslateRequest{
+		Source:       content.Content{SMSBody: "Merhaba {{first_name}}!", EmailSubject: "Konu", EmailBody: "Gövde"},
+		SourceLocale: content.Locale{Code: "tr-TR", Name: "Turkish (Türkiye)"}, Target: content.Locale{Code: "en-GB", Name: "English (United Kingdom)", Direction: "ltr"},
+		Policy: pol,
+	}, func(s string) { got.WriteString(s) })
+	if err != nil || out.Raw != full || got.String() != full {
+		t.Fatalf("%v %+v %q", err, out, got.String())
+	}
+	body := f.bodies[0]
+	oc, _ := body["output_config"].(map[string]any)
+	if body["stream"] != true || oc["effort"] != "low" {
+		t.Fatalf("stream %v effort %v", body["stream"], oc["effort"])
+	}
+	system, _ := json.Marshal(body["system"])
+	msgs, _ := json.Marshal(body["messages"])
+	if !strings.Contains(string(system), "into English (United Kingdom) (en-GB)") || !strings.Contains(string(msgs), "Merhaba {{first_name}}!") {
+		t.Fatalf("system %s\nmessages %s", system, msgs)
+	}
+}

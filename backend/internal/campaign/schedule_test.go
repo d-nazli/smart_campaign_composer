@@ -262,8 +262,8 @@ func TestTheAudienceIsDecidedWhenTheCampaignStarts(t *testing.T) {
 	// SMS consent, someone who buys.
 	var newcomer int64
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO users (first_name, last_name, email, phone, city, sms_consent, email_consent, last_cart_add_at, created_at, language)
-		VALUES ('Yeni', 'Gelen', 'yeni.gelen@example.com', '+905559990001', 'Ankara', true, true, now() - interval '1 day', now(), 'de')
+		INSERT INTO users (first_name, last_name, email, phone, city, sms_consent, email_consent, last_cart_add_at, created_at, locale)
+		VALUES ('Yeni', 'Gelen', 'yeni.gelen@example.com', '+905559990001', 'Ankara', true, true, now() - interval '1 day', now(), 'de-DE')
 		RETURNING id`).Scan(&newcomer); err != nil {
 		t.Fatal(err)
 	}
@@ -316,8 +316,8 @@ func TestTheAudienceIsDecidedWhenTheCampaignStarts(t *testing.T) {
 		t.Errorf("the audience shown after the start (%d SMS, %d email) must be what was queued (%d, %d); approval estimated %d people",
 			after.Segment.Audience.SMSReachable, after.Segment.Audience.EmailReachable, sms, email, estimate)
 	}
-	if after.Segment.Languages["de"] == 0 {
-		t.Errorf("the language counts are recounted at the start: %+v", after.Segment.Languages)
+	if after.Segment.Locales["de-DE"] == 0 {
+		t.Errorf("the locale counts are recounted at the start: %+v", after.Segment.Locales)
 	}
 }
 
@@ -328,8 +328,8 @@ func TestACampaignThatCannotStartFailsWithAReason(t *testing.T) {
 		want   string
 	}{
 		"corrupt rule":     {`UPDATE campaigns SET segment_rule = '{"status":"ok","conditions":[]}' WHERE id=$1`, "kural"},
-		"missing language": {`DELETE FROM campaign_contents WHERE campaign_id=$1 AND language='en'`, "gönderime uygun değil"},
-		"disagreeing text": {`UPDATE campaign_contents SET sms_body = replace(sms_body, '15%', '99%') WHERE campaign_id=$1 AND language='en'`, "gönderime uygun değil"},
+		"missing source":   {`DELETE FROM campaign_contents WHERE campaign_id=$1 AND locale='tr-TR'`, "gönderime uygun değil"},
+		"disagreeing text": {`UPDATE campaign_contents SET sms_body = replace(sms_body, '15%', '99%') WHERE campaign_id=$1 AND locale='en-GB'`, "gönderime uygun değil"},
 	}
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {

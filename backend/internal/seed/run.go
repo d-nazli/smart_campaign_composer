@@ -94,13 +94,13 @@ func Run(ctx context.Context, pool *pgxpool.Pool, seed uint64, now time.Time, n 
 func copyUsers(ctx context.Context, tx pgx.Tx, users []User) error {
 	cols := []string{"id", "first_name", "last_name", "email", "phone", "city", "sms_consent", "email_consent",
 		"last_cart_add_at", "last_order_at", "order_count", "total_spent", "created_at",
-		"language", "gender", "birth_date"}
+		"locale", "gender", "birth_date"}
 	_, err := tx.CopyFrom(ctx, pgx.Identifier{"users"}, cols, pgx.CopyFromSlice(len(users), func(i int) ([]any, error) {
 		u := users[i]
 		return []any{u.ID, u.FirstName, u.LastName, nullableString(u.Email), nullableString(u.Phone), u.City,
 			u.SMSConsent, u.EmailConsent, nullableTime(u.LastCartAddAt), nullableTime(u.LastOrderAt),
 			int32(u.OrderCount), cents(u.TotalSpentCents), u.CreatedAt,
-			u.Language, nullableString(u.Gender), nullableTime(u.BirthDate)}, nil
+			u.Locale, nullableString(u.Gender), nullableTime(u.BirthDate)}, nil
 	}))
 	if err != nil {
 		return fmt.Errorf("copy users: %w", err)

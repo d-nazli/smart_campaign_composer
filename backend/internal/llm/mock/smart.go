@@ -16,6 +16,7 @@ func smartSegment(text string) string {
 	// The one-click suggestion and the note are decided by code, never by a
 	// model, and the backend overwrites them; the mock imitates a model.
 	rule.Suggestion, rule.Note = "", ""
+	rule.Name = brief.SuggestName(text, rule)
 	raw, _ := json.Marshal(rule)
 	return string(raw)
 }

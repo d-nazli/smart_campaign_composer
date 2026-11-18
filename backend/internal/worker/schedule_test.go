@@ -16,7 +16,7 @@ import (
 )
 
 // A scheduled campaign, end to end: the audience is built when the time comes,
-// the person's language is read when their message is sent, the provider gets
+// the person's locale is read when their message is sent, the provider gets
 // exactly one message per person and channel.
 
 const (
@@ -45,10 +45,10 @@ func scheduledForTarget(t *testing.T, pool *pgxpool.Pool) (id int64, target int6
 	if _, err := svc.ApproveAt(ctx, v.ID, &at); err != nil {
 		t.Fatal(err)
 	}
-	// The person joins after the campaign was scheduled, speaking Turkish.
+	// The person joins after the campaign was scheduled, in the source locale.
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO users (first_name, last_name, email, phone, city, sms_consent, email_consent, last_cart_add_at, created_at, language)
-		VALUES ('Hedef', 'Kişi', $1, $2, 'Ankara', true, true, now() - interval '1 day', now(), 'tr')
+		INSERT INTO users (first_name, last_name, email, phone, city, sms_consent, email_consent, last_cart_add_at, created_at, locale)
+		VALUES ('Hedef', 'Kişi', $1, $2, 'Ankara', true, true, now() - interval '1 day', now(), 'tr-TR')
 		RETURNING id`, targetEmail, targetPhone).Scan(&target); err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +74,13 @@ func startScheduled(t *testing.T, pool *pgxpool.Pool, clk *clock.Fake) {
 	}
 }
 
-// The person changes their language AFTER the campaign was scheduled (and before
-// it starts): the message comes once, in the new language.
-func TestALanguageChangedAfterSchedulingGetsOneMessageInTheNewLanguage(t *testing.T) {
+// The person changes their locale AFTER the campaign was scheduled (and before
+// it starts): the message comes once, in the new locale.
+func TestALocaleChangedAfterSchedulingGetsOneMessageInTheNewLocale(t *testing.T) {
 	pool := testdb.NewSeeded(t)
 	_, target, at := scheduledForTarget(t, pool)
 
-	if _, err := pool.Exec(ctx, `UPDATE users SET language='de' WHERE id=$1`, target); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE users SET locale='de-DE' WHERE id=$1`, target); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,8 +108,8 @@ func TestALanguageChangedAfterSchedulingGetsOneMessageInTheNewLanguage(t *testin
 }
 
 // ...and also when the change comes after the deliveries were created but
-// before they were sent: the language is read when the message goes out.
-func TestALanguageChangedAfterTheStartIsStillRespected(t *testing.T) {
+// before they were sent: the locale is read when the message goes out.
+func TestALocaleChangedAfterTheStartIsStillRespected(t *testing.T) {
 	pool := testdb.NewSeeded(t)
 	_, target, at := scheduledForTarget(t, pool)
 
@@ -119,7 +119,7 @@ func TestALanguageChangedAfterTheStartIsStillRespected(t *testing.T) {
 		t.Fatalf("the target should have an SMS and an email queued, got %d", got)
 	}
 
-	if _, err := pool.Exec(ctx, `UPDATE users SET language='en' WHERE id=$1`, target); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE users SET locale='en-GB' WHERE id=$1`, target); err != nil {
 		t.Fatal(err)
 	}
 	tp := newProvider(t, quiet(), clk)
@@ -134,6 +134,36 @@ func TestALanguageChangedAfterTheStartIsStillRespected(t *testing.T) {
 		if !strings.Contains(r.Body, "15% off") || strings.Contains(r.Body, "indirim") || strings.Contains(r.Body, "Rabatt") {
 			t.Fatalf("%s must be English: %q", r.Channel, r.Body)
 		}
+	}
+}
+
+// A locale with nobody in the audience at approval has no text. Someone who
+// moves to it before the start gets nothing (nobody approved a text for them),
+// and everybody else is sent as usual.
+func TestALocaleWithoutAnApprovedTextGetsNothing(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	id, target, at := scheduledForTarget(t, pool)
+	if _, err := pool.Exec(ctx, `INSERT INTO locales (code, name, native_name, fallbacks) VALUES
+		('fr-CA', 'French (Canada)', 'Français (Canada)', '{"first_name": "cher client", "city": "votre région"}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET locale='fr-CA' WHERE id=$1`, target); err != nil {
+		t.Fatal(err)
+	}
+	clk := clock.NewFake(at.Add(time.Minute))
+	startScheduled(t, pool, clk)
+	tp := newProvider(t, quiet(), clk)
+	w := newWorker(t, queue.NewPG(pool), tp.URL, clk, testConfig())
+	drain(t, w, pool, clk)
+
+	if got := len(messagesTo(tp, targetPhone)) + len(messagesTo(tp, targetEmail)); got != 0 {
+		t.Fatalf("%d messages reached a person whose locale has no text", got)
+	}
+	if n := scalar(t, pool, `SELECT count(*) FROM deliveries WHERE user_id=$1 AND status='skipped'`, target); n != 2 {
+		t.Fatalf("both deliveries should be skipped, got %d", n)
+	}
+	if n := scalar(t, pool, `SELECT count(*) FROM deliveries WHERE campaign_id=$1 AND status='sent'`, id); n == 0 {
+		t.Fatal("the others are still sent")
 	}
 }
 

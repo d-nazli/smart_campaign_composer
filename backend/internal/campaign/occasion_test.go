@@ -11,7 +11,7 @@ import (
 )
 
 // The briefs of the review, end to end with the mock (no API key): the
-// audience, the note, the messages in every language, and the approval, which
+// audience, the note, the messages in every locale, and the approval, which
 // parses the stored rule again.
 func TestSpecialDayCombinedAndTieredBriefsGoAllTheWay(t *testing.T) {
 	svc, pool := newService(t, mock.New(0))
@@ -62,17 +62,17 @@ func TestSpecialDayCombinedAndTieredBriefsGoAllTheWay(t *testing.T) {
 			if got.Content == nil || got.Content.Source != campaign.SourceLLM {
 				t.Fatalf("the mock's text must pass every check without the fallback: %+v", got.Content)
 			}
-			texts := map[string]campaign.ContentView{"tr": *got.Content}
-			for lang, c := range got.Translations {
-				texts[lang] = *c
+			texts := map[string]campaign.ContentView{"tr-TR": *got.Content}
+			for code, c := range got.Translations {
+				texts[code] = *c
 			}
-			for lang, c := range texts {
+			for code, c := range texts {
 				if !c.Report.OK || len(c.Report.Warnings) != 0 || !tt.offer.Mentions(c.SMSBody) {
-					t.Errorf("%s: %+v", lang, c)
+					t.Errorf("%s: %+v", code, c)
 				}
 			}
-			if len(got.Mismatches) != 0 {
-				t.Errorf("languages disagree: %+v", got.Mismatches)
+			if len(got.Mismatches) != 0 || len(got.Pending) != 0 {
+				t.Errorf("translations disagree or wait: %+v %v", got.Mismatches, got.Pending)
 			}
 			res, err := svc.Approve(ctx, v.ID)
 			if err != nil {

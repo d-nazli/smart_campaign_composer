@@ -43,7 +43,7 @@ const goodMessages = `{"sms_body":"{{first_name}}, %30 indirim seni bekliyor!","
 func audit(t *testing.T, pool *pgxpool.Pool, campaignID int64, kind string) (total, valid int) {
 	t.Helper()
 	err := pool.QueryRow(context.Background(),
-		`SELECT count(*), count(*) FILTER (WHERE valid) FROM llm_generations WHERE campaign_id=$1 AND kind=$2 AND language='tr'`, campaignID, kind).Scan(&total, &valid)
+		`SELECT count(*), count(*) FILTER (WHERE valid) FROM llm_generations WHERE campaign_id=$1 AND kind=$2 AND locale='tr-TR'`, campaignID, kind).Scan(&total, &valid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,22 +199,11 @@ func TestGetUnknownCampaign(t *testing.T) {
 	}
 }
 
-// allLanguages is the same text in every language: a person who edits one text
-// has to keep all of them in step (see TestEditingOneLanguage...), and identical
-// numbers and placeholders trivially are.
-func allLanguages(c content.Content) map[string]content.Content {
-	out := map[string]content.Content{}
-	for _, code := range content.LanguageCodes() {
-		out[code] = c
-	}
-	return out
-}
-
 // ---- messages --------------------------------------------------------------
 
-// Messages are written in every language; these tests are about the reference
-// (default) language's run, so the recorder only keeps its events.
-const ref = content.DefaultLanguage
+// The source is translated into every locale of the audience; these tests are
+// about the source run, so the recorder only keeps its events.
+const ref = "tr-TR"
 
 type recorded struct {
 	names  []string
@@ -328,7 +317,7 @@ func TestGenerateMessagesRepairsOverlongSMS(t *testing.T) {
 	}
 	var calls []mock.Call
 	for _, c := range m.Calls() {
-		if c.Language == ref {
+		if c.Kind == "messages" {
 			calls = append(calls, c)
 		}
 	}
@@ -457,7 +446,7 @@ func TestSaveContentAppliesTheSameRulesAsModelOutput(t *testing.T) {
 		"empty":       {},
 	}
 	for name, c := range rejected {
-		_, err := svc.SaveContents(ctx, id, allLanguages(c))
+		_, err := saveSource(ctx, svc, id, c)
 		var ic *campaign.InvalidContentError
 		if !errors.As(err, &ic) || ic.Report.OK || len(ic.Report.Issues) == 0 {
 			t.Errorf("%s: want InvalidContentError, got %v", name, err)
@@ -468,7 +457,7 @@ func TestSaveContentAppliesTheSameRulesAsModelOutput(t *testing.T) {
 		t.Fatal("rejected edits must leave the stored content untouched")
 	}
 
-	v, err := svc.SaveContents(ctx, id, allLanguages(good))
+	v, err := saveSource(ctx, svc, id, good)
 	if err != nil {
 		t.Fatal(err)
 	}

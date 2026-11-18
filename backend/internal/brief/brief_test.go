@@ -380,8 +380,12 @@ const mothersDay = "anneler gününe özel 1000 tl üzeri alışverişe 100tl in
 
 const reportedBrief = "son 30 günde adanada sepete ekleme yapmış ancak sipariş oluşturmamış kişilere yüzde 15 indirim kuponunu tanımla"
 
+// rawRule is a model answer for r; a model always names the campaign.
 func rawRule(t *testing.T, r segment.Rule) mock.Step {
 	t.Helper()
+	if r.Name == "" {
+		r.Name = "Test kampanyası"
+	}
 	b, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)

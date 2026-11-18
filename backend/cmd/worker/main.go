@@ -35,9 +35,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	pool, err := pgxpool.New(ctx, config.Env("DATABASE_URL", "postgres://campaign:campaign@localhost:5432/campaign"))
+	poolCfg, err := pgxpool.ParseConfig(config.Env("DATABASE_URL", "postgres://campaign:campaign@localhost:5432/campaign"))
 	if err != nil {
 		log.Error("invalid DATABASE_URL", "error", err)
+		os.Exit(1)
+	}
+	// Every send writes its result (two small statements). With the default pool
+	// (a few connections) those writes queue up behind each other and cap the
+	// send rate, so size it for the senders of both channels.
+	if want := int32(cfg.Concurrency/2 + 4); poolCfg.MaxConns < want {
+		poolCfg.MaxConns = want
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	if err != nil {
+		log.Error("cannot create database pool", "error", err)
 		os.Exit(1)
 	}
 	defer pool.Close()

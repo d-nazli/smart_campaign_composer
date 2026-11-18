@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { fillSample } from '../utils/preview'
 
 // An e-mail inside a mail client window. {{first_name}} is replaced with a sample name.
-const props = defineProps<{ subject: string; body: string; typingIn?: 'email_subject' | 'email_body' | null }>()
+const props = defineProps<{ subject: string; body: string; typingIn?: 'email_subject' | 'email_body' | null; dir?: 'ltr' | 'rtl'; lang?: string }>()
 const subject = computed(() => fillSample(props.subject))
 const body = computed(() => fillSample(props.body))
 </script>
@@ -14,7 +14,7 @@ const body = computed(() => fillSample(props.body))
       <span class="d" /><span class="d" /><span class="d" />
       <span class="title">Gelen kutusu</span>
     </div>
-    <div class="msg">
+    <div class="msg" :dir="dir" :lang="lang">
       <h3 class="subject" :class="{ empty: !subject && typingIn !== 'email_subject' }">
         <template v-if="subject || typingIn === 'email_subject'">
           {{ subject }}<span v-if="typingIn === 'email_subject'" class="cursor" aria-hidden="true" />
@@ -24,7 +24,7 @@ const body = computed(() => fillSample(props.body))
       <div class="from">
         <span class="avatar" aria-hidden="true">M</span>
         <div>
-          <strong>Marka</strong> <span class="addr">&lt;merhaba@marka.example&gt;</span>
+          <strong>Marka</strong> <span class="addr" dir="ltr">&lt;merhaba@marka.example&gt;</span>
           <div class="to">Alıcı: Elif</div>
         </div>
       </div>

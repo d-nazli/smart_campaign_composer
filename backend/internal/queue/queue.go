@@ -7,9 +7,12 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"smartcampaign/internal/content"
@@ -26,10 +29,21 @@ type Delivery struct {
 
 	FirstName, City, Phone, Email string
 	SMSConsent, EmailConsent      bool
-	// Language is the recipient's language NOW (read at claim time): a person who
-	// changed it after the campaign was approved gets the new one.
-	Language string
+	// Locale is the recipient's locale NOW (read at claim time and written to
+	// the delivery): a person who changed it after the campaign was approved
+	// gets the new one, if the campaign has a text in it.
+	Locale string
 }
+
+// Template is a campaign's frozen text in one locale, with that locale's
+// words for variables whose value cannot be used.
+type Template struct {
+	Content   content.Content
+	Fallbacks map[string]string
+}
+
+// ErrNoContent means the campaign has no text in the locale.
+var ErrNoContent = errors.New("no content in this locale")
 
 // RetryKind says why a delivery goes back to the queue.
 type RetryKind int
@@ -54,8 +68,9 @@ type Queue interface {
 	Observe(ctx context.Context, id int64, latency time.Duration) error
 	// Finish marks campaigns with nothing left to send as completed.
 	Finish(ctx context.Context, now time.Time) (int, error)
-	// Content returns the (frozen) message templates of a campaign in one language.
-	Content(ctx context.Context, campaignID int64, language string) (content.Content, error)
+	// Content returns the (frozen) message templates of a campaign in one
+	// locale, or ErrNoContent.
+	Content(ctx context.Context, campaignID int64, locale string) (Template, error)
 }
 
 // PG is the Postgres implementation.
@@ -78,12 +93,12 @@ func (q *PG) Claim(ctx context.Context, channel string, limit int, lease time.Du
 			LIMIT $3
 			FOR UPDATE SKIP LOCKED
 		), claimed AS (
-			UPDATE deliveries d SET status = 'sending', locked_until = $4, updated_at = $2
-			FROM due WHERE d.id = due.id
+			UPDATE deliveries d SET status = 'sending', locked_until = $4, updated_at = $2, locale = u.locale
+			FROM due, users u WHERE d.id = due.id AND u.id = d.user_id
 			RETURNING d.id, d.campaign_id, d.user_id, d.channel, d.attempts, d.created_at
 		)
 		SELECT c.id, c.campaign_id, c.user_id, c.channel, c.attempts, c.created_at,
-		       u.first_name, u.city, coalesce(u.phone, ''), coalesce(u.email, ''), u.sms_consent, u.email_consent, u.language
+		       u.first_name, u.city, coalesce(u.phone, ''), coalesce(u.email, ''), u.sms_consent, u.email_consent, u.locale
 		FROM claimed c JOIN users u ON u.id = c.user_id
 		ORDER BY c.id`, channel, now, limit, now.Add(lease))
 	if err != nil {
@@ -96,7 +111,7 @@ func (q *PG) Claim(ctx context.Context, channel string, limit int, lease time.Du
 	for rows.Next() {
 		var d Delivery
 		if err := rows.Scan(&d.ID, &d.CampaignID, &d.UserID, &d.Channel, &d.Attempts, &d.CreatedAt,
-			&d.FirstName, &d.City, &d.Phone, &d.Email, &d.SMSConsent, &d.EmailConsent, &d.Language); err != nil {
+			&d.FirstName, &d.City, &d.Phone, &d.Email, &d.SMSConsent, &d.EmailConsent, &d.Locale); err != nil {
 			return nil, fmt.Errorf("claim: %w", err)
 		}
 		out = append(out, d)
@@ -167,14 +182,24 @@ func (q *PG) Finish(ctx context.Context, now time.Time) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
-func (q *PG) Content(ctx context.Context, campaignID int64, language string) (content.Content, error) {
-	var c content.Content
-	err := q.pool.QueryRow(ctx, `SELECT sms_body, email_subject, email_body FROM campaign_contents WHERE campaign_id=$1 AND language=$2`, campaignID, language).
-		Scan(&c.SMSBody, &c.EmailSubject, &c.EmailBody)
-	if err != nil {
-		return content.Content{}, fmt.Errorf("load %s content of campaign %d: %w", language, campaignID, err)
+func (q *PG) Content(ctx context.Context, campaignID int64, locale string) (Template, error) {
+	var t Template
+	var fallbacks []byte
+	err := q.pool.QueryRow(ctx, `
+		SELECT cc.sms_body, cc.email_subject, cc.email_body, l.fallbacks
+		FROM campaign_contents cc JOIN locales l ON l.code = cc.locale
+		WHERE cc.campaign_id=$1 AND cc.locale=$2`, campaignID, locale).
+		Scan(&t.Content.SMSBody, &t.Content.EmailSubject, &t.Content.EmailBody, &fallbacks)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Template{}, ErrNoContent
 	}
-	return c, nil
+	if err != nil {
+		return Template{}, fmt.Errorf("load %s content of campaign %d: %w", locale, campaignID, err)
+	}
+	if err := json.Unmarshal(fallbacks, &t.Fallbacks); err != nil {
+		return Template{}, fmt.Errorf("locale %s fallbacks: %w", locale, err)
+	}
+	return t, nil
 }
 
 var _ Queue = (*PG)(nil)

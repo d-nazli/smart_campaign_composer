@@ -1,4 +1,4 @@
-import type { ApproveResult, Campaign, CampaignSummary, LanguageCode, MessageContent } from '../types'
+import type { ApproveResult, Campaign, CampaignSummary, LocaleCode, MessageContent } from '../types'
 import { requestJSON } from './http'
 
 export function createCampaign(brief: string): Promise<Campaign> {
@@ -9,9 +9,14 @@ export function getCampaign(id: number): Promise<Campaign> {
   return requestJSON<Campaign>(`/api/campaigns/${id}`)
 }
 
-/** Saves the text of every language at once: the whole set must say the same thing. */
-export function saveContent(id: number, languages: Record<LanguageCode, MessageContent>): Promise<Campaign> {
-  return requestJSON<Campaign>(`/api/campaigns/${id}/content`, { method: 'PUT', body: JSON.stringify({ languages }) })
+/** Saves the edited source text (only the source is edited by hand). A changed source makes every translation stale. */
+export function saveContent(id: number, locales: Record<LocaleCode, MessageContent>): Promise<Campaign> {
+  return requestJSON<Campaign>(`/api/campaigns/${id}/content`, { method: 'PUT', body: JSON.stringify({ locales }) })
+}
+
+/** Translates the source again into the locales (translations are never written by hand). */
+export function translateCampaign(id: number, locales: LocaleCode[]): Promise<Campaign> {
+  return requestJSON<Campaign>(`/api/campaigns/${id}/translations`, { method: 'POST', body: JSON.stringify({ locales }) })
 }
 
 /** Approves the campaign and queues the sending. Safe to repeat: a second call reports the same queue. */

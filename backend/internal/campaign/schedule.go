@@ -13,6 +13,7 @@ import (
 
 	"smartcampaign/internal/clock"
 	"smartcampaign/internal/content"
+	"smartcampaign/internal/locale"
 	"smartcampaign/internal/offer"
 	"smartcampaign/internal/segment"
 )
@@ -196,11 +197,11 @@ func (s *Scheduler) startNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	langs, err := segment.CountByLanguage(ctx, tx, compiled)
+	counts, err := segment.CountByLocale(ctx, tx, compiled)
 	if err != nil {
 		return false, err
 	}
-	langJSON, err := json.Marshal(langs)
+	countsJSON, err := json.Marshal(counts)
 	if err != nil {
 		return false, err
 	}
@@ -210,8 +211,8 @@ func (s *Scheduler) startNext(ctx context.Context) (bool, error) {
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE campaigns SET status='approved', matched=$2, sms_reachable=$3, email_reachable=$4, both_reachable=$5,
-		       language_counts=$6, materialized_at=$7, updated_at=$7
-		WHERE id=$1`, id, aud.Matched, aud.SMSReachable, aud.EmailReachable, aud.BothReachable, langJSON, now); err != nil {
+		       locale_counts=$6, materialized_at=$7, updated_at=$7
+		WHERE id=$1`, id, aud.Matched, aud.SMSReachable, aud.EmailReachable, aud.BothReachable, countsJSON, now); err != nil {
 		return false, fmt.Errorf("start campaign: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -236,10 +237,30 @@ func (s *Scheduler) cannotStart(ctx context.Context, tx pgx.Tx, id int64, ruleJS
 	if last, ok := offerLastMoment(rule.Offer.Normalize().ExpiresAt); ok && now.After(last) {
 		return fmt.Sprintf("teklifin son kullanma tarihi (%s) geçti; süresi dolmuş teklif gönderilmedi", offer.FormatDate(rule.Offer.Normalize().ExpiresAt)), nil
 	}
-	if _, err := checkContents(ctx, tx, s.policy, id); err != nil {
+	// The texts approved are checked again. A locale that gained a person after
+	// the approval has no text: nobody is there to approve one, so those people
+	// get nothing (exact locale match only, no other locale instead).
+	ls, err := locale.Load(ctx, tx, s.policy)
+	if err != nil {
+		return "", err
+	}
+	stored, err := loadContents(ctx, tx, id)
+	if err != nil {
+		return "", err
+	}
+	have := map[string]bool{ls.Source().Code: true}
+	if src, ok := stored[ls.Source().Code]; ok {
+		for code, tr := range stored {
+			if !isStale(src, tr) {
+				have[code] = true // a stale text outside the approved audience is never sent
+			}
+		}
+	}
+	if _, err := checkContents(ctx, tx, s.policy, ls, id, ls.Ordered(have)); err != nil {
 		var inv *InvalidContentError
 		var st *StateError
-		if errors.As(err, &inv) || errors.As(err, &st) {
+		var stale *StaleTranslationsError
+		if errors.As(err, &inv) || errors.As(err, &st) || errors.As(err, &stale) {
 			return "kayıtlı mesajlar gönderime uygun değil: " + err.Error(), nil
 		}
 		return "", err

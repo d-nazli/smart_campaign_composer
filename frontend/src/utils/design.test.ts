@@ -5,7 +5,7 @@ import { mergeFailures, failureText } from './failures'
 import { activeField, attemptLabel, fillSample, meterLevel } from './preview'
 import { pushSample, ratePerSecond } from './rate'
 import { currentStep } from './steps'
-import { overallTotals, statusTone } from './dashboard'
+import { statusTone } from './dashboard'
 
 const camp = (status: Campaign['status'], segOk = true): Campaign =>
   ({ id: 1, brief: 'b', status, created_at: '', segment: { status: segOk ? 'ok' : 'unsupported', conditions: [], explanation: '' } }) as Campaign
@@ -107,13 +107,10 @@ describe('failures, rate, dashboard', () => {
       ]),
     ).toBe(0)
   })
-  it('tones and totals', () => {
+  it('status tones', () => {
     expect(statusTone({ status: 'completed' })).toBe('done')
     expect(statusTone({ status: 'sending' })).toBe('sending')
     expect(statusTone({ status: 'draft', segment_status: 'unsupported' })).toBe('attention')
     expect(statusTone({ status: 'content_ready' })).toBe('draft')
-    const ch = { retries: 1, rate_limited: 1, total: 5, pending: 1, sent: 3, failed: 1, skipped: 0 }
-    const t = overallTotals([{ id: 1, brief: '', status: 'sending', created_at: '', delivery: { sms: ch, email: ch, done: false } }])
-    expect(t).toMatchObject({ sent: 6, failed: 2, pending: 2, retries: 2, rateLimited: 2 })
   })
 })

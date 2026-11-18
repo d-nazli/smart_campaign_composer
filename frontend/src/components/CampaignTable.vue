@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Clock, XCircle } from 'lucide-vue-next'
-import type { CampaignSummary, LanguageInfo } from '../types'
-import { briefTitle, languageCells, progressTitle, rowProgress, sentenceCase, statusBadge } from '../utils/dashboard'
-import { FALLBACK_LANGUAGES } from '../utils/languages'
+import type { CampaignSummary, LocaleInfo } from '../types'
+import { briefTitle, localeLine, progressTitle, rowProgress, sendSpeed, sentenceCase, statusBadge, type ChannelRates } from '../utils/dashboard'
+import { FALLBACK_LOCALES } from '../utils/locales'
 import { urlForCampaign } from '../utils/route'
 import { formatWhen, shortWhen, untilText } from '../utils/schedule'
 import Badge from './ui/Badge.vue'
@@ -14,12 +14,12 @@ import ProgressBar from './ui/ProgressBar.vue'
 // a row opens the wizard where the campaign stands. A scheduled campaign says when in its
 // status ("Zamanlandı · 24 Kas 14:00") and can be cancelled from its row.
 // Below 1024px the rows are laid out as cards (CSS only: the same elements).
-const props = defineProps<{ campaigns: CampaignSummary[]; languages?: LanguageInfo[] }>()
+const props = defineProps<{ campaigns: CampaignSummary[]; locales?: LocaleInfo[]; rates?: Record<number, ChannelRates> }>()
 const emit = defineEmits<{ cancel: [CampaignSummary] }>()
 
 const TITLE_MAX = 64
 const now = ref(new Date())
-const order = () => props.languages ?? FALLBACK_LANGUAGES
+const order = () => props.locales ?? FALLBACK_LOCALES
 
 const href = (c: CampaignSummary) => urlForCampaign(window.location.href, c.id)
 function open(c: CampaignSummary, e: MouseEvent) {
@@ -38,7 +38,7 @@ const day = (iso: string) => formatWhen(iso)
           <th scope="col" class="title">Kampanya</th>
           <th scope="col" class="status">Durum</th>
           <th scope="col" class="r matched">Kitle</th>
-          <th scope="col" class="langcol">Diller</th>
+          <th scope="col" class="loccol">Locale</th>
           <th scope="col" class="progress">İlerleme</th>
           <th scope="col" class="when">Zaman</th>
           <th scope="col" class="act"><span class="sr-only">İşlemler</span></th>
@@ -47,7 +47,7 @@ const day = (iso: string) => formatWhen(iso)
       <tbody>
         <tr v-for="c in campaigns" :key="c.id" class="row" :data-testid="`row-${c.id}`" @click="open(c, $event)">
           <td class="title">
-            <a :href="href(c)" class="name" :title="c.brief.replace(/\s+/g, ' ').trim()">{{ briefTitle(c.brief, TITLE_MAX) }}</a>
+            <a :href="href(c)" class="name" :title="c.brief.replace(/\s+/g, ' ').trim()" data-testid="card-name">{{ c.name || briefTitle(c.brief, TITLE_MAX) }}</a>
             <span v-if="c.explanation" class="sub" :title="c.explanation" data-testid="card-audience">{{ sentenceCase(c.explanation) }}</span>
           </td>
           <td>
@@ -56,11 +56,11 @@ const day = (iso: string) => formatWhen(iso)
             >
           </td>
           <td class="r num matched-cell" data-label="Kitle">{{ c.matched != null ? c.matched.toLocaleString('tr-TR') : '–' }}</td>
-          <td class="langs-cell" :class="{ 'is-empty': languageCells(c, order()).length === 0 }" data-label="Diller" data-testid="card-languages">
-            <span class="langs">
-              <span v-for="l in languageCells(c, order())" :key="l.code" class="lang"><b>{{ l.code }}</b><span class="num">{{ l.text }}</span></span>
-              <span v-if="languageCells(c, order()).length === 0" class="muted">–</span>
-            </span>
+          <td class="locs-cell" :class="{ 'is-empty': !localeLine(c, order()) }" data-label="Locale" data-testid="card-locales">
+            <span v-if="localeLine(c, order())" class="locs num" :title="localeLine(c, order())!.title" :aria-label="localeLine(c, order())!.text"
+              ><template v-for="(p, i) in localeLine(c, order())!.parts" :key="p"><span v-if="i > 0" class="sep" aria-hidden="true"> · </span><span class="part">{{ p }}</span></template></span
+            >
+            <span v-else class="muted">–</span>
           </td>
           <td class="progress" data-label="İlerleme" :class="{ 'is-empty': rowProgress(c.delivery).total === 0 && c.status !== 'failed' }">
             <template v-if="rowProgress(c.delivery).total > 0">
@@ -78,6 +78,7 @@ const day = (iso: string) => formatWhen(iso)
                 ><span data-testid="sent">{{ rowProgress(c.delivery).sent }}</span> / {{ rowProgress(c.delivery).total }}
                 <span v-if="rowProgress(c.delivery).failed > 0" class="bad" data-testid="failed">, {{ rowProgress(c.delivery).failed }} başarısız</span></span
               >
+              <span v-if="sendSpeed(c, rates?.[c.id])" class="cap num speed" data-testid="speed">{{ sendSpeed(c, rates?.[c.id]) }}</span>
             </template>
             <span v-else-if="c.status === 'failed'" class="bad small" :title="c.schedule_error">{{ c.schedule_error || 'Başlatılamadı' }}</span>
             <span v-else class="muted">–</span>
@@ -158,7 +159,7 @@ tbody tr:first-child td {
 .matched {
   width: 8%;
 }
-.langcol {
+.loccol {
   width: 16%;
 }
 .progress {
@@ -198,23 +199,12 @@ tbody tr:first-child td {
   color: var(--muted);
   font-size: var(--text-xs);
 }
-.langs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  font-size: var(--text-xs);
+.locs {
+  font-size: var(--text-sm);
+  cursor: help;
 }
-.lang {
-  display: inline-flex;
-  gap: 4px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+.locs .part {
   white-space: nowrap;
-}
-.lang b {
-  font-weight: 600;
-  text-transform: uppercase;
 }
 .cap {
   display: block;
@@ -222,6 +212,9 @@ tbody tr:first-child td {
   color: var(--muted);
   font-size: var(--text-xs);
   white-space: nowrap;
+}
+.cap.speed {
+  margin-top: 2px;
 }
 .bad {
   color: var(--error);
@@ -285,7 +278,7 @@ tbody tr:first-child td {
   }
   .row td.progress,
   .row td.matched-cell,
-  .row td.langs-cell,
+  .row td.locs-cell,
   .row td.when {
     grid-column: 1 / -1;
     display: flex;
@@ -299,7 +292,7 @@ tbody tr:first-child td {
     gap: 0;
   }
   .matched-cell::before,
-  .langs-cell::before,
+  .locs-cell::before,
   .when::before {
     content: attr(data-label);
     flex: none;

@@ -9,37 +9,19 @@ import (
 	"smartcampaign/internal/offer"
 )
 
-// Consistency checks that every language of a campaign says the same thing as
-// the reference language (the default one, else the first present): the same
-// discount percentages, amounts, dates, free-shipping promise and the same
-// {{placeholders}}, separately for the SMS and for the email (subject and body
-// together). A message in one language that promises 20% while the others
-// promise 30% is a hard error, never a warning: it would reach real people.
+// ConsistentWith checks that a translation says the same thing as the source:
+// the same discount percentages, amounts, dates, free-shipping promise and the
+// same {{placeholders}} (so {{first_name}} is never lost), separately for the
+// SMS and for the email (subject and body together). A translation that
+// promises 20% while the source promises 30% is a hard error, never a warning:
+// it would reach real people.
 //
-// The numbers are read with the same language-neutral readers that check the
-// offer (offer.Percents / Amounts / Dates), which is why every language writes
-// them the same way: "%30", "30% off" and "30 % Rabatt" all read as 30.
-func Consistency(set map[string]Content) []Issue {
-	ref := ""
-	for _, l := range Languages {
-		if _, ok := set[l.Code]; ok {
-			ref = l.Code
-			break
-		}
-	}
-	out := []Issue{}
-	for _, l := range Languages {
-		c, ok := set[l.Code]
-		if !ok || l.Code == ref {
-			continue
-		}
-		out = append(out, ConsistentWith(ref, set[ref], l.Code, c)...)
-	}
-	return out
-}
-
-// ConsistentWith compares one language with the reference language.
-func ConsistentWith(refLang string, ref Content, lang string, c Content) []Issue {
+// The numbers are read with the same locale-neutral readers that check the
+// offer (offer.Percents / Amounts / Dates), which is why every locale writes
+// them the same way: "%30", "30% off" and "30 % Rabatt" all read as 30. Free
+// shipping is read with each locale's own words; a locale that has none is not
+// compared on it.
+func ConsistentWith(src Locale, ref Content, loc Locale, c Content) []Issue {
 	var out []Issue
 	for _, ch := range []struct {
 		field, label string
@@ -48,23 +30,16 @@ func ConsistentWith(refLang string, ref Content, lang string, c Content) []Issue
 		{FieldSMSBody, "SMS", ref.SMSBody, c.SMSBody},
 		{FieldEmailBody, "E-posta", ref.EmailSubject + "\n" + ref.EmailBody, c.EmailSubject + "\n" + c.EmailBody},
 	} {
-		fa, fb := factsOf(ch.a), factsOf(ch.b)
-		for _, d := range fa.differences(fb) {
+		fa, fb := factsOf(ch.a, src.FreeShippingTerms), factsOf(ch.b, loc.FreeShippingTerms)
+		for _, d := range fa.differences(fb, len(loc.FreeShippingTerms) > 0) {
 			out = append(out, Issue{
-				Field: ch.field, Code: CodeLanguageMismatch, Language: lang,
-				Message: fmt.Sprintf("%s: %s (%s) ile %s (%s) aynı şeyi söylemeli ama %s farklı (%s: %s, %s: %s). Sayıları, tarihleri ve {{değişkenleri}} her dilde aynı yaz.",
-					ch.label, displayOf(refLang), refLang, displayOf(lang), lang, d.what, refLang, d.a, lang, d.b),
+				Field: ch.field, Code: CodeLocaleMismatch, Locale: loc.Code,
+				Message: fmt.Sprintf("%s: %s, %s ile aynı şeyi söylemeli ama %s farklı (%s: %s, %s: %s). Sayıları, tarihleri ve {{değişkenleri}} kaynakla aynı yaz.",
+					ch.label, loc.Code, src.Code, d.what, src.Code, d.a, loc.Code, d.b),
 			})
 		}
 	}
 	return out
-}
-
-func displayOf(code string) string {
-	if l, ok := LanguageByCode(code); ok {
-		return l.Display
-	}
-	return code
 }
 
 type facts struct {
@@ -72,8 +47,8 @@ type facts struct {
 	freeShipping                           bool
 }
 
-func factsOf(text string) facts {
-	f := facts{freeShipping: offer.HasFreeShipping(text)}
+func factsOf(text string, freeShippingTerms []string) facts {
+	f := facts{freeShipping: offer.HasFreeShippingIn(text, freeShippingTerms)}
 	for _, v := range offer.Percents(text) {
 		f.percents = append(f.percents, "%"+offer.FormatNumber(v))
 	}
@@ -92,7 +67,7 @@ func factsOf(text string) facts {
 }
 
 // distinct sorts and de-duplicates: only WHICH values appear matters, not how
-// often or in what order the languages mention them.
+// often or in what order the source and the translation mention them.
 func distinct(in []string) []string {
 	sort.Strings(in)
 	return slices.Compact(in)
@@ -100,7 +75,7 @@ func distinct(in []string) []string {
 
 type difference struct{ what, a, b string }
 
-func (f facts) differences(g facts) []difference {
+func (f facts) differences(g facts, compareShipping bool) []difference {
 	var out []difference
 	add := func(what string, a, b []string) {
 		if !slices.Equal(a, b) {
@@ -111,7 +86,7 @@ func (f facts) differences(g facts) []difference {
 	add("tutarlar", f.amounts, g.amounts)
 	add("tarihler", f.dates, g.dates)
 	add("değişkenler", f.placeholders, g.placeholders)
-	if f.freeShipping != g.freeShipping {
+	if compareShipping && f.freeShipping != g.freeShipping {
 		out = append(out, difference{"ücretsiz kargo vaadi", yesNo(f.freeShipping), yesNo(g.freeShipping)})
 	}
 	return out

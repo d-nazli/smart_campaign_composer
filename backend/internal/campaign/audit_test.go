@@ -20,7 +20,7 @@ type auditRow struct {
 func auditRows(t *testing.T, pool *pgxpool.Pool, id int64, kind string) []auditRow {
 	t.Helper()
 	rows, err := pool.Query(context.Background(),
-		`SELECT attempt, valid, refused, fell_back FROM llm_generations WHERE campaign_id=$1 AND kind=$2 AND language='tr' ORDER BY id`, id, kind)
+		`SELECT attempt, valid, refused, fell_back FROM llm_generations WHERE campaign_id=$1 AND kind=$2 AND locale='tr-TR' ORDER BY id`, id, kind)
 	if err != nil {
 		t.Fatal(err)
 	}

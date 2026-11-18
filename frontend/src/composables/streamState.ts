@@ -1,6 +1,6 @@
-import type { ContentField, ContentSource, LanguageCode, MessageContent, Report } from '../types'
+import type { ContentField, ContentSource, LocaleCode, MessageContent, Report } from '../types'
 import type { SSEEvent } from '../api/sse'
-import { DEFAULT_LANGUAGE } from '../utils/languages'
+import { SOURCE_LOCALE } from '../utils/locales'
 
 export type Phase = 'idle' | 'streaming' | 'done' | 'error'
 
@@ -10,30 +10,32 @@ export interface StreamResult {
   source: ContentSource
 }
 
-/** What one language's run looks like. The languages are written in parallel. */
-export interface LangStream {
+/** What one locale's run looks like: the source first, then the translations in parallel. */
+export interface LocaleStream {
   attempt: { n: number; max: number } | null
   /** Live text, only a preview until `result` arrives. */
   draft: MessageContent
   /** Why the previous attempt was rejected (shown while the next one runs). */
   retryProblems: string[]
   result: StreamResult | null
+  /** Why the translation could not be made (the locale keeps what it had). */
+  failed: string | null
 }
 
 export interface StreamState {
   phase: Phase
-  /** Per language code, created when its first event arrives. */
-  langs: Record<LanguageCode, LangStream>
+  /** Per locale code, created when its first event arrives. */
+  locales: Record<LocaleCode, LocaleStream>
   fallbackReason: string | null
   error: { code: string; message: string } | null
 }
 
 export const emptyContent = (): MessageContent => ({ sms_body: '', email_subject: '', email_body: '' })
 
-export const emptyLang = (): LangStream => ({ attempt: null, draft: emptyContent(), retryProblems: [], result: null })
+export const emptyLocale = (): LocaleStream => ({ attempt: null, draft: emptyContent(), retryProblems: [], result: null, failed: null })
 
 export function initialState(): StreamState {
-  return { phase: 'idle', langs: {}, fallbackReason: null, error: null }
+  return { phase: 'idle', locales: {}, fallbackReason: null, error: null }
 }
 
 export function startedState(): StreamState {
@@ -42,42 +44,45 @@ export function startedState(): StreamState {
 
 const FIELDS: ContentField[] = ['sms_body', 'email_subject', 'email_body']
 
-function withLang(s: StreamState, code: LanguageCode, change: (l: LangStream) => LangStream): StreamState {
-  return { ...s, langs: { ...s.langs, [code]: change(s.langs[code] ?? emptyLang()) } }
+function withLocale(s: StreamState, code: LocaleCode, change: (l: LocaleStream) => LocaleStream): StreamState {
+  return { ...s, locales: { ...s.locales, [code]: change(s.locales[code] ?? emptyLocale()) } }
 }
 
-/** The language an event is about (an event without one is the reference language's). */
-const langOf = (d: Record<string, unknown>): LanguageCode => (typeof d.language === 'string' && d.language ? d.language : DEFAULT_LANGUAGE)
+/** The locale an event is about (an event without one is the source's). */
+const localeOf = (d: Record<string, unknown>): LocaleCode => (typeof d.locale === 'string' && d.locale ? d.locale : SOURCE_LOCALE)
 
 /** Pure reducer: one server-sent event in, next state out. */
 export function reduce(s: StreamState, ev: SSEEvent): StreamState {
   const d = (ev.data ?? {}) as Record<string, unknown>
-  const code = langOf(d)
+  const code = localeOf(d)
   switch (ev.event) {
     case 'attempt':
       // A new attempt starts from a blank draft; the rejected text is discarded.
-      return withLang({ ...s, phase: 'streaming' }, code, (l) => ({ ...l, attempt: { n: Number(d.n), max: Number(d.max) }, draft: emptyContent() }))
+      return withLocale({ ...s, phase: 'streaming' }, code, (l) => ({ ...l, attempt: { n: Number(d.n), max: Number(d.max) }, draft: emptyContent() }))
     case 'delta': {
       const field = d.field as ContentField
       if (!FIELDS.includes(field)) return s
-      return withLang(s, code, (l) => ({ ...l, draft: { ...l.draft, [field]: l.draft[field] + String(d.text ?? '') } }))
+      return withLocale(s, code, (l) => ({ ...l, draft: { ...l.draft, [field]: l.draft[field] + String(d.text ?? '') } }))
     }
     case 'retry':
-      return withLang(s, code, (l) => ({ ...l, retryProblems: (d.problems as string[]) ?? [] }))
+      return withLocale(s, code, (l) => ({ ...l, retryProblems: (d.problems as string[]) ?? [] }))
     case 'validated':
-      return withLang(s, code, (l) => ({
+      return withLocale(s, code, (l) => ({
         ...l,
         retryProblems: [],
         draft: d.content as MessageContent,
-        result: { content: d.content as MessageContent, report: d.report as Report, source: 'llm' },
+        failed: null,
+        result: { content: d.content as MessageContent, report: d.report as Report, source: (d.source as ContentSource) ?? 'llm' },
       }))
     case 'fallback':
-      return withLang({ ...s, fallbackReason: String(d.reason) }, code, (l) => ({
+      return withLocale({ ...s, fallbackReason: String(d.reason) }, code, (l) => ({
         ...l,
         retryProblems: [],
         draft: d.content as MessageContent,
         result: { content: d.content as MessageContent, report: d.report as Report, source: 'fallback' },
       }))
+    case 'failed':
+      return withLocale(s, code, (l) => ({ ...l, retryProblems: [], failed: String(d.reason ?? 'invalid_output') }))
     case 'done':
       return { ...s, phase: 'done' }
     case 'error':
@@ -87,14 +92,21 @@ export function reduce(s: StreamState, ev: SSEEvent): StreamState {
   }
 }
 
-/** The run is complete: every language has its validated (or fallback) text. */
-export function allResults(s: StreamState, codes: LanguageCode[]): boolean {
-  return codes.length > 0 && codes.every((c) => !!s.langs[c]?.result)
+/** Every given locale has finished: a validated (or fallback) text, or a failed translation. */
+export function allResults(s: StreamState, codes: LocaleCode[]): boolean {
+  return codes.length > 0 && codes.every((c) => !!s.locales[c]?.result || !!s.locales[c]?.failed)
 }
 
-/** The languages the model is still fixing, with the reasons its last attempt was rejected. */
-export function retryNotes(s: StreamState): { language: LanguageCode; problems: string[] }[] {
-  return Object.entries(s.langs)
+/** The locales the model is still fixing, with the reasons its last attempt was rejected. */
+export function retryNotes(s: StreamState): { locale: LocaleCode; problems: string[] }[] {
+  return Object.entries(s.locales)
     .filter(([, l]) => l.retryProblems.length > 0)
-    .map(([language, l]) => ({ language, problems: l.retryProblems }))
+    .map(([locale, l]) => ({ locale, problems: l.retryProblems }))
+}
+
+/** The translations that could not be made in this run. */
+export function failedLocales(s: StreamState): LocaleCode[] {
+  return Object.entries(s.locales)
+    .filter(([, l]) => !!l.failed)
+    .map(([code]) => code)
 }

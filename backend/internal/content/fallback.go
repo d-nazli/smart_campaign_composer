@@ -13,18 +13,14 @@ import (
 // validated against the policy: it can never break the SMS/subject limits,
 // even if budgets are configured unusually large; in that case a
 // variable-free template is returned instead.
-func (p Policy) Fallback(o offer.Offer) Content { return p.FallbackFor(o, DefaultLanguage) }
-
-// FallbackFor is Fallback in one language: personalised when that fits every
-// limit, else a variable-free text.
-func (p Policy) FallbackFor(o offer.Offer, lang string) Content {
+func (p Policy) Fallback(o offer.Offer) Content {
 	o = o.Normalize()
 	for _, mode := range fallbackModes {
-		if norm, rep := p.Validate(fallbackIn(lang, o, mode)); rep.OK && len(p.Quality(norm, o)) == 0 {
+		if norm, rep := p.Validate(fallbackIn(o, mode)); rep.OK && len(p.Quality(norm, o)) == 0 {
 			return norm
 		}
 	}
-	norm, _ := p.Validate(fallbackIn(lang, o, fallbackMinimal))
+	norm, _ := p.Validate(fallbackIn(o, fallbackMinimal))
 	return norm
 }
 

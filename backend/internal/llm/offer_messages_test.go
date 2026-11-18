@@ -159,10 +159,6 @@ func TestMessagesPromptsCarryTheThemeAndEveryPartOfTheOffer(t *testing.T) {
 			t.Errorf("messages user prompt should contain %q:\n%s", want, user)
 		}
 	}
-	en := llm.MessagesUserPromptFor(llm.MessageRequest{Brief: "b", Offer: o, Language: "en", Theme: theme})
-	if !strings.Contains(en, "100 TL off every 1000 TL (up to 300 TL in total) + free shipping") {
-		t.Errorf("the English wording of every part must be given:\n%s", en)
-	}
 	if plain := llm.MessagesUserPromptFor(llm.MessageRequest{Brief: "b", Offer: o}); strings.Contains(plain, "Theme") {
 		t.Errorf("no theme, no theme line:\n%s", plain)
 	}
@@ -171,5 +167,24 @@ func TestMessagesPromptsCarryTheThemeAndEveryPartOfTheOffer(t *testing.T) {
 		if !strings.Contains(sys, want) {
 			t.Errorf("messages system prompt should contain %q", want)
 		}
+	}
+}
+
+func TestTheTranslatePromptKeepsFactsPlaceholdersAndLimits(t *testing.T) {
+	src := content.Locale{Code: "tr-TR", Name: "Turkish (Türkiye)"}
+	ar := content.Locale{Code: "ar-SA", Name: "Arabic (Saudi Arabia)", Direction: "rtl"}
+	sys := llm.TranslateSystemPrompt(policy(t), src, ar)
+	for _, want := range []string{"Turkish (Türkiye) (tr-TR) into Arabic (Saudi Arabia) (ar-SA)", "at most 160 characters", "at most 80 characters",
+		"{{first_name}} counts as 20", "{{first_name}} must stay", "same percentages, TL amounts, dates and coupon codes", "right to left", "untrusted data"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("translate system prompt should contain %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(llm.TranslateSystemPrompt(policy(t), src, content.Locale{Code: "en-GB", Name: "English (United Kingdom)", Direction: "ltr"}), "right to left") {
+		t.Error("only an rtl locale is told about the direction")
+	}
+	user := llm.TranslateUserPrompt(llm.TranslateRequest{Source: content.Content{SMSBody: "{{first_name}}, %30 indirim"}, SourceLocale: src, Target: ar})
+	if !strings.Contains(user, `"sms_body":"{{first_name}}, %30 indirim"`) || !strings.Contains(user, "(ar-SA)") {
+		t.Errorf("user prompt:\n%s", user)
 	}
 }

@@ -60,11 +60,27 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 
 func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta func(string)) (llm.Output, error) {
 	params := c.params(
-		llm.MessagesSystemPromptFor(req.Policy, req.Language),
+		llm.MessagesSystemPromptFor(req.Policy, req.Locale),
 		content.JSONSchema(),
 		sdk.OutputConfigEffortMedium, // copywriting: some reasoning pays off
 		conversation(llm.MessagesUserPromptFor(req), req.Previous),
 	)
+	return c.stream(ctx, params, onDelta)
+}
+
+// Translate writes the source text in one target locale (structured output,
+// streamed like Messages).
+func (c *Client) Translate(ctx context.Context, req llm.TranslateRequest, onDelta func(string)) (llm.Output, error) {
+	params := c.params(
+		llm.TranslateSystemPrompt(req.Policy, req.SourceLocale, req.Target),
+		content.JSONSchema(),
+		sdk.OutputConfigEffortLow, // translation with fixed facts: little reasoning needed
+		conversation(llm.TranslateUserPrompt(req), req.Previous),
+	)
+	return c.stream(ctx, params, onDelta)
+}
+
+func (c *Client) stream(ctx context.Context, params sdk.MessageNewParams, onDelta func(string)) (llm.Output, error) {
 	stream := c.api.Messages.NewStreaming(ctx, params)
 	defer stream.Close()
 

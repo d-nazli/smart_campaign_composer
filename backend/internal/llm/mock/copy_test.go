@@ -14,32 +14,54 @@ import (
 	"smartcampaign/internal/trtext"
 )
 
-// writeAll asks the mock for every language the way the service does (with the
-// theme read from the brief) and checks each text as the backend would.
+// Test locales: the source, two locales the mock has phrase books for and two
+// it has none for (they get the marked copy of the source).
+var (
+	trTR = content.Locale{Code: "tr-TR", Name: "Turkish (Türkiye)", Direction: "ltr", IsSource: true, FreeShippingTerms: []string{"ücretsiz kargo"}}
+	enGB = content.Locale{Code: "en-GB", Name: "English (United Kingdom)", Direction: "ltr", FreeShippingTerms: []string{"free shipping", "free delivery"}}
+	deDE = content.Locale{Code: "de-DE", Name: "German (Germany)", Direction: "ltr", FreeShippingTerms: []string{"kostenloser versand", "versandkostenfrei"}}
+	frFR = content.Locale{Code: "fr-FR", Name: "French (France)", Direction: "ltr", FreeShippingTerms: []string{"livraison gratuite"}}
+	arSA = content.Locale{Code: "ar-SA", Name: "Arabic (Saudi Arabia)", Direction: "rtl"}
+)
+
+func decodeChecked(t *testing.T, p content.Policy, raw, what string) content.Content {
+	t.Helper()
+	var c content.Content
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatalf("%s: %v\n%s", what, err, raw)
+	}
+	norm, rep := p.Validate(c)
+	if !rep.OK {
+		t.Fatalf("%s: breaks a hard rule: %+v\n%+v", what, rep.Issues, c)
+	}
+	return norm
+}
+
+// writeAll writes the source text the way the service does (theme read from
+// the brief) and translates it into every test locale, checking each text as
+// the backend would: limits, and the translations saying what the source says.
 func writeAll(t *testing.T, p content.Policy, b string, o offer.Offer) map[string]content.Content {
 	t.Helper()
-	set := map[string]content.Content{}
-	for _, l := range content.Languages {
-		out, err := mock.New(0).Messages(context.Background(), llm.MessageRequest{
-			Brief: b, Offer: o, Policy: p, Language: l.Code, Theme: brief.ThemeOf(b, l.Code)}, nil)
+	m := mock.New(0)
+	out, err := m.Messages(context.Background(), llm.MessageRequest{Brief: b, Offer: o, Policy: p, Locale: trTR, Theme: brief.ThemeOf(b, "tr")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := decodeChecked(t, p, out.Raw, b+" [tr-TR]")
+	if q := p.Quality(src, o); len(q) != 0 {
+		t.Fatalf("%q [tr-TR]: %+v\n%+v", b, q, src)
+	}
+	set := map[string]content.Content{trTR.Code: src}
+	for _, l := range []content.Locale{enGB, deDE, frFR, arSA} {
+		out, err := m.Translate(context.Background(), llm.TranslateRequest{Source: src, SourceLocale: trTR, Target: l, Policy: p, Brief: b, Offer: o}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var c content.Content
-		if err := json.Unmarshal([]byte(out.Raw), &c); err != nil {
-			t.Fatalf("%s: %v", l.Code, err)
+		c := decodeChecked(t, p, out.Raw, b+" ["+l.Code+"]")
+		if issues := content.ConsistentWith(trTR, src, l, c); len(issues) != 0 {
+			t.Fatalf("%q [%s]: the translation disagrees with the source: %+v\n%+v\n%+v", b, l.Code, issues, src, c)
 		}
-		norm, rep := p.Validate(c)
-		if !rep.OK {
-			t.Fatalf("%q [%s]: breaks a hard rule: %+v\n%+v", b, l.Code, rep.Issues, c)
-		}
-		if q := p.Quality(norm, o); len(q) != 0 {
-			t.Fatalf("%q [%s]: %+v\n%+v", b, l.Code, q, norm)
-		}
-		set[l.Code] = norm
-	}
-	if issues := content.Consistency(set); len(issues) != 0 {
-		t.Fatalf("%q: the languages disagree: %+v\n%+v", b, issues, set)
+		set[l.Code] = c
 	}
 	return set
 }
@@ -79,8 +101,8 @@ func TestTheCopyFollowsTheBriefsThemeAndVaries(t *testing.T) {
 	seenSMS, seenSubject := map[string]bool{}, map[string]bool{}
 	for _, c := range cases {
 		set := writeAll(t, p, c.brief, c.o)
-		tr := set["tr"]
-		t.Logf("%s\n  SMS: %s\n  Konu: %s\n  EN: %s\n  DE: %s", c.brief, tr.SMSBody, tr.EmailSubject, set["en"].SMSBody, set["de"].SMSBody)
+		tr := set["tr-TR"]
+		t.Logf("%s\n  SMS: %s\n  Konu: %s\n  EN: %s\n  DE: %s", c.brief, tr.SMSBody, tr.EmailSubject, set["en-GB"].SMSBody, set["de-DE"].SMSBody)
 		shown := trtext.Fold(tr.SMSBody + " " + tr.EmailSubject)
 		found := false
 		for _, w := range c.want {
@@ -105,12 +127,12 @@ func TestTheCopyIsReproducibleButNotOneTemplate(t *testing.T) {
 	o := offer.Offer{Kind: offer.KindPercent, Value: 15}
 	a := writeAll(t, p, "Herkese %15 indirim", o)
 	b := writeAll(t, p, "Herkese %15 indirim", o)
-	if a["tr"] != b["tr"] {
+	if a["tr-TR"] != b["tr-TR"] {
 		t.Fatal("same brief, different copy")
 	}
 	distinct := map[string]bool{}
 	for _, br := range []string{"Herkese %15 indirim", "Tüm müşterilere %15 indirim gönder", "Bütün kullanıcılara %15 indirim", "Herkese %15 indirim kuponu", "Herkese yüzde 15 indirim tanımla"} {
-		distinct[writeAll(t, p, br, o)["tr"].SMSBody] = true
+		distinct[writeAll(t, p, br, o)["tr-TR"].SMSBody] = true
 	}
 	if len(distinct) < 3 {
 		t.Errorf("five wordings of the same brief gave only %d different SMS", len(distinct))
@@ -121,16 +143,16 @@ func TestTheCopyIsReproducibleButNotOneTemplate(t *testing.T) {
 func TestTheCopyFollowsTheTone(t *testing.T) {
 	p := defaultPolicy(t)
 	o := offer.Offer{Kind: offer.KindPercent, Value: 10}
-	friendly := writeAll(t, p, "Herkese samimi bir dille %10 indirim", o)["tr"]
-	formal := writeAll(t, p, "Herkese resmi bir dille %10 indirim", o)["tr"]
+	friendly := writeAll(t, p, "Herkese samimi bir dille %10 indirim", o)["tr-TR"]
+	formal := writeAll(t, p, "Herkese resmi bir dille %10 indirim", o)["tr-TR"]
 	if !strings.Contains(formal.EmailBody, "siz") && !strings.Contains(formal.EmailBody, "Sayın") {
 		t.Errorf("formal copy should say siz/Sayın: %q", formal.EmailBody)
 	}
 	if strings.Contains(friendly.SMSBody, "Sayın") || strings.Contains(friendly.EmailBody, "Saygılarımızla") {
 		t.Errorf("friendly copy should not be formal: %+v", friendly)
 	}
-	short := writeAll(t, p, "Herkese kısa bir %10 indirim mesajı", o)["tr"]
-	long := writeAll(t, p, "Herkese %10 indirim mesajı", o)["tr"]
+	short := writeAll(t, p, "Herkese kısa bir %10 indirim mesajı", o)["tr-TR"]
+	long := writeAll(t, p, "Herkese %10 indirim mesajı", o)["tr-TR"]
 	if len([]rune(short.EmailBody)) >= len([]rune(long.EmailBody)) {
 		t.Errorf("short copy is not shorter:\n%q\n%q", short.EmailBody, long.EmailBody)
 	}
@@ -142,20 +164,20 @@ func TestASpecialDayNeverAssumesTheReadersGender(t *testing.T) {
 	p := defaultPolicy(t)
 	for _, b := range []string{"Kadınlar Günü'ne özel %20 indirim", "Anneler Günü'ne özel %20 indirim", "Babalar Günü'ne özel %20 indirim"} {
 		set := writeAll(t, p, b, offer.Offer{Kind: offer.KindPercent, Value: 20})
-		for lang, c := range set {
+		for code, c := range set {
 			all := trtext.Fold(c.SMSBody + " " + c.EmailSubject + " " + c.EmailBody)
 			for _, bad := range []string{"kadin musteri", "hanim", "sevgili anne", "sevgili baba", "dear mum", "dear dad", "liebe mutter"} {
 				if strings.Contains(all, bad) {
-					t.Errorf("%q [%s] addresses the reader by gender (%q): %s", b, lang, bad, all)
+					t.Errorf("%q [%s] addresses the reader by gender (%q): %s", b, code, bad, all)
 				}
 			}
 		}
 	}
 }
 
-// Combined and tiered offers, with every term, fit 160 / 80 in every language
+// Combined and tiered offers, with every term, fit 160 / 80 in every locale
 // under the same worst-case budgets, and every part is stated.
-func TestCombinedAndTieredOffersFitTheLimitsInEveryLanguage(t *testing.T) {
+func TestCombinedAndTieredOffersFitTheLimitsInEveryLocale(t *testing.T) {
 	free := offer.Part{Kind: offer.KindFreeShipping}
 	offers := map[string]offer.Offer{
 		"tier":                        {Kind: offer.KindAmount, Value: 100, StepSpend: 1000, MaxDiscount: 300},
@@ -179,16 +201,16 @@ func TestCombinedAndTieredOffersFitTheLimitsInEveryLanguage(t *testing.T) {
 		for name, o := range offers {
 			for _, b := range briefs {
 				set := writeAll(t, p, b, o)
-				for lang, c := range set {
+				for code, c := range set {
 					if n := p.EffectiveLength(c.SMSBody); n > content.SMSMaxRunes {
-						t.Errorf("%s / %s [%s]: SMS %d", name, b, lang, n)
+						t.Errorf("%s / %s [%s]: SMS %d", name, b, code, n)
 					}
 					if n := p.EffectiveLength(c.EmailSubject); n > content.SubjectMaxRunes {
-						t.Errorf("%s / %s [%s]: subject %d", name, b, lang, n)
+						t.Errorf("%s / %s [%s]: subject %d", name, b, code, n)
 					}
 				}
 				if budgets == nil && b == briefs[0] {
-					t.Logf("%s:\n  TR %s\n  EN %s\n  DE %s", name, set["tr"].SMSBody, set["en"].SMSBody, set["de"].SMSBody)
+					t.Logf("%s:\n  TR %s\n  EN %s\n  DE %s", name, set["tr-TR"].SMSBody, set["en-GB"].SMSBody, set["de-DE"].SMSBody)
 				}
 			}
 		}

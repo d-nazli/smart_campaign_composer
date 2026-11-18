@@ -74,22 +74,22 @@ func CountAudience(ctx context.Context, db Querier, c Compiled) (Audience, error
 	return a, nil
 }
 
-// CountByLanguage counts the people the rule reaches on at least one channel,
-// per language (for example {"tr": 120, "en": 45}). Languages nobody speaks are
+// CountByLocale counts the people the rule reaches on at least one channel,
+// per locale (for example {"tr-TR": 120, "en-GB": 45}). Locales with nobody are
 // absent. It uses the same rule, consent and contact filters as the delivery
 // queue, so it adds up to what will actually be queued.
-func CountByLanguage(ctx context.Context, db Querier, c Compiled) (map[string]int, error) {
-	q := `SELECT coalesce(jsonb_object_agg(language, n), '{}'::jsonb)
-	      FROM (SELECT language, count(*) AS n FROM users
+func CountByLocale(ctx context.Context, db Querier, c Compiled) (map[string]int, error) {
+	q := `SELECT coalesce(jsonb_object_agg(locale, n), '{}'::jsonb)
+	      FROM (SELECT locale, count(*) AS n FROM users
 	            WHERE ` + c.Where + ` AND ((` + SMSReachableSQL + `) OR (` + EmailReachableSQL + `))
-	            GROUP BY language) t`
+	            GROUP BY locale) t`
 	var raw []byte
 	if err := db.QueryRow(ctx, q, c.Args...).Scan(&raw); err != nil {
-		return nil, fmt.Errorf("count by language: %w", err)
+		return nil, fmt.Errorf("count by locale: %w", err)
 	}
 	out := map[string]int{}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("count by language: %w", err)
+		return nil, fmt.Errorf("count by locale: %w", err)
 	}
 	return out, nil
 }

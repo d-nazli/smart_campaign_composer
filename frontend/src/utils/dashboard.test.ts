@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CampaignSummary, DeliveryProgress } from '../types'
-import { briefPreview, deliveryTotals, pageFromHash, statusLabel } from './dashboard'
+import { briefPreview, deliveryTotals, isSending, pageFromHash, sendSpeed, statusLabel } from './dashboard'
 
 const ch = (o = {}) => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
 const row = (o: Partial<CampaignSummary> = {}): CampaignSummary => ({
@@ -65,5 +65,48 @@ describe('deliveryTotals', () => {
   })
   it('is all zeros when nothing was approved yet', () => {
     expect(deliveryTotals(undefined)).toEqual({ total: 0, sent: 0, failed: 0, skipped: 0, pending: 0, retries: 0, rateLimited: 0 })
+  })
+})
+
+describe('sendSpeed', () => {
+  const ch = (o = {}) => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
+  const sending = (sms = ch({ total: 5 }), email = ch({ total: 5 })): Pick<CampaignSummary, 'status' | 'delivery'> => ({
+    status: 'sending',
+    delivery: { sms, email, done: false },
+  })
+
+  it('names the live speed of each channel while sending', () => {
+    expect(sendSpeed(sending(), { sms: 98.4, email: 96.6 })).toBe('SMS 98/sn · E-posta 97/sn')
+    expect(sendSpeed(sending(ch({ total: 5 }), ch()), { sms: 90, email: 0 })).toBe('SMS 90/sn') // no email recipients
+  })
+  it('says nothing until a speed is measured', () => {
+    expect(sendSpeed(sending(), undefined)).toBeNull()
+  })
+  it('gives the average and the time once finished', () => {
+    const c: Pick<CampaignSummary, 'status' | 'delivery'> = {
+      status: 'completed',
+      delivery: {
+        sms: ch({ total: 2500, sent: 2470, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:26Z' }),
+        email: ch({ total: 2500, sent: 2470, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:26Z' }),
+        done: true,
+      },
+    }
+    expect(sendSpeed(c)).toBe("ort. 95/sn, 26 sn'de bitti")
+    c.delivery!.sms.last_sent_at = '2026-11-18T12:01:05Z'
+    expect(sendSpeed(c)).toContain("1 dk 5 sn'de bitti")
+  })
+  it('says nothing for a campaign that never sent', () => {
+    expect(sendSpeed({ status: 'completed', delivery: { sms: ch(), email: ch(), done: true } })).toBeNull()
+    expect(sendSpeed({ status: 'scheduled' })).toBeNull()
+  })
+})
+
+describe('isSending', () => {
+  it('is true only while something is still waiting', () => {
+    const ch = { total: 1, pending: 1, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0 }
+    expect(isSending({ status: 'sending', delivery: { sms: ch, email: ch, done: false } })).toBe(true)
+    expect(isSending({ status: 'sending', delivery: { sms: ch, email: ch, done: true } })).toBe(false)
+    expect(isSending({ status: 'completed' })).toBe(false)
+    expect(isSending({ status: 'scheduled' })).toBe(false)
   })
 })

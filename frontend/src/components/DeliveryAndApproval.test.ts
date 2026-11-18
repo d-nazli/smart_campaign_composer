@@ -18,7 +18,7 @@ describe('DeliveryProgress', () => {
     email: ch({ total: 20, sent: 20 }),
     done: false,
     failures: [{ channel: 'sms', reason: 'rejected', count: 2 }],
-    languages: { tr: { total: 30, sent: 25 }, en: { total: 12, sent: 10 }, de: { total: 8, sent: 5 } },
+    locales: { 'tr-TR': { total: 30, sent: 25 }, 'en-GB': { total: 12, sent: 10 }, 'ar-SA': { total: 8, sent: 5 } },
   }
   const make = (d = delivery, status: 'sending' | 'completed' = 'sending') => mount(DeliveryProgress, { props: { delivery: d, status } })
 
@@ -43,16 +43,49 @@ describe('DeliveryProgress', () => {
     expect(w.find('.totals').exists()).toBe(false)
   })
 
-  it('shows sent per language, sent/total while some wait', () => {
-    const t = make().get('[data-testid="delivery-languages"]').text()
-    expect(t).toContain('TR 25/30')
-    expect(t).toContain('EN 10/12')
-    expect(t).toContain('DE 5/8')
-    expect(make({ ...delivery, done: true }, 'completed').get('[data-testid="delivery-languages"]').text()).toContain('TR 25')
+  it('shows sent per locale, sent/total while some wait', () => {
+    const t = make().get('[data-testid="delivery-locales"]').text()
+    expect(t).toContain('tr-TR 25/30')
+    expect(t).toContain('en-GB 10/12')
+    expect(t).toContain('ar-SA 5/8')
+    expect(make({ ...delivery, done: true }, 'completed').get('[data-testid="delivery-locales"]').text()).toContain('tr-TR 25')
   })
 
   it('explains the failures in words', () => {
     expect(make().get('.reasons').text()).toContain('2')
+  })
+
+  it('draws the failures against all messages, one colour per reason', () => {
+    const many: Delivery = {
+      sms: ch({ total: 1500, sent: 1490, failed: 10 }),
+      email: ch({ total: 936, sent: 935, failed: 1 }),
+      done: true,
+      failures: [
+        { channel: 'sms', reason: 'gave_up', count: 9 },
+        { channel: 'sms', reason: 'rejected', count: 1 },
+        { channel: 'email', reason: 'gave_up', count: 1 },
+      ],
+    }
+    const w = make(many, 'completed')
+    const t = w.get('[data-testid="failed-share"]').text()
+    expect(t).toContain('/ 2.436')
+    expect(t).toContain('%0,45') // 11 of 2.436
+    expect(w.get('[data-testid="failed-count"]').text()).toBe('11')
+    const arcs = w.findAll('path.arc')
+    expect(arcs).toHaveLength(2)
+    // each reason has its own colour, and the ring is nearly empty: 10 of 2.436 is about 0,4% of the half ring
+    expect(new Set(arcs.map((a) => a.attributes('stroke'))).size).toBe(2)
+    expect(parseFloat(arcs[0].attributes('stroke-dasharray')!)).toBeLessThan(5)
+    expect(parseFloat(arcs[0].attributes('stroke-dasharray')!)).toBeGreaterThan(0)
+    // the list shares are of all messages too
+    expect(w.get('.reasons').text()).toContain('%0,41 (10)')
+  })
+
+  it('a single failure reason no longer fills the ring', () => {
+    const one: Delivery = { sms: ch({ total: 100, sent: 90, failed: 10 }), email: ch(), done: true, failures: [{ channel: 'sms', reason: 'rejected', count: 10 }] }
+    const arc = make(one, 'completed').get('path.arc')
+    const len = parseFloat(arc.attributes('stroke-dasharray')!)
+    expect(len).toBeCloseTo((10 / 100) * Math.PI * 70, 1) // 10% of the half ring, not 100%
   })
 
   it('says when it is finished', () => {
@@ -63,7 +96,7 @@ describe('DeliveryProgress', () => {
   it('reads as complete when there is nothing to send', () => {
     const w = make({ sms: ch(), email: ch(), done: true }, 'completed')
     expect(w.get('[role="progressbar"]').attributes('aria-valuenow')).toBe('100')
-    expect(w.find('[data-testid="delivery-languages"]').exists()).toBe(false)
+    expect(w.find('[data-testid="delivery-locales"]').exists()).toBe(false)
   })
 })
 
@@ -74,7 +107,7 @@ describe('ApprovalCard', () => {
     explanation: 'İstanbul’daki müşteriler',
     audience: { matched: 300, sms_reachable: 200, email_reachable: 220, both_reachable: 150 },
     offer: { kind: 'percent', value: 30, code: '', expires_at: '2099-12-31' },
-    languages: { tr: 180, en: 75, de: 45 },
+    locales: { 'tr-TR': 180, 'en-GB': 75, 'de-DE': 45 },
   }
   const props = { segment, warnings: [], confirming: false, frozen: false, error: null, mode: 'now' as const, when: '', scheduleError: null }
   const make = (extra: Record<string, unknown> = {}) => mount(ApprovalCard, { props: { ...props, ...extra }, attachTo: document.body })
@@ -87,8 +120,8 @@ describe('ApprovalCard', () => {
     expect(text).toContain('270') // 200 + 220 - 150 people
     expect(text).toContain('SMS')
     expect(text).toContain('200')
-    expect(w.get('[data-testid="approval-languages"]').text()).toContain('Türkçe')
-    expect(w.get('[data-testid="approval-languages"]').text()).toContain('180')
+    expect(w.get('[data-testid="approval-locales"]').text()).toContain('tr-TR')
+    expect(w.get('[data-testid="approval-locales"]').text()).toContain('180')
   })
 
   it('chooses between now and later with a toggle, not with bare radio buttons', async () => {
@@ -137,13 +170,11 @@ describe('ApprovalCard', () => {
     expect(w.get('[data-testid="send-at"]').classes()).toContain('is-invalid')
   })
 
-  it('asks "Emin misiniz?" in a sentence, briefly, differently for now and later', () => {
-    const now = make({ confirming: true }).get('[role="alertdialog"]').text()
-    expect(now).toContain('Emin misiniz?')
-    expect(now.length).toBeLessThan(110)
-    const later = make({ confirming: true, mode: 'later', when: '2099-12-30T10:00' }).get('[role="alertdialog"]').text()
-    expect(later).toContain('iptal edebilirsiniz')
-    expect(later.length).toBeLessThan(140)
+  it('leaves "Emin misiniz?" to the alert dialog and holds its controls while it is open', () => {
+    const w = make({ confirming: true })
+    expect(w.find('[role="alertdialog"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('Emin misiniz?')
+    expect(w.get('[role="radiogroup"]').findAll('[role="radio"]').every((r) => r.attributes('disabled') !== undefined || r.attributes('aria-disabled') === 'true')).toBe(true)
   })
 
   it('cannot be changed after approval', () => {
@@ -152,10 +183,10 @@ describe('ApprovalCard', () => {
     expect(w.text()).toContain('Onaylandı')
   })
 
-  it('lists the warnings with their language', () => {
-    const w = make({ warnings: [{ field: 'sms_body', code: 'offer_missing', message: 'Teklif geçmiyor.', language: 'en' }] })
+  it('lists the warnings with their locale', () => {
+    const w = make({ warnings: [{ field: 'sms_body', code: 'offer_missing', message: 'Teklif geçmiyor.', locale: 'tr-TR' }] })
     const li = w.get('.warnings li')
-    expect(li.text()).toContain('EN')
+    expect(li.text()).toContain('tr-TR')
     expect(li.text()).toContain('Teklif geçmiyor.')
   })
 })

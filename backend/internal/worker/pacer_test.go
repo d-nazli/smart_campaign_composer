@@ -139,3 +139,44 @@ func TestConcurrentSendersShareOnePace(t *testing.T) {
 		t.Fatalf("200 sends took only %v; the pacer let them through too fast", elapsed)
 	}
 }
+
+func TestAFewStray429sDoNotPauseTheChannel(t *testing.T) {
+	clk := clock.NewFake(t0)
+	p := worker.NewPacer(clk, 90)
+	for i := 0; i < 9; i++ { // one short of a burst
+		if p.RateLimited(clk.Now().Add(3 * time.Second)) {
+			t.Fatalf("paused after %d 429s", i+1)
+		}
+	}
+	if got := waits(t, p, clk, 1)[0]; !got.Equal(t0) {
+		t.Fatalf("the next slot was held back to %v", got)
+	}
+}
+
+func TestABurstOf429sPausesTheChannelForRetryAfter(t *testing.T) {
+	clk := clock.NewFake(t0)
+	p := worker.NewPacer(clk, 90)
+	resume := t0.Add(3 * time.Second)
+	paused := false
+	for i := 0; i < 10; i++ {
+		paused = p.RateLimited(resume)
+	}
+	if !paused {
+		t.Fatal("ten 429s in one second did not pause the channel")
+	}
+	if got := waits(t, p, clk, 1)[0]; got.Before(resume) {
+		t.Fatalf("sent at %v, before the pause ended at %v", got, resume)
+	}
+}
+
+func TestOld429sDoNotAddUpToABurst(t *testing.T) {
+	clk := clock.NewFake(t0)
+	p := worker.NewPacer(clk, 90)
+	for i := 0; i < 9; i++ {
+		p.RateLimited(clk.Now().Add(time.Second))
+		clk.Advance(200 * time.Millisecond) // 5 per second at most
+	}
+	if p.RateLimited(clk.Now().Add(time.Second)) {
+		t.Fatal("429s spread over two seconds were treated as a burst")
+	}
+}

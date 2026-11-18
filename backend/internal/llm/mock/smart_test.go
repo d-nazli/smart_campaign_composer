@@ -13,9 +13,9 @@ import (
 )
 
 // The mock imitates a working model, so its text must pass the same checks the
-// real model's text has to pass, in every language, for every kind of offer, and
-// the languages must say the same thing.
-func TestEveryLanguageOfTheMockIsValidAndConsistent(t *testing.T) {
+// real model's text has to pass, in every locale, for every kind of offer, and
+// every translation must say what the source says.
+func TestEveryLocaleOfTheMockIsValidAndConsistent(t *testing.T) {
 	policy, err := content.NewPolicy(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -36,69 +36,90 @@ func TestEveryLanguageOfTheMockIsValidAndConsistent(t *testing.T) {
 		"cart, informal": "Sepetini unutanlara samimi ve kısa bir hatırlatma gönder.",
 		"cart, formal":   "Sepetinde ürün bırakan müşterilere hatırlatma gönder.",
 	}
-	m := mock.New(0)
 	for oname, o := range offers {
 		for bname, b := range briefs {
-			t.Run(oname+"/"+bname, func(t *testing.T) {
-				set := map[string]content.Content{}
-				for _, l := range content.Languages {
-					out, err := m.Messages(context.Background(), llm.MessageRequest{Brief: b, Offer: o, Policy: policy, Language: l.Code}, nil)
-					if err != nil {
-						t.Fatal(err)
-					}
-					var c content.Content
-					if err := json.Unmarshal([]byte(out.Raw), &c); err != nil {
-						t.Fatalf("%s: %v\n%s", l.Code, err, out.Raw)
-					}
-					norm, rep := policy.Validate(c)
-					if !rep.OK {
-						t.Fatalf("%s: %+v\n%+v", l.Code, rep.Issues, c)
-					}
-					if q := policy.Quality(norm, o); len(q) != 0 {
-						t.Fatalf("%s: %+v\n%+v", l.Code, q, norm)
-					}
-					set[l.Code] = norm
-				}
-				if issues := content.Consistency(set); len(issues) != 0 {
-					t.Fatalf("the languages disagree: %+v\n%+v", issues, set)
-				}
-			})
+			t.Run(oname+"/"+bname, func(t *testing.T) { writeAll(t, policy, b, o) })
 		}
 	}
 }
 
-func TestEachLanguageIsReallyThatLanguage(t *testing.T) {
+func TestEachPhraseBookLocaleIsReallyThatLanguage(t *testing.T) {
 	policy, _ := content.NewPolicy(nil)
-	o := offer.Offer{Kind: offer.KindPercent, Value: 30}
-	m := mock.New(0)
-	for lang, want := range map[string]string{"tr": "indirim", "en": "30% off", "de": "30 % Rabatt"} {
-		out, err := m.Messages(context.Background(), llm.MessageRequest{Brief: "Sepet hatırlatması", Offer: o, Policy: policy, Language: lang}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(out.Raw, want) {
-			t.Errorf("%s: %s should contain %q", lang, out.Raw, want)
+	set := writeAll(t, policy, "Sepet hatırlatması", offer.Offer{Kind: offer.KindPercent, Value: 30})
+	for code, want := range map[string]string{"tr-TR": "indirim", "en-GB": "30% off", "de-DE": "30 % Rabatt"} {
+		if !strings.Contains(set[code].SMSBody, want) {
+			t.Errorf("%s: %s should contain %q", code, set[code].SMSBody, want)
 		}
 	}
 }
 
-// A script describes the default language; other languages are scripted
-// separately and answered smartly otherwise.
-func TestScriptsApplyToTheirOwnLanguageOnly(t *testing.T) {
+// A locale without a phrase book gets the source text marked with its code:
+// the facts and {{placeholders}} are the source's own, and a new locale needs
+// no code. The mark is dropped where it would break a limit.
+func TestALocaleWithoutAPhraseBookGetsTheMarkedSource(t *testing.T) {
+	policy, _ := content.NewPolicy(nil)
+	src := content.Content{SMSBody: "{{first_name}}, %30 indirim seni bekliyor!", EmailSubject: "%30 indirim", EmailBody: "Merhaba {{first_name}},\n\n%30 indirim."}
+	out, err := mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: src, SourceLocale: trTR, Target: frFR, Policy: policy}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c content.Content
+	_ = json.Unmarshal([]byte(out.Raw), &c)
+	if c.SMSBody != mock.PseudoPrefix("fr-FR")+src.SMSBody || c.EmailSubject != "[fr-FR] %30 indirim" || !strings.HasPrefix(c.EmailBody, "[fr-FR] Merhaba") {
+		t.Fatalf("%+v", c)
+	}
+	long := src
+	long.SMSBody = strings.Repeat("a", 155)
+	out, _ = mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: long, SourceLocale: trTR, Target: frFR, Policy: policy}, nil)
+	_ = json.Unmarshal([]byte(out.Raw), &c)
+	if c.SMSBody != long.SMSBody {
+		t.Fatalf("the mark would break 160: %q", c.SMSBody)
+	}
+}
+
+// When the source was edited by hand, a phrase book cannot say the same thing
+// (it writes from the offer): the mock then falls back to the marked copy.
+func TestAPhraseBookThatDisagreesWithAnEditedSourceIsNotUsed(t *testing.T) {
+	policy, _ := content.NewPolicy(nil)
+	edited := content.Content{SMSBody: "{{first_name}}, bugün %45 indirim!", EmailSubject: "%45 indirim", EmailBody: "Merhaba,\n\n%45 indirim."}
+	out, err := mock.New(0).Translate(context.Background(), llm.TranslateRequest{Source: edited, SourceLocale: trTR, Target: enGB, Policy: policy,
+		Brief: "Herkese %30 indirim", Offer: offer.Offer{Kind: offer.KindPercent, Value: 30}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c content.Content
+	_ = json.Unmarshal([]byte(out.Raw), &c)
+	if !strings.HasPrefix(c.SMSBody, "[en-GB] ") || len(content.ConsistentWith(trTR, edited, enGB, c)) != 0 {
+		t.Fatalf("%+v", c)
+	}
+}
+
+// A script describes the source text; translations are scripted per locale
+// and answered smartly otherwise.
+func TestScriptsApplyToTheirOwnLocaleOnly(t *testing.T) {
 	policy, _ := content.NewPolicy(nil)
 	m := mock.NewScripted(nil, []mock.Step{{Kind: mock.Raw, Raw: `{"sms_body":"tr"}`}}).
-		WithMessages("en", mock.Step{Kind: mock.Raw, Raw: `{"sms_body":"en"}`})
-	ask := func(lang string) string {
-		out, err := m.Messages(context.Background(), llm.MessageRequest{Brief: "b", Policy: policy, Language: lang}, nil)
+		WithTranslation("en-GB", mock.Step{Kind: mock.Raw, Raw: `{"sms_body":"en"}`})
+	out, err := m.Messages(context.Background(), llm.MessageRequest{Brief: "b", Policy: policy, Locale: trTR}, nil)
+	if err != nil || out.Raw != `{"sms_body":"tr"}` {
+		t.Fatalf("source: %v %s", err, out.Raw)
+	}
+	tr := func(l content.Locale) string {
+		out, err := m.Translate(context.Background(), llm.TranslateRequest{Source: content.Content{SMSBody: "x", EmailSubject: "y", EmailBody: "z"},
+			SourceLocale: trTR, Target: l, Policy: policy}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return out.Raw
 	}
-	if ask("tr") != `{"sms_body":"tr"}` || ask("en") != `{"sms_body":"en"}` {
-		t.Fatal("scripted answers")
+	if tr(enGB) != `{"sms_body":"en"}` {
+		t.Fatal("scripted translation")
 	}
-	if got := ask("de"); !strings.Contains(got, "email_subject") {
-		t.Fatalf("an unscripted language is answered by the smart mock: %s", got)
+	if got := tr(deDE); !strings.Contains(got, "email_subject") {
+		t.Fatalf("an unscripted locale is answered by the smart mock: %s", got)
+	}
+	calls := m.Calls()
+	if calls[0].Kind != "messages" || calls[0].Locale != "tr-TR" || calls[1].Kind != "translate" || calls[1].Locale != "en-GB" {
+		t.Fatalf("%+v", calls)
 	}
 }

@@ -123,6 +123,10 @@ func ask(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, c
 				}
 				return r, []string{err.Error()}
 			}
+			// The model must name the campaign (a stored rule may have no name).
+			if problems := segment.NameProblems(r.Name); len(problems) > 0 {
+				return r, problems
+			}
 			if problems := check(r); len(problems) > 0 {
 				lastCoverage = problems
 				return r, problems

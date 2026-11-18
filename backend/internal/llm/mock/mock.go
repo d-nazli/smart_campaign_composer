@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"smartcampaign/internal/content"
 	"smartcampaign/internal/llm"
 	"smartcampaign/internal/offer"
 )
@@ -46,12 +45,12 @@ type Step struct {
 
 // Call records what the client was asked, so tests can assert on feedback.
 type Call struct {
-	Kind     string // "segment" or "messages"
+	Kind     string // "segment", "messages" or "translate"
 	Brief    string
 	Previous []llm.Attempt
 	Offer    offer.Offer
-	// Language is the language asked for (messages only).
-	Language string
+	// Locale is the locale written (messages: the source; translate: the target).
+	Locale string
 }
 
 // Client implements llm.Client.
@@ -65,9 +64,9 @@ type Client struct {
 	msgIdx   int
 	calls    []Call
 
-	// langMessages scripts the messages of one non-default language.
-	langMessages map[string][]Step
-	langIdx      map[string]int
+	// translations scripts the translation into one locale.
+	translations map[string][]Step
+	trIdx        map[string]int
 }
 
 // New returns the smart mock. delay is the pause between streamed fragments
@@ -80,15 +79,16 @@ func NewScripted(segment []Step, messages []Step) *Client {
 	return &Client{segment: segment, messages: messages}
 }
 
-// WithMessages scripts the answers for one language other than the default
-// (whose script is NewScripted's messages), and returns the client.
-func (c *Client) WithMessages(lang string, steps ...Step) *Client {
+// WithTranslation scripts the answers of the translation into one locale
+// (the source text is NewScripted's messages), and returns the client. A
+// locale without a script is translated like a working translator would.
+func (c *Client) WithTranslation(locale string, steps ...Step) *Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.langMessages == nil {
-		c.langMessages, c.langIdx = map[string][]Step{}, map[string]int{}
+	if c.translations == nil {
+		c.translations, c.trIdx = map[string][]Step{}, map[string]int{}
 	}
-	c.langMessages[lang] = steps
+	c.translations[locale] = steps
 	return c
 }
 
@@ -124,23 +124,29 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 }
 
 func (c *Client) Messages(ctx context.Context, req llm.MessageRequest, onDelta func(string)) (llm.Output, error) {
-	lang := content.NormalizeLanguage(req.Language)
 	c.mu.Lock()
-	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Language: lang})
-	// A script describes the reference (default) language, the one a test is
-	// about; the other languages are answered like a working model would unless
-	// WithMessages scripts them.
+	c.calls = append(c.calls, Call{Kind: "messages", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Locale: req.Locale.Code})
+	step := next(c.messages, &c.msgIdx)
+	c.mu.Unlock()
+	return c.play(ctx, step, func() string { return smartMessagesFor(req) }, onDelta)
+}
+
+func (c *Client) Translate(ctx context.Context, req llm.TranslateRequest, onDelta func(string)) (llm.Output, error) {
+	c.mu.Lock()
+	c.calls = append(c.calls, Call{Kind: "translate", Brief: req.Brief, Previous: req.Previous, Offer: req.Offer, Locale: req.Target.Code})
 	step := Step{Kind: Smart}
-	if lang == content.DefaultLanguage {
-		step = next(c.messages, &c.msgIdx)
-	} else if steps, ok := c.langMessages[lang]; ok {
-		idx := c.langIdx[lang]
+	if steps, ok := c.translations[req.Target.Code]; ok {
+		idx := c.trIdx[req.Target.Code]
 		step = next(steps, &idx)
-		c.langIdx[lang] = idx
+		c.trIdx[req.Target.Code] = idx
 	}
 	c.mu.Unlock()
+	return c.play(ctx, step, func() string { return smartTranslate(req) }, onDelta)
+}
 
-	out, err := resolve(step, func() string { return smartMessagesFor(req, lang) })
+// play answers one streamed request according to its step.
+func (c *Client) play(ctx context.Context, step Step, smart func() string, onDelta func(string)) (llm.Output, error) {
+	out, err := resolve(step, smart)
 	if err != nil {
 		return out, err
 	}

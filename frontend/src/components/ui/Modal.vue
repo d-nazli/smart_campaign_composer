@@ -4,7 +4,8 @@ import { X } from 'lucide-vue-next'
 
 // A dialog for one decision. Escape and the backdrop close it (unless `persistent`),
 // Tab stays inside, and focus goes back to whatever opened it.
-const props = defineProps<{ modelValue: boolean; title: string; description?: string; persistent?: boolean }>()
+// alert: a question that interrupts (role alertdialog), e.g. "Emin misiniz?" before sending.
+const props = defineProps<{ modelValue: boolean; title: string; description?: string; persistent?: boolean; alert?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; close: [] }>()
 
 const dialog = ref<HTMLElement | null>(null)
@@ -65,7 +66,7 @@ onBeforeUnmount(() => {
     <Transition name="ui-modal">
       <div v-if="modelValue" class="ui-modal" @keydown="onKey">
         <div class="ui-modal__backdrop" data-testid="modal-backdrop" @click="!persistent && close()" />
-        <div ref="dialog" class="ui-modal__dialog" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1">
+        <div ref="dialog" class="ui-modal__dialog" :role="alert ? 'alertdialog' : 'dialog'" aria-modal="true" :aria-labelledby="titleId" tabindex="-1">
           <header class="ui-modal__head">
             <h2 :id="titleId" class="ui-modal__title">{{ title }}</h2>
             <button v-if="!persistent" type="button" class="ui-modal__x" aria-label="Kapat" @click="close"><X :size="16" aria-hidden="true" /></button>

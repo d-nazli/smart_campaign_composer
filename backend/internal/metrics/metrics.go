@@ -25,7 +25,7 @@ const sendRateWindow = 10 * time.Second
 var (
 	channels = []string{"sms", "email"}
 	statuses = []string{"sent", "failed", "skipped"}
-	kinds    = []string{"segment", "messages"}
+	kinds    = []string{"segment", "messages", "translate"}
 	outcomes = []string{"ok", "needs_clarification", "unsupported"}
 )
 

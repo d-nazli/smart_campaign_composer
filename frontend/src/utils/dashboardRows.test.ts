@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CampaignSummary, DeliveryProgress } from '../types'
-import { briefTitle, languageCells, progressTitle, rowProgress, sentenceCase, statusBadge } from './dashboard'
+import { briefTitle, localeLine, progressTitle, rowProgress, sentenceCase, statusBadge } from './dashboard'
 import { quickTimes } from './schedule'
 
 const ch = (o = {}) => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
@@ -67,33 +67,39 @@ describe('rowProgress and its tooltip', () => {
   })
 })
 
-describe('languageCells', () => {
-  const order = [{ code: 'tr' }, { code: 'en' }, { code: 'de' }]
+describe('localeLine', () => {
+  const order = [{ code: 'tr-TR' }, { code: 'de-DE' }, { code: 'en-GB' }, { code: 'it-IT' }]
 
-  it('shows what was sent per language, sent/total while some wait', () => {
+  it('names the two largest locales and counts the rest; the tooltip lists them all', () => {
+    const audience_locales = { 'tr-TR': 828, 'en-US': 174, 'de-DE': 40, 'it-IT': 12, 'en-GB': 0 }
+    expect(localeLine({ audience_locales }, order)).toMatchObject({
+      text: 'tr-TR 828 · en-US 174 · +2',
+      title: ['tr-TR 828', 'en-US 174', 'de-DE 40', 'it-IT 12'].join('\n'),
+    })
+  })
+
+  it('writes the codes as they are: never upper-cased', () => {
+    expect(localeLine({ audience_locales: { 'it-IT': 5 } }, order)!.text).toBe('it-IT 5')
+  })
+
+  it('needs no "+" for two or fewer, and ties keep the table order', () => {
+    expect(localeLine({ audience_locales: { 'en-GB': 3, 'de-DE': 3 } }, order)!.text).toBe('de-DE 3 · en-GB 3')
+  })
+
+  it('shows sent/total while sending, what was sent once done', () => {
     const delivery: DeliveryProgress = {
       sms: ch(),
       email: ch(),
       done: false,
-      languages: { tr: { total: 171, sent: 171 }, en: { total: 72, sent: 60 }, de: { total: 42, sent: 0 } },
+      locales: { 'en-GB': { total: 72, sent: 60 }, 'tr-TR': { total: 171, sent: 171 }, 'de-DE': { total: 42, sent: 0 } },
     }
-    expect(languageCells({ delivery }, order)).toEqual([
-      { code: 'TR', text: '171' },
-      { code: 'EN', text: '60/72' },
-      { code: 'DE', text: '0/42' },
-    ])
-    expect(languageCells({ delivery: { ...delivery, done: true } }, order).map((c) => c.text)).toEqual(['171', '60', '0'])
+    expect(localeLine({ delivery }, order)!.text).toBe('tr-TR 171 · en-GB 60/72 · +1')
+    expect(localeLine({ delivery: { ...delivery, done: true } }, order)!.title).toBe(['tr-TR 171', 'en-GB 60', 'de-DE 0'].join('\n'))
   })
 
-  it('shows the audience before anything is sent', () => {
-    expect(languageCells({ audience_languages: { de: 3, tr: 10, en: 0 } }, order)).toEqual([
-      { code: 'TR', text: '10' },
-      { code: 'DE', text: '3' },
-    ])
-  })
-
-  it('shows nothing without data', () => {
-    expect(languageCells({}, order)).toEqual([])
+  it('is absent without data', () => {
+    expect(localeLine({}, order)).toBeNull()
+    expect(localeLine({ audience_locales: { 'tr-TR': 0 } }, order)).toBeNull()
   })
 })
 

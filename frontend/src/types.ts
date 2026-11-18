@@ -8,15 +8,19 @@ export interface MessageContent {
   email_body: string
 }
 
-/** A language code the campaign is written in (see GET /api/info). */
-export type LanguageCode = string
+/** A locale code (BCP 47, "en-GB"): one row of the locales table (see GET /api/info). */
+export type LocaleCode = string
 
-export interface LanguageInfo {
-  code: LanguageCode
+export interface LocaleInfo {
+  code: LocaleCode
   /** English name. */
   name: string
-  /** The language's own name, shown on the tabs. */
-  display: string
+  /** The locale's own name. */
+  native_name: string
+  direction: 'ltr' | 'rtl'
+  /** The locale every campaign is written in first; the others are translated from it. */
+  is_source: boolean
+  fallbacks?: Record<string, string>
 }
 
 export interface Issue {
@@ -25,8 +29,8 @@ export interface Issue {
   message: string
   length?: number
   limit?: number
-  /** Set when the issue belongs to one language of the campaign. */
-  language?: LanguageCode
+  /** Set when the issue belongs to one locale of the campaign. */
+  locale?: LocaleCode
 }
 
 export interface Report {
@@ -92,15 +96,22 @@ export interface Segment {
   suggestion?: 'all_customers'
   /** A sentence shown with an ok audience, e.g. why everyone was chosen. Set by the backend, never by the model. */
   note?: string
-  /** How many reachable people speak each language, e.g. {"tr": 120, "en": 45}. */
-  languages?: Record<LanguageCode, number>
+  /** How many reachable people each locale has, e.g. {"tr-TR": 120, "en-GB": 45}. */
+  locales?: Record<LocaleCode, number>
 }
 
-export type ContentSource = 'llm' | 'fallback' | 'edited'
+export type ContentSource = 'llm' | 'fallback' | 'edited' | 'translated'
 
 export interface StoredContent extends MessageContent {
-  language: LanguageCode
+  locale: LocaleCode
   source: ContentSource
+  /** Changes of the source text; a translation keeps the source version it was made from. */
+  version: number
+  source_version?: number
+  /** A translation made from an older source version. */
+  stale: boolean
+  /** The source text a stale translation was made from. */
+  source_text?: MessageContent
   report: Report
   updated_at: string
 }
@@ -129,6 +140,9 @@ export interface ChannelProgress {
   sent: number
   failed: number
   skipped: number
+  /** When the first and the last message of this channel were accepted (absent until one was). */
+  first_sent_at?: string
+  last_sent_at?: string
 }
 
 /** Why some deliveries failed: a code from the API (rejected, gave_up, too_old, too_long, other). */
@@ -146,8 +160,8 @@ export interface DeliveryProgress {
   done: boolean
   /** Failed deliveries grouped by reason, largest first (absent when none failed). */
   failures?: FailureReason[]
-  /** Messages (SMS and email together) per language: how many go there and how many were sent. */
-  languages?: Record<LanguageCode, { total: number; sent: number }>
+  /** Messages (SMS and email together) per locale: how many go there and how many were sent. */
+  locales?: Record<LocaleCode, { total: number; sent: number }>
 }
 
 export interface ApproveResult {
@@ -159,21 +173,31 @@ export interface ApproveResult {
   scheduled_at?: string
   /** Audience counted at approval time (absent on a repeated approval). */
   audience?: Audience
-  /** How many people receive each language. */
-  languages?: Record<LanguageCode, number>
+  /** How many people receive each locale. */
+  locales?: Record<LocaleCode, number>
   warnings: Issue[]
 }
 
 export interface Campaign {
   id: number
   brief: string
+  /** The model's short campaign name (at most 40 characters); absent for older campaigns. */
+  name?: string
   status: CampaignStatus
   segment?: Segment
-  /** The reference (default) language's text; the other languages are in `translations`. */
+  /** The locale the text is written in first. */
+  source_locale?: LocaleCode
+  /** The campaign's locales: the source and every locale with a reachable person, source first. */
+  locales?: LocaleCode[]
+  /** The source text; the translations are in `translations`. */
   content?: StoredContent
-  translations?: Record<LanguageCode, StoredContent>
-  /** Where the languages do not say the same thing (empty when they agree). */
+  translations?: Record<LocaleCode, StoredContent>
+  /** Translations of the campaign that are missing or stale: approval waits for them. */
+  pending_locales?: LocaleCode[]
+  /** Up-to-date translations that do not say what the source says. */
   mismatches?: Issue[]
+  /** Only in the answer to a translate request: the locales that could not be translated, with why. */
+  translation_failures?: Record<LocaleCode, string>
   /** Present once the campaign has been approved. */
   delivery?: DeliveryProgress
   /** When a scheduled campaign starts; why it could not start. */
@@ -186,8 +210,8 @@ export interface VariableInfo {
   name: string
   budget: number
   fallback: string
-  /** The replacement word in every language. */
-  fallbacks?: Record<LanguageCode, string>
+  /** The replacement word in every locale. */
+  fallbacks?: Record<LocaleCode, string>
 }
 
 export interface Limits {
@@ -200,13 +224,15 @@ export interface Limits {
 export interface CampaignSummary {
   id: number
   brief: string
+  /** The model's short campaign name (at most 40 characters); absent for older campaigns. */
+  name?: string
   status: CampaignStatus
   segment_status?: SegmentStatus
   matched?: number
   /** The audience in words. */
   explanation?: string
-  /** How many reachable people speak each language (an estimate until the campaign starts). */
-  audience_languages?: Record<LanguageCode, number>
+  /** How many reachable people each locale has (an estimate until the campaign starts). */
+  audience_locales?: Record<LocaleCode, number>
   delivery?: DeliveryProgress
   scheduled_at?: string
   schedule_error?: string

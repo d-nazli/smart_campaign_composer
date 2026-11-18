@@ -16,7 +16,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := worker.DefaultConfig()
-	if c.RatePerSecond != 90 || c.Concurrency != 20 || c.Policy.MaxAttempts != 5 || c.RequestTimeout != 5*time.Second || c.Lease != d.Lease {
+	if c.RatePerSecond != 90 || c.Concurrency != 64 || c.Policy.MaxAttempts != 5 || c.RequestTimeout != 5*time.Second || c.Lease != d.Lease {
 		t.Fatalf("%+v", c)
 	}
 }

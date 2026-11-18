@@ -60,13 +60,50 @@ type kit struct {
 	shortUntil func(d string) string // "Son gün 31.12.2026"
 }
 
-// smartMessagesFor writes the copy of one language.
-func smartMessagesFor(req llm.MessageRequest, lang string) string {
+// smartMessagesFor writes the source text (the source locale's phrase book).
+func smartMessagesFor(req llm.MessageRequest) string {
+	k, ok := kitFor(req.Locale.Lang())
+	if !ok {
+		k = turkishKit
+	}
 	th := req.Theme
 	if th.Topic == "" && th.Occasion == "" && len(th.Tones) == 0 {
-		th = brief.ThemeOf(req.Brief, lang) // a caller that did not read the theme
+		th = brief.ThemeOf(req.Brief, k.lang) // a caller that did not read the theme
 	}
-	c := kitFor(lang).write(req.Policy, req.Offer.Normalize(), th, seedOf(req.Brief))
+	return toJSON(k.write(req.Policy, req.Offer.Normalize(), th, seedOf(req.Brief)))
+}
+
+// PseudoPrefix marks a mock translation that is only a copy of the source.
+func PseudoPrefix(code string) string { return "[" + code + "] " }
+
+// smartTranslate is the mock translator. For a locale whose language has a
+// phrase book (en, de) it writes the campaign with that book and keeps it only
+// if it passes the limits and says exactly what the source says (the source
+// may have been edited by hand). Otherwise, and for every other locale, it
+// returns the source text marked with the locale ("[fr-FR] ..."): numbers,
+// dates and {{placeholders}} are then the source's own, and a new locale works
+// without code. The mark is dropped from a field it would push over a limit.
+func smartTranslate(req llm.TranslateRequest) string {
+	if k, ok := kitFor(req.Target.Lang()); ok && req.Target.Lang() != req.SourceLocale.Lang() {
+		th := brief.ThemeOf(req.Brief, k.lang)
+		c := k.write(req.Policy, req.Offer.Normalize(), th, seedOf(req.Brief))
+		if norm, rep := req.Policy.Validate(c); rep.OK && len(content.ConsistentWith(req.SourceLocale, req.Source, req.Target, norm)) == 0 {
+			return toJSON(norm)
+		}
+	}
+	mark := PseudoPrefix(req.Target.Code)
+	c := req.Source
+	if t := mark + c.SMSBody; req.Policy.EffectiveLength(t) <= content.SMSMaxRunes {
+		c.SMSBody = t
+	}
+	if t := mark + c.EmailSubject; req.Policy.EffectiveLength(t) <= content.SubjectMaxRunes {
+		c.EmailSubject = t
+	}
+	c.EmailBody = mark + c.EmailBody
+	return toJSON(c)
+}
+
+func toJSON(c content.Content) string {
 	raw, _ := json.Marshal(messagesJSON{SMSBody: c.SMSBody, EmailSubject: c.EmailSubject, EmailBody: c.EmailBody})
 	return string(raw)
 }
@@ -77,14 +114,17 @@ type messagesJSON struct {
 	EmailBody    string `json:"email_body"`
 }
 
-func kitFor(lang string) kit {
+// kitFor returns the phrase book of a language ("en" for every en-* locale).
+func kitFor(lang string) (kit, bool) {
 	switch lang {
+	case "tr":
+		return turkishKit, true
 	case "en":
-		return englishKit
+		return englishKit, true
 	case "de":
-		return germanKit
+		return germanKit, true
 	}
-	return turkishKit
+	return kit{}, false
 }
 
 func seedOf(s string) int {

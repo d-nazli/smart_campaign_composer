@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -117,11 +118,21 @@ func sqlCampaign(t *testing.T, pool *pgxpool.Pool, nSMS, nEmail int) int64 {
 	if err := pool.QueryRow(ctx, `INSERT INTO campaigns (brief, status) VALUES ('b', 'approved') RETURNING id`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	// One text per language, as a real approval guarantees.
-	_, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, language, sms_body, email_subject, email_body, source) VALUES
-		($1, 'tr', '{{first_name}}, %15 indirim seni bekliyor!', '%15 indirim', 'Merhaba {{first_name}}, %15 indirim var.', 'llm'),
-		($1, 'en', '{{first_name}}, 15% off is waiting for you!', '15% off', 'Hi {{first_name}}, enjoy 15% off.', 'llm'),
-		($1, 'de', '{{first_name}}, 15 % Rabatt wartet auf Sie!', '15 % Rabatt', 'Hallo {{first_name}}, 15 % Rabatt für Sie.', 'llm')`, id)
+	// One text per locale, as a real approval guarantees.
+	_, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, locale, sms_body, email_subject, email_body, source, source_version)
+		SELECT $1, code,
+		       CASE WHEN code LIKE 'en-%' THEN '{{first_name}}, 15% off is waiting for you!'
+		            WHEN code LIKE 'de-%' THEN '{{first_name}}, 15 % Rabatt wartet auf Sie!'
+		            WHEN is_source THEN '{{first_name}}, %15 indirim seni bekliyor!'
+		            ELSE '[' || code || '] {{first_name}}, %15 indirim seni bekliyor!' END,
+		       CASE WHEN code LIKE 'en-%' THEN '15% off' WHEN code LIKE 'de-%' THEN '15 % Rabatt' ELSE '%15 indirim' END,
+		       CASE WHEN code LIKE 'en-%' THEN 'Hi {{first_name}}, enjoy 15% off.'
+		            WHEN code LIKE 'de-%' THEN 'Hallo {{first_name}}, 15 % Rabatt für Sie.'
+		            WHEN is_source THEN 'Merhaba {{first_name}}, %15 indirim var.'
+		            ELSE '[' || code || '] Merhaba {{first_name}}, %15 indirim var.' END,
+		       CASE WHEN is_source THEN 'llm' ELSE 'translated' END,
+		       CASE WHEN is_source THEN NULL ELSE 1 END
+		FROM locales`, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +371,7 @@ func (d *dropFirstMarkSent) MarkSent(ctx context.Context, id int64, pid string, 
 
 // A 429 is obeyed: the retry waits for Retry-After, costs no attempt, and the
 // whole channel pauses, not just the one delivery that was refused.
-func Test429IsObeyedForTheDeliveryAndForTheChannel(t *testing.T) {
+func TestALone429DelaysOnlyItsOwnMessage(t *testing.T) {
 	pool := testdb.NewSeeded(t)
 	sqlCampaign(t, pool, 2, 0)
 	clk := fakeClock()
@@ -391,16 +402,16 @@ func Test429IsObeyedForTheDeliveryAndForTheChannel(t *testing.T) {
 	mu.Lock()
 	t1 := at[0]
 	mu.Unlock()
-	// Second delivery (a different recipient): the CHANNEL is paused, so its
-	// request must not leave before the pause is over either.
+	// Second delivery (a different recipient): one stray 429 does not stall the
+	// channel, so it goes out at once (the refused one waits for its own Retry-After).
 	if n, err := w.RunOnce(ctx); err != nil || n != 1 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 	mu.Lock()
 	t2 := at[1]
 	mu.Unlock()
-	if t2.Sub(t1) < 7*time.Second {
-		t.Fatalf("the next request went out %v after the 429, Retry-After said 7s", t2.Sub(t1))
+	if t2.Sub(t1) >= 7*time.Second {
+		t.Fatalf("one stray 429 stalled the whole channel for %v", t2.Sub(t1))
 	}
 
 	var attempts, limited int
@@ -518,6 +529,71 @@ func TestRealPaceNeverTriggersTheProvidersRateLimit(t *testing.T) {
 	}
 }
 
+// The requirement: each channel (SMS and email, at the same time, against a
+// slow and flaky provider) sends close to 100 per second and never above.
+// Provider: 50-150 ms latency, 5% 5xx, 3% injected 429 (Retry-After 1-3 s), 1%
+// calls that hang past the worker's request timeout.
+func TestEachChannelSendsNearButNeverAbove100PerSecond(t *testing.T) {
+	pool := testdb.NewSeeded(t)
+	const perChannel = 800
+	id := sqlCampaign(t, pool, perChannel, perChannel)
+	if c := counts(t, pool, id); c["sms/pending"] < perChannel || c["email/pending"] < perChannel {
+		t.Skipf("seed has too few reachable recipients: %v", c)
+	}
+
+	cfg := provider.DefaultConfig() // the demo's noisy provider
+	cfg.TimeoutDelay = 6 * time.Second
+	cfg.Seed = 7
+	tp := newProvider(t, cfg, clock.Real{})
+	w := newWorker(t, queue.NewPG(pool), tp.URL, clock.Real{}, worker.DefaultConfig())
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- w.Run(runCtx) }()
+	deadline := time.Now().Add(60 * time.Second)
+	for scalar(t, pool, `SELECT count(*) FROM deliveries WHERE campaign_id=$1 AND status IN ('pending','sending')`, id) > 0 {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("not finished in 60s: %v", counts(t, pool, id))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	byChannel := map[string][]time.Time{}
+	for _, r := range tp.requests() {
+		byChannel[r.Channel] = append(byChannel[r.Channel], r.At)
+	}
+	for _, ch := range []string{"sms", "email"} {
+		times := byChannel[ch]
+		sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+		if peak := maxInAnyWindow(times); peak > 100 {
+			t.Fatalf("%s: %d calls inside one second", ch, peak)
+		}
+		if st := tp.stats(ch); st.RateLimited != 0 || st.MaxPerWindow > 100 {
+			t.Fatalf("%s: the provider had to push back: %+v", ch, st)
+		}
+		// Steady state: 4 s that start 1 s after the first call (the end of the
+		// campaign is a trickle of retries and must not count).
+		from := times[0].Add(time.Second)
+		n := 0
+		for _, at := range times {
+			if !at.Before(from) && at.Before(from.Add(4*time.Second)) {
+				n++
+			}
+		}
+		rate := float64(n) / 4
+		t.Logf("%s: %.1f provider calls/s over 4 s of steady state (%d calls in all)", ch, rate, len(times))
+		if rate < 80 {
+			t.Fatalf("%s: only %.1f calls/s, expected close to 100", ch, rate)
+		}
+	}
+	if c := counts(t, pool, id); c["sms/sent"] < perChannel*9/10 || c["email/sent"] < perChannel*9/10 {
+		t.Fatalf("too few sent: %v", c)
+	}
+}
+
 // Every provider call is timed, retries included, so the response-time metric
 // reflects what the provider really did.
 func TestEveryProviderCallIsTimed(t *testing.T) {
@@ -547,11 +623,26 @@ func TestEveryProviderCallIsTimed(t *testing.T) {
 	}
 }
 
-// ---- languages ---------------------------------------------------------------------
+// ---- locales ---------------------------------------------------------------------
 
-// Everyone gets the text in THEIR language, with that language's wording for a
-// missing name, and each person gets it once.
-func TestEveryRecipientGetsTheirOwnLanguage(t *testing.T) {
+// wording is a word only the text of that locale has: the phrase books write
+// en-* and de-*, every other translation of the mock is the source marked with
+// its code.
+func wording(code string) string {
+	switch {
+	case strings.HasPrefix(code, "en-"):
+		return "off"
+	case strings.HasPrefix(code, "de-"):
+		return "Rabatt"
+	case code == "tr-TR":
+		return "indirim"
+	}
+	return "[" + code + "]"
+}
+
+// Everyone gets the text in THEIR locale (an exact match), and each person
+// gets it once.
+func TestEveryRecipientGetsTheirOwnLocale(t *testing.T) {
 	pool := testdb.NewSeeded(t)
 	id, approved := approvedCampaign(t, pool)
 	clk := fakeClock()
@@ -559,62 +650,71 @@ func TestEveryRecipientGetsTheirOwnLanguage(t *testing.T) {
 	w := newWorker(t, queue.NewPG(pool), tp.URL, clk, testConfig())
 	drain(t, w, pool, clk)
 
-	// Which language does each address belong to?
-	langOf := map[string]string{}
-	rows, err := pool.Query(ctx, `SELECT coalesce(phone, ''), coalesce(email, ''), language FROM users`)
+	// Which locale does each address belong to?
+	localeOf := map[string]string{}
+	rows, err := pool.Query(ctx, `SELECT coalesce(phone, ''), coalesce(email, ''), locale FROM users`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for rows.Next() {
-		var phone, email, lang string
-		if err := rows.Scan(&phone, &email, &lang); err != nil {
+		var phone, email, code string
+		if err := rows.Scan(&phone, &email, &code); err != nil {
 			t.Fatal(err)
 		}
 		for key, addr := range map[string]string{"sms:" + phone: phone, "email:" + email: email} {
 			if addr == "" {
 				continue
 			}
-			if _, dup := langOf[key]; dup {
-				langOf[key] = "?" // the malformed addresses of the seed are shared by several people
+			if _, dup := localeOf[key]; dup {
+				localeOf[key] = "?" // the malformed addresses of the seed are shared by several people
 			} else {
-				langOf[key] = lang
+				localeOf[key] = code
 			}
 		}
 	}
 	rows.Close()
 
-	wording := map[string]string{"tr": "indirim", "en": "off", "de": "Rabatt"}
-	perLang := map[string]int{}
+	perLocale := map[string]int{}
 	for _, r := range tp.requests() {
-		lang, ok := langOf[r.Channel+":"+r.To]
-		if !ok || lang == "?" {
+		code, ok := localeOf[r.Channel+":"+r.To]
+		if !ok || code == "?" {
 			continue // a malformed address nobody (or several people) own
 		}
-		perLang[lang]++
-		if !strings.Contains(r.Body, wording[lang]) {
-			t.Fatalf("a %s speaker got %q", lang, r.Body)
+		perLocale[code]++
+		text := r.Subject + " " + r.Body
+		// A marked copy keeps its mark in the email body; the SMS may have dropped it to stay within 160.
+		if r.Channel == "sms" && strings.HasPrefix(wording(code), "[") {
+			text = strings.ReplaceAll(r.Body, "indirim", wording(code))
+		}
+		if !strings.Contains(text, wording(code)) {
+			t.Fatalf("%s got %q", code, text)
 		}
 	}
-	for _, lang := range []string{"tr", "en", "de"} {
-		if perLang[lang] == 0 {
-			t.Fatalf("nobody got a %s message: %v", lang, perLang)
+	for _, code := range []string{"tr-TR", "en-GB", "en-US", "de-DE", "fr-FR", "ar-SA"} {
+		if perLocale[code] == 0 {
+			t.Fatalf("nobody got a %s message: %v", code, perLocale)
 		}
 	}
 	if c := counts(t, pool, id); c["sms/sent"] == 0 || c["email/sent"] == 0 {
 		t.Fatalf("%v (queued %+v)", c, approved.Queued)
 	}
+	// The locale each message was written in is kept on the delivery.
+	if n := scalar(t, pool, `SELECT count(*) FROM deliveries d JOIN users u ON u.id = d.user_id
+		WHERE d.campaign_id=$1 AND d.status='sent' AND d.locale IS DISTINCT FROM u.locale`, id); n != 0 {
+		t.Fatalf("%d sent deliveries do not record their locale", n)
+	}
 }
 
-// A delivery whose recipient's language has no stored text is not sent in some
-// other language by accident: it waits and is retried (and the problem is loud).
-func TestAMissingLanguageTextIsNeverReplacedByAnotherLanguage(t *testing.T) {
+// A recipient whose locale has no stored text gets nothing: never another
+// locale's text (Insider's localization drops them the same way).
+func TestARecipientWhoseLocaleHasNoTextGetsNothing(t *testing.T) {
 	pool := testdb.NewSeeded(t)
 	id := sqlCampaign(t, pool, 0, 0)
-	if _, err := pool.Exec(ctx, `DELETE FROM campaign_contents WHERE campaign_id=$1 AND language='de'`, id); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM campaign_contents WHERE campaign_id=$1 AND locale='de-DE'`, id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deliveries (campaign_id, user_id, channel)
-		SELECT $1, id, 'sms' FROM users WHERE language='de' AND sms_consent AND phone ~ '^\+90[0-9]{10}$' ORDER BY id LIMIT 1`, id); err != nil {
+		SELECT $1, id, 'sms' FROM users WHERE locale='de-DE' AND sms_consent AND phone ~ '^\+90[0-9]{10}$' ORDER BY id LIMIT 1`, id); err != nil {
 		t.Fatal(err)
 	}
 	clk := fakeClock()
@@ -624,10 +724,10 @@ func TestAMissingLanguageTextIsNeverReplacedByAnotherLanguage(t *testing.T) {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 	if got := len(tp.requests()); got != 0 {
-		t.Fatalf("%d messages were sent without a German text", got)
+		t.Fatalf("%d messages were sent without a de-DE text", got)
 	}
-	if c := counts(t, pool, id); c["sms/pending"] != 1 {
-		t.Fatalf("the delivery should wait for its text: %v", c)
+	if n := scalar(t, pool, `SELECT count(*) FROM deliveries WHERE campaign_id=$1 AND status='skipped' AND last_error LIKE 'no content for locale%de-DE'`, id); n != 1 {
+		t.Fatalf("the delivery should be skipped with the reason: %v", counts(t, pool, id))
 	}
 }
 
@@ -653,11 +753,9 @@ func TestAMessageOverTheLimitAfterPersonalizationIsNeverSent(t *testing.T) {
 	if _, rep := narrow.Validate(tmpl); !rep.OK || rep.SMSLength != 160 || rep.SubjectLength != 80 {
 		t.Fatalf("the template must be exactly at the limits for an 18-character name: %+v", rep)
 	}
-	for _, lang := range []string{"tr", "en", "de"} {
-		if _, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, language, sms_body, email_subject, email_body, source)
-			VALUES ($1, $2, $3, $4, $5, 'llm')`, id, lang, tmpl.SMSBody, tmpl.EmailSubject, tmpl.EmailBody); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := pool.Exec(ctx, `INSERT INTO campaign_contents (campaign_id, locale, sms_body, email_subject, email_body, source)
+		VALUES ($1, 'tr-TR', $2, $3, $4, 'llm')`, id, tmpl.SMSBody, tmpl.EmailSubject, tmpl.EmailBody); err != nil {
+		t.Fatal(err)
 	}
 	var longID, shortID int64
 	if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE sms_consent AND email_consent AND phone ~ '^\+90[0-9]{10}$'
@@ -668,7 +766,7 @@ func TestAMessageOverTheLimitAfterPersonalizationIsNeverSent(t *testing.T) {
 		AND email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' AND id > $1 ORDER BY id LIMIT 1`, longID).Scan(&shortID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE users SET first_name = CASE WHEN id=$1 THEN 'Abdurrahmanşerifxxxx' ELSE 'Ali' END
+	if _, err := pool.Exec(ctx, `UPDATE users SET first_name = CASE WHEN id=$1 THEN 'Abdurrahmanşerifxxxx' ELSE 'Ali' END, locale = 'tr-TR'
 		WHERE id IN ($1, $2)`, longID, shortID); err != nil {
 		t.Fatal(err)
 	}

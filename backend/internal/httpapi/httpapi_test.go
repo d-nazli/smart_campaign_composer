@@ -134,33 +134,34 @@ func TestInfoExposesLimitsAndVariables(t *testing.T) {
 	}
 }
 
-// The screen reads the language list with exactly these lowercase keys; with
-// other keys every language code is undefined and the generated messages never
-// show up ("henüz mesaj yok", approval stays disabled).
-func TestInfoListsTheLanguagesWithTheKeysTheScreenReads(t *testing.T) {
+// The screen reads the locales with exactly these keys, straight from the
+// locales table: the source first.
+func TestInfoListsTheLocalesWithTheKeysTheScreenReads(t *testing.T) {
 	srv := newServer(t, mock.New(0))
 	_, body := do(t, "GET", srv.URL+"/api/info", nil)
 	var info struct {
-		Languages       []map[string]string `json:"languages"`
-		DefaultLanguage string              `json:"default_language"`
-		Variables       []struct {
+		Locales      []map[string]any `json:"locales"`
+		SourceLocale string           `json:"source_locale"`
+		Variables    []struct {
 			Fallbacks map[string]string `json:"fallbacks"`
 		} `json:"variables"`
 	}
 	if err := json.Unmarshal(body, &info); err != nil {
 		t.Fatal(err)
 	}
-	if info.DefaultLanguage != "tr" || len(info.Languages) != 3 {
+	if info.SourceLocale != "tr-TR" || len(info.Locales) != 12 || info.Locales[0]["code"] != "tr-TR" || info.Locales[0]["is_source"] != true {
 		t.Fatalf("info: %s", body)
 	}
-	for i, want := range []string{"tr", "en", "de"} {
-		l := info.Languages[i]
-		if l["code"] != want || l["name"] == "" || l["display"] == "" || len(l) != 3 {
-			t.Fatalf("language %d: %v (want lowercase keys code, name, display)", i, l)
+	for _, l := range info.Locales {
+		if l["code"] == "" || l["name"] == "" || l["native_name"] == "" || (l["direction"] != "ltr" && l["direction"] != "rtl") || len(l) != 6 {
+			t.Fatalf("locale %v (want keys code, name, native_name, direction, is_source, fallbacks)", l)
+		}
+		if l["code"] == "ar-SA" && l["direction"] != "rtl" {
+			t.Fatal("ar-SA is written right to left")
 		}
 	}
 	for _, v := range info.Variables {
-		if len(v.Fallbacks) != 3 {
+		if len(v.Fallbacks) != 12 {
 			t.Fatalf("fallbacks: %v", v.Fallbacks)
 		}
 	}
@@ -280,22 +281,22 @@ func TestStreamMessagesOverSSE(t *testing.T) {
 	}
 
 	events := readEvents(t, resp.Body)
-	// Every event says which language it is about; the reference language's own
-	// sequence is the familiar one, and the others each end validated.
+	// Every event says which locale it is about; the source's own sequence is
+	// the familiar one, and every translation ends validated.
 	var refEvents, all []event
 	validated := map[string]map[string]any{}
 	built := map[string]map[string]string{}
 	for _, e := range events {
-		lang, _ := e.Data["language"].(string)
+		lang, _ := e.Data["locale"].(string)
 		if e.Name == "done" {
 			refEvents = append(refEvents, e)
 			continue
 		}
 		if lang == "" {
-			t.Fatalf("event %s has no language: %v", e.Name, e.Data)
+			t.Fatalf("event %s has no locale: %v", e.Name, e.Data)
 		}
 		all = append(all, e)
-		if lang == "tr" {
+		if lang == "tr-TR" {
 			refEvents = append(refEvents, e)
 		}
 		switch e.Name {
@@ -314,7 +315,7 @@ func TestStreamMessagesOverSSE(t *testing.T) {
 	if events[len(events)-1].Name != "done" {
 		t.Fatalf("the stream must end with done: %s", names(events))
 	}
-	for _, lang := range []string{"tr", "en", "de"} {
+	for _, lang := range []string{"tr-TR", "en-GB", "de-DE", "ar-SA"} {
 		v, ok := validated[lang]
 		if !ok {
 			t.Fatalf("no validated event for %s", lang)
@@ -441,9 +442,15 @@ func TestPutContentValidatesLikeTheModelOutput(t *testing.T) {
 	}
 
 	one := map[string]string{"sms_body": "Merhaba {{ first_name }}!", "email_subject": "Konu", "email_body": "Gövde"}
-	resp, body = do(t, "PUT", url, map[string]any{"languages": map[string]any{"tr": one, "en": one, "de": one}})
+	resp, body = do(t, "PUT", url, map[string]any{"locales": map[string]any{"tr-TR": one}})
 	if resp.StatusCode != 200 || !strings.Contains(string(body), `"source":"edited"`) || !strings.Contains(string(body), "Merhaba {{first_name}}!") {
 		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "PUT", url, map[string]any{"languages": map[string]any{"tr": one}}); resp.StatusCode != 400 {
+		t.Fatalf("the old body is not read: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "PUT", url, map[string]any{"locales": map[string]any{"fr": one}}); resp.StatusCode != 400 || !strings.Contains(string(body), "bilinmeyen locale") {
+		t.Fatalf("unknown locale: %d %s", resp.StatusCode, body)
 	}
 }
 
@@ -458,15 +465,16 @@ func TestApproveOverHTTP(t *testing.T) {
 		t.Fatalf("before content: %d %s", resp.StatusCode, body)
 	}
 
-	resp, body = do(t, "PUT", fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id),
-		map[string]any{"languages": map[string]any{
-			"tr": map[string]string{"sms_body": "{{first_name}}, %30 indirim seni bekliyor!", "email_subject": "%30 indirim", "email_body": "Merhaba {{first_name}}, %30 indirim var."},
-			"en": map[string]string{"sms_body": "{{first_name}}, 30% off is waiting for you!", "email_subject": "30% off", "email_body": "Hi {{first_name}}, enjoy 30% off."},
-			"de": map[string]string{"sms_body": "{{first_name}}, 30 % Rabatt wartet auf Sie!", "email_subject": "30 % Rabatt", "email_body": "Hallo {{first_name}}, 30 % Rabatt für Sie."},
-		}})
-	if resp.StatusCode != 200 {
-		t.Fatalf("put: %d %s", resp.StatusCode, body)
+	pending := putSource(t, srv, id)
+	if len(pending) == 0 {
+		t.Fatal("a source written by hand has no translations yet")
 	}
+	// Translations missing: refused on the server, whatever the screen shows.
+	resp, body = do(t, "POST", approve, nil)
+	if resp.StatusCode != 409 || !strings.Contains(string(body), `"stale_translations"`) || !strings.Contains(string(body), `"missing":["`) {
+		t.Fatalf("approve without translations: %d %s", resp.StatusCode, body)
+	}
+	translate(t, srv, id, pending)
 
 	type approved struct {
 		Status          string `json:"status"`
@@ -511,25 +519,82 @@ func TestApproveOverHTTP(t *testing.T) {
 
 var _ = context.Background
 
-func putAllLanguages(t *testing.T, srv *httptest.Server, id int64) {
+// putSource writes the source text by hand and returns the locales that wait
+// for a translation.
+func putSource(t *testing.T, srv *httptest.Server, id int64) []string {
 	t.Helper()
-	one := func(sms, subject, body string) map[string]string {
-		return map[string]string{"sms_body": sms, "email_subject": subject, "email_body": body}
-	}
-	resp, body := do(t, "PUT", fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id), map[string]any{"languages": map[string]any{
-		"tr": one("{{first_name}}, %30 indirim seni bekliyor!", "%30 indirim", "Merhaba {{first_name}}, %30 indirim var."),
-		"en": one("{{first_name}}, 30% off is waiting for you!", "30% off", "Hi {{first_name}}, enjoy 30% off."),
-		"de": one("{{first_name}}, 30 % Rabatt wartet auf Sie!", "30 % Rabatt", "Hallo {{first_name}}, 30 % Rabatt für Sie."),
+	resp, body := do(t, "PUT", fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id), map[string]any{"locales": map[string]any{
+		"tr-TR": map[string]string{"sms_body": "{{first_name}}, %30 indirim seni bekliyor!", "email_subject": "%30 indirim", "email_body": "Merhaba {{first_name}}, %30 indirim var."},
 	}})
 	if resp.StatusCode != 200 {
 		t.Fatalf("put: %d %s", resp.StatusCode, body)
+	}
+	var v struct {
+		Pending []string `json:"pending_locales"`
+	}
+	_ = json.Unmarshal(body, &v)
+	return v.Pending
+}
+
+func translate(t *testing.T, srv *httptest.Server, id int64, codes []string) {
+	t.Helper()
+	resp, body := do(t, "POST", fmt.Sprintf("%s/api/campaigns/%d/translations", srv.URL, id), map[string]any{"locales": codes})
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"pending_locales":[]`) {
+		t.Fatalf("translate: %d %s", resp.StatusCode, body)
+	}
+}
+
+func putAllLocales(t *testing.T, srv *httptest.Server, id int64) {
+	t.Helper()
+	translate(t, srv, id, putSource(t, srv, id))
+}
+
+// Only the source is written by hand: a translation's text is refused over
+// HTTP, the translate endpoint takes no text, and a reworded source makes every
+// translation stale until it is translated again.
+func TestTranslationsOverHTTP(t *testing.T) {
+	srv := newServer(t, mock.New(0))
+	id := createCampaign(t, srv)
+	putAllLocales(t, srv, id)
+	content := fmt.Sprintf("%s/api/campaigns/%d/content", srv.URL, id)
+	translations := fmt.Sprintf("%s/api/campaigns/%d/translations", srv.URL, id)
+
+	de := map[string]string{"sms_body": "{{first_name}}, %30 Rabatt!", "email_subject": "%30 Rabatt", "email_body": "Hallo {{first_name}}, %30 Rabatt."}
+	resp, body := do(t, "PUT", content, map[string]any{"locales": map[string]any{"de-DE": de}})
+	if resp.StatusCode != 422 || !strings.Contains(string(body), `"translation_read_only"`) || !strings.Contains(string(body), `"locale":"de-DE"`) {
+		t.Fatalf("a hand-written translation: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "POST", translations, map[string]any{"locales": []string{"de-DE"}, "content": de}); resp.StatusCode != 400 {
+		t.Fatalf("the translate endpoint takes no text: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "POST", translations, map[string]any{"locales": []string{"de-DE"}, "overwrite": []string{"de-DE"}}); resp.StatusCode != 400 {
+		t.Fatalf("there is nothing to overwrite any more: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "POST", translations, map[string]any{"locales": []string{"de-DE"}}); resp.StatusCode != 200 ||
+		!strings.Contains(string(body), `"locale":"de-DE","source":"translated"`) {
+		t.Fatalf("translate again: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := do(t, "POST", translations+"/current", map[string]any{"locales": []string{"de-DE"}}); resp.StatusCode != 404 && resp.StatusCode != 405 {
+		t.Fatalf("there is no 'mark current' any more: %d", resp.StatusCode)
+	}
+
+	// Reword the source: every translation goes stale and approval waits.
+	if resp, body := do(t, "PUT", content, map[string]string{"sms_body": "{{first_name}}, %30 indirim seni bekliyor!", "email_subject": "%30 indirim", "email_body": "Merhaba {{first_name}}, %30 indirim var. Görüşmek üzere!"}); resp.StatusCode != 200 ||
+		!strings.Contains(string(body), `"stale":true`) {
+		t.Fatalf("reword: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "POST", fmt.Sprintf("%s/api/campaigns/%d/approve", srv.URL, id), nil); resp.StatusCode != 409 || !strings.Contains(string(body), `"stale":["`) {
+		t.Fatalf("approve with stale translations: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := do(t, "POST", translations, map[string]any{"locales": []string{"tr-TR"}}); resp.StatusCode != 400 {
+		t.Fatalf("the source is not translated: %d", resp.StatusCode)
 	}
 }
 
 func TestScheduleAndCancelOverHTTP(t *testing.T) {
 	srv := newServer(t, mock.New(0))
 	id := createCampaign(t, srv)
-	putAllLanguages(t, srv, id)
+	putAllLocales(t, srv, id)
 	approve := fmt.Sprintf("%s/api/campaigns/%d/approve", srv.URL, id)
 	cancel := fmt.Sprintf("%s/api/campaigns/%d/cancel", srv.URL, id)
 	at := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
@@ -598,7 +663,7 @@ func TestScheduleAndCancelOverHTTP(t *testing.T) {
 
 	// A campaign that already started cannot be cancelled.
 	id2 := createCampaign(t, srv)
-	putAllLanguages(t, srv, id2)
+	putAllLocales(t, srv, id2)
 	if resp, body := do(t, "POST", fmt.Sprintf("%s/api/campaigns/%d/approve", srv.URL, id2), nil); resp.StatusCode != 200 {
 		t.Fatalf("send now: %d %s", resp.StatusCode, body)
 	}

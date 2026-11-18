@@ -83,9 +83,9 @@ func offerCampaign(t *testing.T, svc *campaign.Service) int64 {
 func messageCalls(m *mock.Client) []mock.Call {
 	var out []mock.Call
 	for _, c := range m.Calls() {
-		// The scripted run is the reference language's; the translations are
+		// The scripted run is the source text's; the translations are
 		// answered separately (see messages.go) and are not part of these scripts.
-		if c.Kind == "messages" && c.Language == content.DefaultLanguage {
+		if c.Kind == "messages" {
 			out = append(out, c)
 		}
 	}
@@ -200,7 +200,7 @@ func TestSmartMockMessagesFollowTheStoredOffer(t *testing.T) {
 func TestEditedContentWithoutTheOfferGetsAWarningNotASilentPass(t *testing.T) {
 	svc, _ := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
-	v, err := svc.SaveContents(context.Background(), id, allLanguages(content.Content{
+	v, err := saveSource(context.Background(), svc, id, (content.Content{
 		SMSBody: "{{first_name}}, sepetin seni bekliyor!", EmailSubject: "Sepetin seni bekliyor", EmailBody: "Merhaba {{first_name}}, sepetin hâlâ burada.",
 	}))
 	if err != nil {

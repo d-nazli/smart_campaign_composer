@@ -3,6 +3,7 @@ package campaign_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"smartcampaign/internal/llm/mock"
 )
@@ -89,16 +90,16 @@ func TestListOfNothingIsAnEmptyListNotNull(t *testing.T) {
 	}
 }
 
-// Per language: how many messages go to each language and how many were sent.
+// Per locale: how many messages go to each locale and how many were sent.
 // The numbers add up to the campaign's own totals and agree with the queue.
-func TestDeliveryProgressCountsEachLanguage(t *testing.T) {
+func TestDeliveryProgressCountsEachLocale(t *testing.T) {
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := approvableCampaign(t, svc)
 	if _, err := svc.Approve(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	// Some of every language are sent, the rest still wait.
+	// Some are sent, the rest still wait.
 	if _, err := pool.Exec(ctx, `
 		UPDATE deliveries SET status='sent' WHERE id IN (
 			SELECT d.id FROM deliveries d JOIN users u ON u.id=d.user_id WHERE d.campaign_id=$1 AND d.id % 3 = 0)`, id); err != nil {
@@ -109,35 +110,35 @@ func TestDeliveryProgressCountsEachLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	langs := v.Delivery.Languages
-	if len(langs) != 3 {
-		t.Fatalf("every language of the seeded audience is present: %+v", langs)
+	langs := v.Delivery.Locales
+	if len(langs) < 6 {
+		t.Fatalf("the locales of the seeded audience are present: %+v", langs)
 	}
 	total, sent := 0, 0
 	for code, p := range langs {
 		var wantTotal, wantSent int
 		if err := pool.QueryRow(ctx, `
 			SELECT count(*), count(*) FILTER (WHERE d.status='sent')
-			FROM deliveries d JOIN users u ON u.id=d.user_id WHERE d.campaign_id=$1 AND u.language=$2`, id, code).Scan(&wantTotal, &wantSent); err != nil {
+			FROM deliveries d JOIN users u ON u.id=d.user_id WHERE d.campaign_id=$1 AND coalesce(d.locale, u.locale)=$2`, id, code).Scan(&wantTotal, &wantSent); err != nil {
 			t.Fatal(err)
 		}
-		if p.Total != wantTotal || p.Sent != wantSent || p.Sent == 0 || p.Sent >= p.Total {
-			t.Errorf("%s: %+v, want total %d sent %d (some but not all sent)", code, p, wantTotal, wantSent)
+		if p.Total != wantTotal || p.Sent != wantSent || p.Total == 0 {
+			t.Errorf("%s: %+v, want total %d sent %d", code, p, wantTotal, wantSent)
 		}
 		total, sent = total+p.Total, sent+p.Sent
 	}
-	if total != v.Delivery.SMS.Total+v.Delivery.Email.Total || sent != v.Delivery.SMS.Sent+v.Delivery.Email.Sent {
-		t.Fatalf("languages add up to %d/%d, channels say %d/%d", sent, total,
+	if sent == 0 || sent == total || total != v.Delivery.SMS.Total+v.Delivery.Email.Total || sent != v.Delivery.SMS.Sent+v.Delivery.Email.Sent {
+		t.Fatalf("locales add up to %d/%d, channels say %d/%d", sent, total,
 			v.Delivery.SMS.Sent+v.Delivery.Email.Sent, v.Delivery.SMS.Total+v.Delivery.Email.Total)
 	}
 
 	list, err := svc.List(ctx, 10)
-	if err != nil || len(list) != 1 || list[0].Delivery.Languages["tr"] != langs["tr"] {
+	if err != nil || len(list) != 1 || list[0].Delivery.Locales["tr-TR"] != langs["tr-TR"] {
 		t.Fatalf("the list carries the same numbers: %v %+v", err, list)
 	}
 }
 
-// A card shows who the campaign is for (in words) and how many people speak each language.
+// A card shows who the campaign is for (in words) and how many people each locale has.
 func TestListSummaryNamesTheAudience(t *testing.T) {
 	svc, _ := newService(t, mock.New(0))
 	ctx := context.Background()
@@ -150,11 +151,11 @@ func TestListSummaryNamesTheAudience(t *testing.T) {
 		t.Fatal("the summary must say who the audience is")
 	}
 	sum := 0
-	for _, n := range list[0].AudienceLanguages {
+	for _, n := range list[0].AudienceLocales {
 		sum += n
 	}
-	if len(list[0].AudienceLanguages) != 3 || sum == 0 {
-		t.Fatalf("audience languages: %v", list[0].AudienceLanguages)
+	if len(list[0].AudienceLocales) < 6 || sum == 0 {
+		t.Fatalf("audience locales: %v", list[0].AudienceLocales)
 	}
 }
 
@@ -174,5 +175,56 @@ func TestListKeepsTheScheduledTimeAfterTheStart(t *testing.T) {
 	list, _ = svc.List(ctx, 10)
 	if list[0].ScheduledAt == nil || !list[0].ScheduledAt.Equal(at) {
 		t.Fatalf("the planned time must stay on the card: %+v", list[0])
+	}
+}
+
+// The model's short name is stored with the campaign and shown in the list.
+func TestTheCampaignNameIsStoredAndListed(t *testing.T) {
+	svc, _ := newService(t, mock.New(0))
+	ctx := context.Background()
+	v, err := svc.Create(ctx, exampleBrief)
+	if err != nil || v.Name != "İstanbul sepet hatırlatma · %30" {
+		t.Fatalf("%v %q", err, v.Name)
+	}
+	list, err := svc.List(ctx, 10)
+	if err != nil || list[0].Name != v.Name || list[0].Explanation == "" {
+		t.Fatalf("%v %+v", err, list)
+	}
+}
+
+// The list shows each channel's speed, which the screen computes from the first
+// and last time a message was accepted. Nothing sent yet: no times.
+func TestDeliveryProgressBoundsTheSendingTimePerChannel(t *testing.T) {
+	svc, pool := newService(t, mock.New(0))
+	ctx := context.Background()
+	id := approvableCampaign(t, svc)
+	if _, err := svc.Approve(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	list, err := svc.List(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := list[0].Delivery.SMS; p.FirstSentAt != nil || p.LastSentAt != nil {
+		t.Fatalf("nothing was sent, yet: %+v", p)
+	}
+
+	t1 := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	for i, at := range []time.Time{t1, t1.Add(26 * time.Second)} {
+		if _, err := pool.Exec(ctx, `UPDATE deliveries SET status='sent', sent_at=$2 WHERE id = (
+			SELECT id FROM deliveries WHERE campaign_id=$1 AND channel='sms' AND status='pending' ORDER BY id LIMIT 1)`, id, at); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	list, err = svc.List(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sms := list[0].Delivery.SMS
+	if sms.FirstSentAt == nil || sms.LastSentAt == nil || !sms.FirstSentAt.Equal(t1) || !sms.LastSentAt.Equal(t1.Add(26*time.Second)) {
+		t.Fatalf("sms sending window: %+v", sms)
+	}
+	if e := list[0].Delivery.Email; e.FirstSentAt != nil {
+		t.Fatalf("email has sent nothing: %+v", e)
 	}
 }

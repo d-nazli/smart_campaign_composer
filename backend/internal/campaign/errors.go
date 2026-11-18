@@ -54,3 +54,23 @@ type InvalidContentError struct {
 }
 
 func (e *InvalidContentError) Error() string { return "content does not satisfy the limits" }
+
+// StaleTranslationsError means the campaign has translations that are missing
+// or made from an older source text: it cannot be approved until they are
+// translated again (or marked up to date).
+type StaleTranslationsError struct {
+	Missing []string
+	Stale   []string
+}
+
+func (e *StaleTranslationsError) Error() string {
+	return fmt.Sprintf("çeviriler hazır değil: eksik %v, güncel değil %v", e.Missing, e.Stale)
+}
+
+// ReadOnlyTranslationError means a request tried to write a translation's
+// text: only the source locale is edited by a person (D97).
+type ReadOnlyTranslationError struct{ Locale, Source string }
+
+func (e *ReadOnlyTranslationError) Error() string {
+	return fmt.Sprintf("%s bir çeviridir ve elle düzenlenemez; yalnız %s düzenlenir, çeviriler ondan yeniden çevrilir", e.Locale, e.Source)
+}

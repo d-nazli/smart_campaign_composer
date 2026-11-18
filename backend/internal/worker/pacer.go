@@ -19,9 +19,20 @@ type Pacer struct {
 	clk      clock.Clock
 	interval time.Duration
 
-	mu   sync.Mutex
-	next time.Time // earliest start of the next slot
+	mu      sync.Mutex
+	next    time.Time   // earliest start of the next slot
+	limited []time.Time // recent 429s, ascending (see RateLimited)
 }
+
+// A lone 429 only delays its own message; the whole channel backs off when
+// limitedBurst of them arrive within limitedWindow. Pacing stays under the
+// provider's limit, so a stray 429 is noise (the mock injects 3% of them), while
+// a burst means the provider really is refusing us. Pausing the channel for
+// every single 429 held a 90/s channel at ~15/s.
+const (
+	limitedWindow = time.Second
+	limitedBurst  = 10
+)
 
 // NewPacer paces perSecond sends per second. The interval is rounded UP to a
 // whole nanosecond, so the real rate is never above perSecond.
@@ -54,4 +65,25 @@ func (p *Pacer) PauseUntil(t time.Time) {
 		p.next = t
 	}
 	p.mu.Unlock()
+}
+
+// RateLimited records a 429 whose Retry-After ends at t. It pauses the channel
+// (PauseUntil) only when 429s come in a burst; it reports whether it did.
+func (p *Pacer) RateLimited(t time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.clk.Now()
+	p.limited = append(p.limited, now)
+	drop := 0
+	for drop < len(p.limited) && now.Sub(p.limited[drop]) >= limitedWindow {
+		drop++
+	}
+	p.limited = p.limited[drop:]
+	if len(p.limited) < limitedBurst {
+		return false
+	}
+	if t.After(p.next) {
+		p.next = t
+	}
+	return true
 }

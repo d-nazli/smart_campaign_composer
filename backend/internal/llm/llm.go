@@ -52,21 +52,32 @@ type MessageRequest struct {
 	Offer       offer.Offer // the incentive the messages must state
 	Policy      content.Policy
 	Previous    []Attempt
-	// Language is the language to write in (a content.Languages code; empty
-	// means the default). Reference is the text of ReferenceLanguage that this
-	// version must mirror; nil for the reference language itself.
-	Language          string
-	Reference         *content.Content
-	ReferenceLanguage string
+	// Locale is the source locale the campaign is written in first; every other
+	// locale is translated from that text (TranslateRequest).
+	Locale content.Locale
 	// Theme is what the copy is about and how it should sound, read from the
 	// brief by code (brief.ThemeOf). Empty fields mean "nothing special".
+	Theme Theme
+}
+
+// TranslateRequest asks for the source text in one target locale.
+type TranslateRequest struct {
+	Source       content.Content
+	SourceLocale content.Locale
+	Target       content.Locale
+	Policy       content.Policy
+	Previous     []Attempt
+	// The campaign the text belongs to: context for the translator (the mock
+	// writes from it with its phrase books).
+	Brief string
+	Offer offer.Offer
 	Theme Theme
 }
 
 // Theme steers the copy. It never changes who receives the campaign.
 type Theme struct {
 	// Occasion is a special day (brief.Occasion* ids), OccasionName its name in
-	// the language being written ("Kadınlar Günü", "Women's Day").
+	// the text being written ("Kadınlar Günü", "Women's Day").
 	Occasion, OccasionName string
 	// Topic is what the campaign is about: cart, winback, welcome, loyal, general.
 	Topic string
@@ -107,6 +118,8 @@ type Client interface {
 	// Messages asks for the SMS/email JSON and calls onDelta with raw text
 	// fragments as they arrive (it may be nil).
 	Messages(ctx context.Context, req MessageRequest, onDelta func(text string)) (Output, error)
+	// Translate asks for the same JSON in another locale, streamed the same way.
+	Translate(ctx context.Context, req TranslateRequest, onDelta func(text string)) (Output, error)
 	// Mode is "mock" or "claude"; Model is the model name (informational).
 	Mode() string
 	Model() string

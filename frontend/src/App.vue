@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ChevronRight, Home, LayoutList, Menu, PenSquare, X } from 'lucide-vue-next'
 import { fetchInfo, llmLabel, type AppInfo } from './api/info'
+import { fetchSystem, type SystemHealth } from './api/system'
+import { allHealthy, downItems, healthItems, healthTitle } from './utils/health'
 import { pageFromHash, type Page } from './utils/dashboard'
 import { urlWithoutCampaign } from './utils/route'
 import Badge from './components/ui/Badge.vue'
@@ -16,6 +18,25 @@ const menuOpen = ref(false)
 const isMock = computed(() => info.value?.llm_mode === 'mock')
 // In Claude mode a quiet badge names the model; in mock mode the badge says so plainly.
 const badge = computed(() => (info.value ? (isMock.value ? 'Mock modu' : llmLabel(info.value)) : null))
+
+// System health: asked every 5 s. All well → a small "Sistem sağlıklı" badge (services in the
+// tooltip); a service down → a red badge here and a red alert on the campaign list.
+const HEALTH_MS = 5000
+const system = ref<SystemHealth | null>(null)
+const unreachable = ref(false)
+const health = computed(() => healthItems(system.value, unreachable.value))
+const healthy = computed(() => allHealthy(health.value))
+const down = computed(() => downItems(health.value))
+const healthTip = computed(() => healthTitle(health.value, info.value ? llmLabel(info.value) : null))
+let healthTimer: number | null = null
+async function refreshHealth() {
+  try {
+    system.value = await fetchSystem()
+    unreachable.value = false
+  } catch {
+    unreachable.value = true
+  }
+}
 
 // ComposeView is rebuilt (new key) every time a NEW campaign starts, so nothing of the old one survives.
 const composeKey = ref(0)
@@ -38,13 +59,18 @@ const onHash = () => {
 
 onMounted(async () => {
   window.addEventListener('hashchange', onHash)
+  void refreshHealth()
+  healthTimer = window.setInterval(refreshHealth, HEALTH_MS)
   try {
     info.value = await fetchInfo()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
 })
-onBeforeUnmount(() => window.removeEventListener('hashchange', onHash))
+onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', onHash)
+  if (healthTimer !== null) window.clearInterval(healthTimer)
+})
 </script>
 
 <template>
@@ -92,6 +118,8 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', onHash))
             {{ badge }}
           </Badge>
           <Badge v-else-if="error" tone="danger" dot>API ulaşılamıyor</Badge>
+          <Badge v-if="healthy" tone="ok" dot class="health" :title="healthTip" :aria-label="'Sistem sağlıklı. ' + healthTip" data-testid="system-badge">Sistem sağlıklı</Badge>
+          <Badge v-else-if="down.length" tone="danger" dot class="health" :title="healthTip" :aria-label="'Sistem sorunu. ' + healthTip" data-testid="system-badge">Sistem sorunu</Badge>
         </div>
       </header>
 
@@ -101,7 +129,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', onHash))
       </nav>
 
       <main class="container content">
-        <DashboardView v-if="page === 'dashboard'" :info="info" />
+        <DashboardView v-if="page === 'dashboard'" :info="info" :down="down" />
         <ComposeView v-else :key="composeKey" :info="info" />
       </main>
     </div>

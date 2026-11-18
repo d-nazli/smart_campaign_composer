@@ -42,6 +42,7 @@ func New(svc *campaign.Service, info Info, ready func(context.Context) error, me
 	mux.HandleFunc("GET /api/campaigns/{id}", a.getCampaign)
 	mux.HandleFunc("POST /api/campaigns/{id}/messages/stream", a.streamMessages)
 	mux.HandleFunc("PUT /api/campaigns/{id}/content", a.putContent)
+	mux.HandleFunc("POST /api/campaigns/{id}/translations", a.translate)
 	mux.HandleFunc("POST /api/campaigns/{id}/approve", a.approve)
 	mux.HandleFunc("POST /api/campaigns/{id}/cancel", a.cancel)
 	if metricsHandler != nil {
@@ -81,7 +82,12 @@ func (a *api) getSystem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"api": "ok", "database": db, "worker": worker})
 }
 
-func (a *api) getInfo(w http.ResponseWriter, _ *http.Request) {
+func (a *api) getInfo(w http.ResponseWriter, r *http.Request) {
+	ls, err := a.svc.Locales(r.Context())
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
 	out := map[string]any{
 		"llm_mode": a.info.LLMMode,
 		"limits": map[string]int{
@@ -89,9 +95,9 @@ func (a *api) getInfo(w http.ResponseWriter, _ *http.Request) {
 			"subject_max":    content.SubjectMaxRunes,
 			"email_body_max": content.EmailBodyMaxRunes,
 		},
-		"variables":        a.svc.Policy().Infos(),
-		"languages":        content.Languages,
-		"default_language": content.DefaultLanguage,
+		"variables":     a.svc.Policy().InfosFor(ls),
+		"locales":       ls.All(),
+		"source_locale": ls.Source().Code,
 	}
 	if a.info.LLMMode == "claude" {
 		out["model"] = a.info.Model
@@ -132,26 +138,48 @@ func (a *api) putContent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Either one text (the default language's: {"sms_body": ...}) or several
-	// ({"languages": {"tr": {...}, "en": {...}}}); the whole set must agree.
+	// Either one text (the source locale's: {"sms_body": ...}) or several
+	// ({"locales": {"tr-TR": {...}, "en-GB": {...}}}).
 	var body struct {
 		content.Content
-		Languages map[string]content.Content `json:"languages"`
+		Locales map[string]content.Content `json:"locales"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	var v *campaign.View
 	var err error
-	if body.Languages != nil {
+	if body.Locales != nil {
 		if body.Content != (content.Content{}) {
-			writeError(w, http.StatusBadRequest, "invalid_input", "ya tek metin ya da languages gönderin, ikisini birden değil", nil)
+			writeError(w, http.StatusBadRequest, "invalid_input", "ya tek metin ya da locales gönderin, ikisini birden değil", nil)
 			return
 		}
-		v, err = a.svc.SaveContents(r.Context(), id, body.Languages)
+		v, err = a.svc.SaveContents(r.Context(), id, body.Locales)
 	} else {
 		v, err = a.svc.SaveContent(r.Context(), id, body.Content)
 	}
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// translate translates the source text again into some locales of the
+// campaign: {"locales": ["en-GB"]}. It never takes a text: translations are
+// not written by hand (D97).
+func (a *api) translate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Locales []string `json:"locales"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	v, err := a.svc.Translate(r.Context(), id, body.Locales)
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -198,24 +226,37 @@ func (a *api) streamMessages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ls, err := a.svc.Locales(r.Context())
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	srcCode := ls.Source().Code
 	s := newSSE(w, r.Context())
 	defer s.close()
 
-	err := a.svc.GenerateMessages(r.Context(), id, campaign.Events{
-		Attempt: func(lang string, n, max int) {
-			s.send("attempt", map[string]any{"language": lang, "n": n, "max": max})
+	err = a.svc.GenerateMessages(r.Context(), id, campaign.Events{
+		Attempt: func(code string, n, max int) {
+			s.send("attempt", map[string]any{"locale": code, "n": n, "max": max})
 		},
-		Delta: func(lang, field, text string) {
-			s.send("delta", map[string]string{"language": lang, "field": field, "text": text})
+		Delta: func(code, field, text string) {
+			s.send("delta", map[string]string{"locale": code, "field": field, "text": text})
 		},
-		Retry: func(lang string, next int, problems []string) {
-			s.send("retry", map[string]any{"language": lang, "next": next, "problems": problems})
+		Retry: func(code string, next int, problems []string) {
+			s.send("retry", map[string]any{"locale": code, "next": next, "problems": problems})
 		},
-		Validated: func(lang string, c content.Content, rep content.Report) {
-			s.send("validated", map[string]any{"language": lang, "content": c, "report": rep, "source": campaign.SourceLLM})
+		Validated: func(code string, c content.Content, rep content.Report) {
+			source := campaign.SourceTranslated
+			if code == srcCode {
+				source = campaign.SourceLLM
+			}
+			s.send("validated", map[string]any{"locale": code, "content": c, "report": rep, "source": source})
 		},
-		Fallback: func(lang, reason string, c content.Content, rep content.Report) {
-			s.send("fallback", map[string]any{"language": lang, "reason": reason, "content": c, "report": rep, "source": campaign.SourceFallback})
+		Fallback: func(code, reason string, c content.Content, rep content.Report) {
+			s.send("fallback", map[string]any{"locale": code, "reason": reason, "content": c, "report": rep, "source": campaign.SourceFallback})
+		},
+		Failed: func(code, reason string) {
+			s.send("failed", map[string]string{"locale": code, "reason": reason})
 		},
 	})
 	if err != nil {
@@ -280,6 +321,8 @@ func classify(err error) (string, int, string, any) {
 		state   *campaign.StateError
 		invalid *campaign.InvalidContentError
 		gen     *campaign.GenerationError
+		stale   *campaign.StaleTranslationsError
+		ro      *campaign.ReadOnlyTranslationError
 	)
 	switch {
 	case errors.Is(err, campaign.ErrNotFound):
@@ -288,6 +331,11 @@ func classify(err error) (string, int, string, any) {
 		return "invalid_input", http.StatusBadRequest, input.Message, nil
 	case errors.As(err, &sched):
 		return "invalid_schedule", http.StatusUnprocessableEntity, sched.Message, nil
+	case errors.As(err, &stale):
+		return "stale_translations", http.StatusConflict, "güncel olmayan veya eksik çeviri var; önce çevrilmeli",
+			map[string]any{"missing": nonNil(stale.Missing), "stale": nonNil(stale.Stale)}
+	case errors.As(err, &ro):
+		return "translation_read_only", http.StatusUnprocessableEntity, ro.Error(), map[string]any{"locale": ro.Locale}
 	case errors.As(err, &state):
 		return "invalid_state", http.StatusConflict, state.Message, nil
 	case errors.As(err, &invalid):
@@ -307,6 +355,13 @@ func classify(err error) (string, int, string, any) {
 		return gen.Code, status, gen.Message, details
 	}
 	return "internal", http.StatusInternalServerError, "beklenmeyen bir hata oluştu", nil
+}
+
+func nonNil(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
 }
 
 func (a *api) fail(w http.ResponseWriter, r *http.Request, err error) {

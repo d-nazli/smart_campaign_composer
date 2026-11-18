@@ -77,7 +77,7 @@ Ekran kodları:
 | F41 | Yeniden deneme notları | A3 | AI şeridinin altında açılır "Ayrıntılar" listesi. |
 | F42 | Hazır şablon bildirimi | A3 | Turuncu bant. |
 | F43 | Akış hatası | A3 | Kırmızı bant. |
-| F44 | Dil sekmeleri ve durum noktaları | A3 | Editör üstünde alt çizgili sekmeler (TR Türkçe •). |
+| F44 | Locale sütunu ve durum noktaları | A3 | Mesajlar kartında solda dar locale sütunu; 1280px altında açılır düğme (D96). |
 | F45 | Diller arası uyuşmazlık | A3 | Sekmelerin altında kırmızı bant. |
 | F46 | SMS alanı ve halka sayaç (160) | A3 | "SMS" bölümü: başlık satırında halka sayaç. |
 | F47 | E-posta konusu ve çubuk sayaç (80) | A3 | "E-POSTA KONUSU" satırı. |
@@ -87,7 +87,7 @@ Ekran kodları:
 | F51 | Sunucu doğrulama sorunları | A3 | Değişmez (ilk sorunlu dile atlama dahil). |
 | F52 | Engellemeyen kalite uyarıları | A3 | Alan altında turuncu metin. |
 | F53 | Kişiselleştirme değişkenleri | A3 | Editörün üstünde "Kişiselleştirme" satırında değişken çipleri (`{{first_name}} = 12`). |
-| F54 | SMS telefon önizlemesi | A3 | Sağ önizleme panelinde (%35, yapışık) mevcut `PhonePreview` telefon mockup'ı, en fazla 300px ve ortalı. Renkleri token'a çevrilir. Seçili dil sekmesini izler. |
+| F54 | SMS telefon önizlemesi | A3 | Sağ önizleme panelinde (%35, yapışık) mevcut `PhonePreview` telefon mockup'ı, en fazla 300px ve ortalı. Renkleri token'a çevrilir. Seçili locale'i izler; ar-SA sağdan sola. |
 | F55 | E-posta önizlemesi | A3 | Aynı panelde mevcut `EmailPreview` "Gelen kutusu" penceresi, en fazla 420px ve ortalı. Renkleri token'a çevrilir. Telefonun altında, ikisi birlikte görünür. |
 | F56 | Akış ya da onay sırasında salt okunur | A3 | Değişmez. |
 | F57 | "Yeniden üret" | A3 | Kart başlığının sağında ikincil buton. |
@@ -217,7 +217,7 @@ Yazı tipi: Geist Variable kalır, yeni paket gerekmez (karar 1).
   - Akış barı, iki kolon ve yapışık alt bar.
   - Adım içerikleri yeni bileşenlere taşınır.
   - `<script>` bloğuna dokunulmaz. Gerekirse yalnızca sağ raya veri geçirmek için `computed` okumaları eklenir.
-- `src/components/`: StepBar, SegmentCard, MessageEditor, ApprovalCard, DeliveryProgress, CampaignTable, SystemHealth, LanguageTabs, CharCounter, PhonePreview, EmailPreview.
+- `src/components/`: StepBar, SegmentCard, MessageEditor, ApprovalCard, DeliveryProgress, CampaignTable, LocaleList, CharCounter, PhonePreview, EmailPreview.
 - `src/components/ui/`: Badge, Button, Card, StatTile, SegmentedControl, ProgressBar, Modal, DateTimeField.
 
 **Yeni, yalnızca görünüm taşıyan bileşenler.** Veri prop olarak gelir, API çağrısı yoktur.

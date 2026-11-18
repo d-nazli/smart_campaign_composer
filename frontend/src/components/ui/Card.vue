@@ -26,6 +26,7 @@ defineProps<{ title?: string; flush?: boolean }>()
 }
 .ui-card__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--s-3);
@@ -39,6 +40,7 @@ defineProps<{ title?: string; flush?: boolean }>()
 }
 .ui-card__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s-2);
 }

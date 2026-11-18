@@ -51,11 +51,42 @@ describe('DashboardView', () => {
     expect(v.get('a.name').text()).toBe('Anneler gününe özel indirim')
   })
 
-  it('totals what was sent and failed over all campaigns', async () => {
+  it('has no summary tiles; one line counts the campaigns being sent', async () => {
     const v = await mountIt()
-    expect(v.get('[data-testid="total-sent"]').text()).toContain('10')
-    expect(v.get('[data-testid="total-failed"]').text()).toContain('1')
-    expect(v.get('[data-testid="total-pending"]').text()).toContain('5')
+    for (const id of ['summary', 'total-sent', 'total-failed', 'total-pending', 'rate']) expect(v.find(`[data-testid="${id}"]`).exists()).toBe(false)
+    expect(v.get('[data-testid="active"]').text()).toBe('Şu an aktif gönderim: 1 kampanya')
+  })
+
+  it('shows the speed of a sending campaign per channel, measured between refreshes', async () => {
+    vi.useFakeTimers()
+    try {
+      const at = (sms: number, email: number): CampaignSummary => ({ ...sending, delivery: { sms: ch({ total: 1000, sent: sms, pending: 1000 - sms }), email: ch({ total: 1000, sent: email, pending: 1000 - email }), done: false } })
+      list.mockResolvedValue([at(0, 0)])
+      const v = await mountIt()
+      expect(v.find('[data-testid="speed"]').exists()).toBe(false) // one reading is no speed
+      list.mockResolvedValue([at(200, 190)])
+      await vi.advanceTimersByTimeAsync(2000)
+      await flushPromises()
+      expect(v.get('[data-testid="speed"]').text()).toBe('SMS 100/sn · E-posta 95/sn')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the average speed and duration of a finished campaign', async () => {
+    const done: CampaignSummary = {
+      ...sending,
+      status: 'completed',
+      delivery: {
+        sms: ch({ total: 100, sent: 100, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:25Z' }),
+        email: ch({ total: 100, sent: 100, first_sent_at: '2026-11-18T12:00:01Z', last_sent_at: '2026-11-18T12:00:27Z' }),
+        done: true,
+      },
+    }
+    list.mockResolvedValue([done])
+    const v = await mountIt()
+    expect(v.get('[data-testid="speed"]').text()).toBe("ort. 4/sn, 27 sn'de bitti")
+    expect(v.get('[data-testid="active"]').text()).toContain('0 kampanya')
   })
 
   it('shows an empty state with a way to start when there are no campaigns', async () => {

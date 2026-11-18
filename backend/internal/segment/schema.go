@@ -70,6 +70,7 @@ func JSONSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"name":        str,
 			"status":      map[string]any{"type": "string", "enum": []any{StatusOK, StatusNeedsClarification, StatusUnsupported}},
 			"match":       map[string]any{"type": "string", "enum": []any{MatchAll, MatchAny}},
 			"conditions":  map[string]any{"type": "array", "items": condition},
@@ -77,7 +78,7 @@ func JSONSchema() map[string]any {
 			"question":    str,
 			"offer":       offerSchema,
 		},
-		"required":             []any{"status", "match", "conditions", "explanation", "question", "offer"},
+		"required":             []any{"name", "status", "match", "conditions", "explanation", "question", "offer"},
 		"additionalProperties": false,
 	}
 }

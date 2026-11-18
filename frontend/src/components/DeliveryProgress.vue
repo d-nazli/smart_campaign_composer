@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { CheckCircle2 } from 'lucide-vue-next'
-import type { CampaignStatus, DeliveryProgress, LanguageInfo } from '../types'
+import type { CampaignStatus, DeliveryProgress, LocaleInfo } from '../types'
 import { deliveryTotals } from '../utils/dashboard'
 import { failureText, mergeFailures } from '../utils/failures'
-import { FALLBACK_LANGUAGES } from '../utils/languages'
+import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
 import Badge from './ui/Badge.vue'
 import HalfDonut from './ui/HalfDonut.vue'
 import KpiGroup from './ui/KpiGroup.vue'
@@ -13,8 +13,8 @@ import StatTile from './ui/StatTile.vue'
 
 // The sending step, laid out like a campaign report. Each number appears once: one figure
 // group per channel (sent, then failed / skipped / waiting), one bar for the whole campaign,
-// the failure reasons as a half ring, and one line of languages.
-const props = defineProps<{ delivery: DeliveryProgress; status: CampaignStatus; languages?: LanguageInfo[] }>()
+// the failure reasons as a half ring, and one line of locales.
+const props = defineProps<{ delivery: DeliveryProgress; status: CampaignStatus; locales?: LocaleInfo[] }>()
 
 const finished = computed(() => props.status === 'completed')
 const totals = computed(() => deliveryTotals(props.delivery))
@@ -24,17 +24,19 @@ const rows = computed(() => [
   { key: 'sms', label: 'SMS · gönderilen', p: props.delivery.sms },
   { key: 'email', label: 'E-posta · gönderilen', p: props.delivery.email },
 ])
-// Sent messages per language, in language order (a language nobody receives is left out).
-const byLanguage = computed(() =>
-  (props.languages ?? FALLBACK_LANGUAGES)
-    .map((l) => ({ code: l.code, display: l.display, p: props.delivery.languages?.[l.code] }))
-    .filter((l) => l.p && l.p.total > 0),
-)
+// Sent messages per locale, in table order (a locale nobody receives is left out).
+const byLocale = computed(() => {
+  const progress = props.delivery.locales ?? {}
+  const totals = Object.fromEntries(Object.entries(progress).map(([code, p]) => [code, p.total]))
+  return localeSummary(totals, props.locales ?? FALLBACK_LOCALES).map((l) => ({ code: l.code, p: progress[l.code] }))
+})
 
 const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)']
 const failedTotal = computed(() => reasons.value.reduce((n, r) => n + r.count, 0))
+// The ring is drawn against everything that was to be sent, so it shows how big the problem is.
+const pct = (n: number) => (totals.value.total > 0 ? ((n / totals.value.total) * 100).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) : '0')
+const count = (n: number) => n.toLocaleString('tr-TR')
 const arcs = computed(() => reasons.value.map((r, i) => ({ value: r.count, color: COLORS[i % COLORS.length] })))
-const share = (n: number) => (failedTotal.value > 0 ? ((n / failedTotal.value) * 100).toLocaleString('tr-TR', { maximumFractionDigits: 1 }) : '0')
 </script>
 
 <template>
@@ -64,27 +66,28 @@ const share = (n: number) => (failedTotal.value > 0 ? ((n / failedTotal.value) *
       </p>
     </section>
 
-    <div v-if="reasons.length || byLanguage.length" class="two">
+    <div v-if="reasons.length || byLocale.length" class="two">
       <section v-if="reasons.length" class="panel">
         <h3 class="label">Başarısız mesajlar</h3>
-        <HalfDonut :parts="arcs" :label="`${failedTotal} başarısız mesaj`">
-          <strong class="big num">{{ failedTotal }}</strong>
+        <HalfDonut :parts="arcs" :max="totals.total" :label="`${count(totals.total)} mesajın ${count(failedTotal)} tanesi başarısız, %${pct(failedTotal)}`">
+          <strong class="big num" data-testid="failed-count">{{ count(failedTotal) }}</strong>
+          <span class="of num muted" data-testid="failed-share">/ {{ count(totals.total) }} · %{{ pct(failedTotal) }}</span>
         </HalfDonut>
         <ul class="reasons" aria-label="Başarısızlık nedenleri">
           <li v-for="(r, i) in reasons" :key="r.reason" class="leader">
             <i class="dot" :style="{ background: COLORS[i % COLORS.length] }" aria-hidden="true" />
             <span>{{ failureText(r.reason) }}</span>
             <span class="leader__fill" />
-            <span class="num">%{{ share(r.count) }} (<strong>{{ r.count }}</strong>)</span>
+            <span class="num">%{{ pct(r.count) }} (<strong>{{ r.count }}</strong>)</span>
           </li>
         </ul>
       </section>
 
-      <section v-if="byLanguage.length" class="panel" data-testid="delivery-languages">
-        <h3 class="label">Dile göre gönderilen</h3>
-        <div class="langs">
-          <Badge v-for="l in byLanguage" :key="l.code">
-            {{ l.code.toUpperCase() }} <b class="num">{{ finished || l.p!.sent === l.p!.total ? l.p!.sent : `${l.p!.sent}/${l.p!.total}` }}</b>
+      <section v-if="byLocale.length" class="panel" data-testid="delivery-locales">
+        <h3 class="label">Locale'e göre gönderilen</h3>
+        <div class="locs">
+          <Badge v-for="l in byLocale" :key="l.code">
+            {{ l.code }} <b class="num">{{ finished || l.p!.sent === l.p!.total ? l.p!.sent : `${l.p!.sent}/${l.p!.total}` }}</b>
           </Badge>
         </div>
       </section>
@@ -131,6 +134,10 @@ h3.label {
   font-size: 1.875rem;
   font-weight: 400;
 }
+.of {
+  display: block;
+  font-size: var(--text-sm);
+}
 .reasons {
   margin: var(--s-3) 0 0;
   padding: 0;
@@ -143,7 +150,7 @@ h3.label {
   border-radius: 50%;
   transform: translateY(-1px);
 }
-.langs {
+.locs {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;

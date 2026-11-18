@@ -9,12 +9,17 @@ import (
 // the one the rest of the dataset uses.
 const profileStream uint64 = 0x70726f66696c65 // "profile"
 
-// Share of each language among all users (percent). The remainder goes to the
-// first entry, so the shares always add up to everyone.
-var languageShares = []struct {
+// Share of each locale among all users (percent). The remainder goes to the
+// first entry (the source locale), so the shares always add up to everyone.
+// Every code must be a row of the locales table (users.locale is a foreign key).
+var localeShares = []struct {
 	code    string
 	percent int
-}{{"tr", 60}, {"en", 25}, {"de", 15}}
+}{
+	{"tr-TR", 40},
+	{"en-GB", 8}, {"en-US", 8}, {"de-DE", 8}, {"fr-FR", 6}, {"es-ES", 5}, {"pt-BR", 5},
+	{"en-AU", 4}, {"es-MX", 4}, {"it-IT", 4}, {"nl-NL", 4}, {"ar-SA", 4},
+}
 
 // Gender shares (percent); whoever is left did not state a gender (NULL).
 var genderShares = []struct {
@@ -27,23 +32,23 @@ const (
 	minAge, maxAge     = 18, 75
 )
 
-// assignProfileFields gives every user a language, and most of them a gender
+// assignProfileFields gives every user a locale, and most of them a gender
 // and a birth date. Each field is dealt from a shuffled list with exact counts
 // (like the consents), so the mix is random per person but the totals are not
 // left to chance.
 func assignProfileFields(users []User, r *rand.Rand, now time.Time) {
 	n := len(users)
 
-	langs := make([]string, 0, n)
-	for _, s := range languageShares[1:] {
+	locales := make([]string, 0, n)
+	for _, s := range localeShares[1:] {
 		for k := 0; k < pct(n, s.percent); k++ {
-			langs = append(langs, s.code)
+			locales = append(locales, s.code)
 		}
 	}
-	for len(langs) < n {
-		langs = append(langs, languageShares[0].code)
+	for len(locales) < n {
+		locales = append(locales, localeShares[0].code)
 	}
-	r.Shuffle(n, func(i, j int) { langs[i], langs[j] = langs[j], langs[i] })
+	r.Shuffle(n, func(i, j int) { locales[i], locales[j] = locales[j], locales[i] })
 
 	genders := make([]*string, 0, n)
 	for _, s := range genderShares {
@@ -68,7 +73,7 @@ func assignProfileFields(users []User, r *rand.Rand, now time.Time) {
 	}
 
 	for i := range users {
-		users[i].Language = langs[i]
+		users[i].Locale = locales[i]
 		users[i].Gender = genders[i]
 		if !missing[i] {
 			d := oldest.AddDate(0, 0, int(r.Int64N(days+1)))

@@ -112,7 +112,7 @@ func TestProfileFieldsAreStoredInTheDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := pool.Query(ctx, `SELECT language, count(*) FROM users GROUP BY language`)
+	rows, err := pool.Query(ctx, `SELECT locale, count(*) FROM users GROUP BY locale`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,8 +126,8 @@ func TestProfileFieldsAreStoredInTheDatabase(t *testing.T) {
 		}
 		langs[l] = n
 	}
-	if langs["tr"] != 3000 || langs["en"] != 1250 || langs["de"] != 750 {
-		t.Fatalf("languages in the database = %v", langs)
+	if len(langs) != 12 || langs["tr-TR"] != 2000 || langs["en-GB"] != 400 || langs["ar-SA"] != 200 {
+		t.Fatalf("locales in the database = %v", langs)
 	}
 
 	var noGender, noBirth, minAge, maxAge int
@@ -145,13 +145,32 @@ func TestProfileFieldsAreStoredInTheDatabase(t *testing.T) {
 	}
 }
 
-func TestDatabaseRejectsAnUnknownLanguage(t *testing.T) {
+func TestDatabaseRejectsALocaleThatIsNotARow(t *testing.T) {
 	pool, _ := testdb.New(t)
-	_, err := pool.Exec(context.Background(),
-		`INSERT INTO users (first_name, last_name, city, sms_consent, email_consent, created_at, language)
-		 VALUES ('A', 'B', 'İstanbul', false, false, now(), 'fr')`)
-	if err == nil {
-		t.Fatal("expected the language CHECK to reject 'fr'")
+	for _, code := range []string{"fr", "fr-CA", "tr"} {
+		_, err := pool.Exec(context.Background(),
+			`INSERT INTO users (first_name, last_name, city, sms_consent, email_consent, created_at, locale)
+			 VALUES ('A', 'B', 'İstanbul', false, false, now(), $1)`, code)
+		if err == nil {
+			t.Fatalf("the foreign key must reject %q", code)
+		}
+	}
+}
+
+// A new locale is one row: a person can have it at once.
+func TestANewLocaleIsOneRow(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO locales (code, name, native_name, fallbacks) VALUES
+		('fr-CA', 'French (Canada)', 'Français (Canada)', '{"first_name": "cher client", "city": "votre région"}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (first_name, last_name, city, sms_consent, email_consent, created_at, locale)
+		VALUES ('A', 'B', 'İstanbul', false, false, now(), 'fr-CA')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO locales (code, name, native_name, is_source) VALUES ('fr-BE', 'French (Belgium)', 'Français (Belgique)', true)`); err == nil {
+		t.Fatal("a second source locale must be refused")
 	}
 }
 
