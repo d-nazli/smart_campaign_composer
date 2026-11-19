@@ -202,11 +202,6 @@ export function sentenceCase(text: string): string {
   return t === '' ? t : t.charAt(0).toLocaleUpperCase('tr-TR') + t.slice(1)
 }
 
-/** A campaign that is being sent right now: approved or sending, with something still waiting. */
-export function isSending(c: Pick<CampaignSummary, 'status' | 'delivery'>): boolean {
-  return (c.status === 'approved' || c.status === 'sending') && !c.delivery?.done
-}
-
 /** "26 sn" / "1 dk 5 sn". */
 export function duration(seconds: number): string {
   const s = Math.max(1, Math.round(seconds))
@@ -214,48 +209,10 @@ export function duration(seconds: number): string {
 }
 
 /**
- * One channel's average speed so far: accepted messages over the time between the first and the
- * last one, and that time in seconds. null before anything was accepted.
+ * How long one channel has been sending: the seconds between its first and its last accepted
+ * message (retry waits included). null before anything was accepted.
  */
-export function channelAverage(ch: ChannelProgress): { perSecond: number; seconds: number } | null {
+export function channelDuration(ch: ChannelProgress): number | null {
   if (!ch.first_sent_at || !ch.last_sent_at || ch.sent === 0) return null
-  const seconds = (Date.parse(ch.last_sent_at) - Date.parse(ch.first_sent_at)) / 1000
-  return { perSecond: ch.sent / Math.max(1, seconds), seconds }
-}
-
-export interface ChannelRates {
-  sms: number
-  email: number
-}
-
-/**
- * The speed of a campaign, per channel (the limit is 100/s for each channel, not for both together):
- * while it is sending, the live rate of each channel ("SMS 98/sn · E-posta 97/sn");
- * once it is done, the average and how long it took ("ort. 95/sn, 26 sn'de bitti").
- * null when there is nothing to say (never sent, or no live rate measured yet).
- */
-export function sendSpeed(c: Pick<CampaignSummary, 'status' | 'delivery'>, live?: ChannelRates): string | null {
-  const d = c.delivery
-  if (!d) return null
-  if (isSending(c)) {
-    if (!live) return null
-    const parts: string[] = []
-    if (d.sms.total > 0) parts.push(`SMS ${Math.round(live.sms)}/sn`)
-    if (d.email.total > 0) parts.push(`E-posta ${Math.round(live.email)}/sn`)
-    return parts.length ? parts.join(' · ') : null
-  }
-  if (c.status !== 'completed') return null
-  let first = Infinity
-  let last = -Infinity
-  const averages: number[] = []
-  for (const ch of [d.sms, d.email]) {
-    const a = channelAverage(ch)
-    if (!a) continue
-    first = Math.min(first, Date.parse(ch.first_sent_at!))
-    last = Math.max(last, Date.parse(ch.last_sent_at!))
-    averages.push(a.perSecond)
-  }
-  if (averages.length === 0) return null
-  const avg = averages.reduce((a, b) => a + b, 0) / averages.length
-  return `ort. ${Math.round(avg)}/sn, ${duration((last - first) / 1000)}'de bitti`
+  return (Date.parse(ch.last_sent_at) - Date.parse(ch.first_sent_at)) / 1000
 }

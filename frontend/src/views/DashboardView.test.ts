@@ -57,35 +57,27 @@ describe('DashboardView', () => {
     expect(v.text()).not.toContain('aktif gönderim')
   })
 
-  it('shows the speed of a sending campaign per channel, measured between refreshes', async () => {
-    vi.useFakeTimers()
-    try {
-      const at = (sms: number, email: number): CampaignSummary => ({ ...sending, delivery: { sms: ch({ total: 1000, sent: sms, pending: 1000 - sms }), email: ch({ total: 1000, sent: email, pending: 1000 - email }), done: false } })
-      list.mockResolvedValue([at(0, 0)])
-      const v = await mountIt()
-      expect(v.find('[data-testid="speed"]').exists()).toBe(false) // one reading is no speed
-      list.mockResolvedValue([at(200, 190)])
-      await vi.advanceTimersByTimeAsync(2000)
-      await flushPromises()
-      expect(v.get('[data-testid="speed"]').text()).toBe('SMS 100/sn · E-posta 95/sn')
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('shows the average speed and duration of a finished campaign', async () => {
+  it('shows only the bar and "sent / total · failed" under İlerleme, never a speed line', async () => {
     const done: CampaignSummary = {
       ...sending,
+      id: 9,
       status: 'completed',
       delivery: {
-        sms: ch({ total: 100, sent: 100, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:25Z' }),
-        email: ch({ total: 100, sent: 100, first_sent_at: '2026-11-18T12:00:01Z', last_sent_at: '2026-11-18T12:00:27Z' }),
+        sms: ch({ total: 430, sent: 425, failed: 5, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:17Z' }),
+        email: ch({ total: 425, sent: 423, failed: 2, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:16Z' }),
         done: true,
       },
     }
-    list.mockResolvedValue([done])
+    list.mockResolvedValue([sending, done])
     const v = await mountIt()
-    expect(v.get('[data-testid="speed"]').text()).toBe("ort. 4/sn, 27 sn'de bitti")
+    for (const row of v.findAll('tbody tr')) {
+      const cell = row.get('td.progress')
+      expect(cell.find('[role="progressbar"]').exists()).toBe(true)
+      expect(cell.find('[data-testid="speed"]').exists()).toBe(false)
+      expect(cell.text()).not.toMatch(/\/sn|bitti|ort\./)
+    }
+    const doneCell = v.findAll('td.progress').find((c) => c.text().includes('848'))!
+    expect(doneCell.text().replace(/\s+/g, ' ')).toBe('848 / 855 · 7 başarısız')
   })
 
   it('shows an empty state with a way to start when there are no campaigns', async () => {

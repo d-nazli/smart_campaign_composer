@@ -5,8 +5,7 @@ import type { AppInfo } from '../api/info'
 import { cancelCampaign, listCampaigns } from '../api/campaigns'
 import type { CampaignSummary } from '../types'
 import { healthWord, type HealthItem } from '../utils/health'
-import { briefTitle, isSending, type ChannelRates } from '../utils/dashboard'
-import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
+import { briefTitle } from '../utils/dashboard'
 import { formatWhen } from '../utils/schedule'
 import CampaignTable from '../components/CampaignTable.vue'
 import Button from '../components/ui/Button.vue'
@@ -19,8 +18,6 @@ const POLL_MS = 2000
 
 const campaigns = ref<CampaignSummary[] | null>(null)
 const error = ref<string | null>(null)
-// Sent-so-far readings of each sending campaign's channels, to measure the speed from (last 10 s).
-const samples = ref<Record<string, Sample[]>>({})
 let timer: number | null = null
 
 async function refresh() {
@@ -28,24 +25,10 @@ async function refresh() {
     const list = await listCampaigns()
     campaigns.value = list
     error.value = null
-    track(list)
   } catch (e) {
     // Keep showing the last list; say that it may be stale.
     error.value = e instanceof Error ? e.message : String(e)
   }
-}
-
-function track(list: CampaignSummary[]) {
-  const at = performance.now()
-  const next: Record<string, Sample[]> = {}
-  for (const c of list) {
-    if (!c.delivery || !isSending(c)) continue // a finished campaign shows its average instead
-    for (const ch of ['sms', 'email'] as const) {
-      const key = `${c.id}:${ch}`
-      next[key] = pushSample(samples.value[key] ?? [], { at, sent: c.delivery[ch].sent })
-    }
-  }
-  samples.value = next
 }
 
 // Cancelling asks first, in a dialog. The server refuses once a campaign has started;
@@ -90,17 +73,6 @@ onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
 })
 
-// Live speed per sending campaign and channel (needs two readings).
-const rates = computed(() => {
-  const out: Record<number, ChannelRates> = {}
-  for (const c of campaigns.value ?? []) {
-    const sms = samples.value[`${c.id}:sms`]
-    const email = samples.value[`${c.id}:email`]
-    if (sms && sms.length >= 2) out[c.id] = { sms: ratePerSecond(sms), email: ratePerSecond(email ?? []) }
-  }
-  return out
-})
-
 const newCampaign = () => (window.location.hash = '#/')
 </script>
 
@@ -124,7 +96,7 @@ const newCampaign = () => (window.location.hash = '#/')
       <Button variant="cta" :icon="Plus" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
-    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :locales="info?.locales" :rates="rates" @cancel="toCancel = $event" />
+    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :locales="info?.locales" @cancel="toCancel = $event" />
 
     <Modal v-model="askCancel" title="Zamanlanmış gönderim iptal edilsin mi?" :description="cancelText">
       <template #footer>

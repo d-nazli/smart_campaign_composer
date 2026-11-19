@@ -34,10 +34,11 @@ export const issueVariant = (i: Issue): Variant => i.variant ?? 'A'
 export function splitShares(counts: Record<Variant, VariantCount> | undefined): { variant: Variant; share: number; count: VariantCount }[] {
   if (!counts?.A || !counts?.B) return []
   const total = counts.A.people + counts.B.people
-  const a = total > 0 ? Math.round((counts.A.people / total) * 100) : 50
+  // One decimal, and the two always add up to 100 (B is the rest of A).
+  const a = total > 0 ? Math.round((counts.A.people / total) * 1000) / 10 : 50
   return [
     { variant: 'A', share: a, count: counts.A },
-    { variant: 'B', share: 100 - a, count: counts.B },
+    { variant: 'B', share: Math.round((100 - a) * 10) / 10, count: counts.B },
   ]
 }
 
@@ -56,4 +57,9 @@ export function comparisonRows(variants: VariantProgress[] | undefined): (Varian
     { variant: 'A' as Variant, label: 'Toplam', people: 0, sms: { total: 0, sent: 0 }, email: { total: 0, sent: 0 }, failed: 0 },
   )
   return [...rows, total]
+}
+
+/** A share as the screen writes it: "%51,6" (one decimal, Turkish comma). */
+export function formatShare(share: number): string {
+  return '%' + share.toLocaleString('tr-TR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 }

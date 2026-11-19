@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { Clock, XCircle } from 'lucide-vue-next'
 import type { CampaignSummary, LocaleInfo } from '../types'
-import { briefTitle, localeLine, progressTitle, rowProgress, sendSpeed, sentenceCase, statusBadge, type ChannelRates } from '../utils/dashboard'
+import { briefTitle, localeLine, progressTitle, rowProgress, sentenceCase, statusBadge } from '../utils/dashboard'
 import { FALLBACK_LOCALES } from '../utils/locales'
 import { urlForCampaign } from '../utils/route'
 import { formatWhen, shortWhen, untilText } from '../utils/schedule'
@@ -14,7 +14,7 @@ import ProgressBar from './ui/ProgressBar.vue'
 // a row opens the wizard where the campaign stands. A scheduled campaign says when in its
 // status ("Zamanlandı · 24 Kas 14:00") and can be cancelled from its row.
 // Below 1024px the rows are laid out as cards (CSS only: the same elements).
-const props = defineProps<{ campaigns: CampaignSummary[]; locales?: LocaleInfo[]; rates?: Record<number, ChannelRates> }>()
+const props = defineProps<{ campaigns: CampaignSummary[]; locales?: LocaleInfo[] }>()
 const emit = defineEmits<{ cancel: [CampaignSummary] }>()
 
 const TITLE_MAX = 64
@@ -76,9 +76,8 @@ const day = (iso: string) => formatWhen(iso)
               />
               <span class="cap num"
                 ><span data-testid="sent">{{ rowProgress(c.delivery).sent }}</span> / {{ rowProgress(c.delivery).total }}
-                <span v-if="rowProgress(c.delivery).failed > 0" class="bad" data-testid="failed">, {{ rowProgress(c.delivery).failed }} başarısız</span></span
+                <span v-if="rowProgress(c.delivery).failed > 0" class="bad" data-testid="failed">· {{ rowProgress(c.delivery).failed }} başarısız</span></span
               >
-              <span v-if="sendSpeed(c, rates?.[c.id])" class="cap num speed" data-testid="speed">{{ sendSpeed(c, rates?.[c.id]) }}</span>
             </template>
             <span v-else-if="c.status === 'failed'" class="bad small" :title="c.schedule_error">{{ c.schedule_error || 'Başlatılamadı' }}</span>
             <span v-else class="muted">–</span>
@@ -212,9 +211,6 @@ tbody tr:first-child td {
   color: var(--muted);
   font-size: var(--text-xs);
   white-space: nowrap;
-}
-.cap.speed {
-  margin-top: 2px;
 }
 .bad {
   color: var(--error);

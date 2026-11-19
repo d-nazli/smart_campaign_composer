@@ -6,7 +6,7 @@ import { sentenceCase } from '../utils/dashboard'
 import { describeOffer } from '../utils/formatOffer'
 import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
 import { quickTimes, scheduleBounds, toLocalInput } from '../utils/schedule'
-import { splitShares } from '../utils/variants'
+import { formatShare, splitShares } from '../utils/variants'
 import AnimatedNumber from './AnimatedNumber.vue'
 import Badge from './ui/Badge.vue'
 import Card from './ui/Card.vue'
@@ -63,9 +63,10 @@ const people = computed(() => {
 const offer = computed(() => describeOffer(props.segment.offer))
 const spoken = computed(() => localeSummary(props.segment.locales, props.locales ?? FALLBACK_LOCALES))
 const later = computed(() => props.mode === 'later' && !props.frozen)
-// The A/B split: the bar shows the 50 / 50 rule, the table what it gives with this audience.
+// The A/B split: the bar and its shares are the real people per variant of this audience (the
+// hash rule aims at 50 / 50; a real audience lands near it, not on it), the table the counts.
 const split = computed(() => splitShares(props.variants))
-const splitLabel = 'Varyant A yüzde 50, Varyant B yüzde 50'
+const splitLabel = computed(() => split.value.map((s) => `Varyant ${s.variant} ${formatShare(s.share)}`).join(', '))
 </script>
 
 <template>
@@ -115,8 +116,15 @@ const splitLabel = 'Varyant A yüzde 50, Varyant B yüzde 50'
             <dt class="label">A/B bölünmesi</dt>
             <dd class="split-ab">
               <div class="split-ab__bar" role="img" :aria-label="splitLabel">
-                <span v-for="s in split" :key="s.variant" class="split-ab__part" :class="`split-ab__part--${s.variant}`" :style="{ flexGrow: 1 }">
-                  <b>{{ s.variant }}</b><span class="num">%50</span>
+                <span
+                  v-for="s in split"
+                  :key="s.variant"
+                  class="split-ab__part"
+                  :class="`split-ab__part--${s.variant}`"
+                  :style="{ flexGrow: s.share }"
+                  :data-testid="`split-bar-${s.variant}`"
+                >
+                  <b>{{ s.variant }}</b><span class="num">{{ formatShare(s.share) }}</span>
                 </span>
               </div>
               <div class="split-ab__wrap">

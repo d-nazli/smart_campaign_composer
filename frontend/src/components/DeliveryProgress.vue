@@ -2,11 +2,11 @@
 import { computed, ref, watch } from 'vue'
 import { CheckCircle2, HelpCircle } from 'lucide-vue-next'
 import type { CampaignStatus, DeliveryProgress, LocaleInfo } from '../types'
-import { channelAverage, deliveryTotals, duration } from '../utils/dashboard'
+import { channelDuration, deliveryTotals, duration } from '../utils/dashboard'
 import { pushSample, ratePerSecond, type Sample } from '../utils/rate'
 import { failureText, mergeFailures } from '../utils/failures'
 import { FALLBACK_LOCALES } from '../utils/locales'
-import { comparisonRows } from '../utils/variants'
+import { comparisonRows, formatShare, splitShares } from '../utils/variants'
 import HalfDonut from './ui/HalfDonut.vue'
 import KpiGroup from './ui/KpiGroup.vue'
 import ProgressBar from './ui/ProgressBar.vue'
@@ -43,8 +43,9 @@ const byLocale = computed(() => {
 // reason in its own shade of red, what is still waiting is the empty track. Every colour also has
 // a labelled row underneath, so the colour never carries the meaning alone.
 // Speed per channel (the provider's limit is 100/s for each channel). The live rate is measured
-// here from the progress the page polls; the average and the time come from the server's
-// first and last accepted message.
+// here from the progress the page polls; the busiest second comes from the server, and the time
+// from its first and last accepted message. No average: messages over time includes the retry
+// waits, so it reads far below the real sending speed.
 const samples = ref<Record<'sms' | 'email', Sample[]>>({ sms: [], email: [] })
 watch(
   () => [props.delivery.sms.sent, props.delivery.email.sent] as const,
@@ -58,18 +59,18 @@ const sending = computed(() => !finished.value && !props.delivery.done)
 // The provider's limit per channel; the busiest second ("En yüksek (1 sn)") must stay under it.
 const LIMIT = 100
 const PROVIDER_429 = 'Sağlayıcının test amaçlı döndürdüğü 429\'lar; bizim hız sınırımız aşılmadı.'
+const TIME_HINT = 'Tekrar denenen mesajların beklemesi dahil.'
 const speedRows = computed(() =>
   rows.value
     .filter((r) => r.p.total > 0)
     .map((r) => {
-      const avg = channelAverage(r.p)
+      const seconds = channelDuration(r.p)
       const live = samples.value[r.key as 'sms' | 'email']
       return {
         key: r.key,
         name: r.key === 'sms' ? 'SMS' : 'E-posta',
         live: sending.value && live.length >= 2 ? `${Math.round(ratePerSecond(live))}/sn` : '–',
-        avg: avg ? `${Math.round(avg.perSecond)}/sn` : '–',
-        time: avg ? duration(avg.seconds) : '–',
+        time: seconds !== null ? duration(seconds) : '–',
         peak: r.p.peak_per_second ? `${r.p.peak_per_second}/sn` : '–',
         over: (r.p.peak_per_second ?? 0) > LIMIT,
         retries: r.p.retries,
@@ -92,6 +93,16 @@ const outcome = computed(() => [
 const arcs = computed(() => outcome.value.map((o) => ({ value: o.value, color: o.color })))
 // Variant A against Variant B (only for a campaign sent with B): sent / queued per channel.
 const comparison = computed(() => comparisonRows(props.delivery.variants))
+// The real split of the people, as on the approval step ("%51,6 / %48,4").
+const comparisonShares = computed(() => {
+  const v = props.delivery.variants
+  const a = v?.find((x) => x.variant === 'A')
+  const b = v?.find((x) => x.variant === 'B')
+  if (!a || !b) return ''
+  return splitShares({ A: { people: a.people, sms: 0, email: 0 }, B: { people: b.people, sms: 0, email: 0 } })
+    .map((s) => formatShare(s.share))
+    .join(' / ')
+})
 const sentOf = (p: { total: number; sent: number }) => (finished.value || p.sent === p.total ? count(p.sent) : `${count(p.sent)} / ${count(p.total)}`)
 const ringLabel = computed(
   () => `Gönderim sonucu: ${count(totals.value.total)} mesajın ${count(totals.value.sent)} tanesi başarılı, ${count(failedTotal.value)} tanesi başarısız (%${pct(failedTotal.value)})`,
@@ -133,9 +144,11 @@ const ringLabel = computed(
             <tr>
               <th scope="col">Kanal</th>
               <th v-if="sending" scope="col" class="r">Anlık</th>
-              <th scope="col" class="r">Ortalama</th>
               <th scope="col" class="r" data-testid="speed-peak-head">En yüksek (1 sn)</th>
-              <th scope="col" class="r">{{ sending ? 'Geçen süre' : 'Süre' }}</th>
+              <th scope="col" class="r" data-testid="speed-limit-head">Sınır</th>
+              <th scope="col" class="r" data-testid="speed-time-head">
+                <span class="q-head">{{ sending ? 'Geçen süre' : 'Süre' }}<span class="q" :title="TIME_HINT" :aria-label="TIME_HINT" role="img"><HelpCircle :size="13" aria-hidden="true" /></span></span>
+              </th>
               <th scope="col" class="r">Tekrar deneme</th>
               <th scope="col" class="r" data-testid="speed-429-head">
                 <span class="q-head">429 (provider)<span class="q" :title="PROVIDER_429" :aria-label="PROVIDER_429" role="img"><HelpCircle :size="13" aria-hidden="true" /></span></span>
@@ -146,8 +159,8 @@ const ringLabel = computed(
             <tr v-for="r in speedRows" :key="r.key" :data-testid="`speed-${r.key}`">
               <th scope="row">{{ r.name }}</th>
               <td v-if="sending" class="r num" data-testid="speed-live">{{ r.live }}</td>
-              <td class="r num" data-testid="speed-avg">{{ r.avg }}</td>
               <td class="r num" :class="{ bad: r.over }" data-testid="speed-peak">{{ r.peak }}</td>
+              <td class="r num muted" data-testid="speed-limit">{{ LIMIT }}/sn</td>
               <td class="r num" data-testid="speed-time">{{ r.time }}</td>
               <td class="r num">{{ count(r.retries) }}</td>
               <td class="r num">{{ count(r.limited) }}</td>
@@ -190,7 +203,7 @@ const ringLabel = computed(
     </div>
 
     <section v-if="comparison.length" class="panel" data-testid="variant-comparison">
-      <h3 class="label">Varyant karşılaştırma · %50 / %50</h3>
+      <h3 class="label" data-testid="variant-comparison-head">Varyant karşılaştırma<template v-if="comparisonShares"> · {{ comparisonShares }}</template></h3>
       <div class="speed-wrap">
         <table class="speed">
           <thead>

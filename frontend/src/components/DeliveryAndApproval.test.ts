@@ -134,7 +134,7 @@ describe('DeliveryProgress', () => {
     expect(len(make(d).get('path.arc'))).toBeCloseTo(0.4 * HALF, 1)
   })
 
-  it('shows the speed per channel: average, time, retries and 429s once finished', () => {
+  it('shows the speed per channel: busiest second, limit, time, retries and 429s once finished', () => {
     const d: Delivery = {
       sms: ch({ total: 2500, sent: 2470, retries: 40, rate_limited: 9, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:00:26Z' }),
       email: ch({ total: 100, sent: 100, first_sent_at: '2026-11-18T12:00:00Z', last_sent_at: '2026-11-18T12:01:05Z' }),
@@ -142,7 +142,8 @@ describe('DeliveryProgress', () => {
     }
     const w = make(d, 'completed')
     const sms = w.get('[data-testid="speed-sms"]')
-    expect(sms.get('[data-testid="speed-avg"]').text()).toBe('95/sn')
+    expect(sms.find('[data-testid="speed-avg"]').exists()).toBe(false) // no average: it hides the retry waits
+    expect(sms.get('[data-testid="speed-limit"]').text()).toBe('100/sn')
     expect(sms.get('[data-testid="speed-time"]').text()).toBe('26 sn')
     expect(sms.text()).toContain('40')
     expect(sms.text()).toContain('9')

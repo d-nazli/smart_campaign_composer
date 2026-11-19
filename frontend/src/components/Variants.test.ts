@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { Campaign, DeliveryProgress as Delivery, Segment, StoredContent } from '../types'
-import { comparisonRows, forVariant, hasVariantB, pendingOf, splitShares, variantsOf } from '../utils/variants'
+import { comparisonRows, forVariant, formatShare, hasVariantB, pendingOf, splitShares, variantsOf } from '../utils/variants'
 import ApprovalCard from './ApprovalCard.vue'
 import DeliveryProgress from './DeliveryProgress.vue'
 import VariantTabs from './VariantTabs.vue'
@@ -67,10 +67,14 @@ describe('the campaign seen through a variant', () => {
     expect(variantsOf(null)).toEqual(['A'])
     expect(pendingOf(one, 'B')).toEqual([])
   })
-  it('the split adds up to 100', () => {
+  it('the split is the real people per variant, one decimal, adding up to 100', () => {
     const s = splitShares(campaign.variant_counts)
-    expect(s.map((x) => x.share)).toEqual([50, 50])
+    expect(s.map((x) => x.share)).toEqual([50.2, 49.8]) // 502 / 498
     expect(s[0].share + s[1].share).toBe(100)
+    const odd = splitShares({ A: { people: 275, sms: 0, email: 0 }, B: { people: 258, sms: 0, email: 0 } })
+    expect(odd.map((x) => formatShare(x.share))).toEqual(['%51,6', '%48,4'])
+    expect(splitShares({ A: { people: 1, sms: 0, email: 0 }, B: { people: 2, sms: 0, email: 0 } }).map((x) => x.share)).toEqual([33.3, 66.7])
+    expect(splitShares({ A: { people: 0, sms: 0, email: 0 }, B: { people: 0, sms: 0, email: 0 } }).map((x) => x.share)).toEqual([50, 50])
     expect(splitShares(undefined)).toEqual([])
   })
 })
@@ -135,11 +139,18 @@ describe('the approval with Variant B', () => {
   }
   const props = { segment, warnings: [], confirming: false, frozen: false, error: null, mode: 'now' as const, when: '', scheduleError: null }
 
-  it('shows the 50 / 50 bar and the people per variant', () => {
+  it('sizes the bar by the real people per variant and writes their shares', () => {
+    const real = { A: { people: 275, sms: 200, email: 210 }, B: { people: 258, sms: 190, email: 199 } }
+    const r = mount(ApprovalCard, { props: { ...props, variants: real } })
+    const bar = r.get('[data-testid="approval-split"] [role="img"]')
+    expect(bar.attributes('aria-label')).toBe('Varyant A %51,6, Varyant B %48,4')
+    expect(r.get('[data-testid="split-bar-A"]').text()).toBe('A%51,6')
+    expect(r.get('[data-testid="split-bar-B"]').text()).toBe('B%48,4')
+    expect(r.get('[data-testid="split-bar-A"]').attributes('style')).toContain('flex-grow: 51.6')
+    expect(r.get('[data-testid="split-bar-B"]').attributes('style')).toContain('flex-grow: 48.4')
+    expect(bar.text()).not.toContain('%50')
+
     const w = mount(ApprovalCard, { props: { ...props, variants: campaign.variant_counts } })
-    const split = w.get('[data-testid="approval-split"]')
-    expect(split.get('[role="img"]').attributes('aria-label')).toBe('Varyant A yüzde 50, Varyant B yüzde 50')
-    expect(split.text()).toContain('%50')
     expect(w.get('[data-testid="split-A"]').text()).toMatch(/Varyant A\s*502\s*400\s*450/)
     expect(w.get('[data-testid="split-B"]').text()).toMatch(/Varyant B\s*498\s*401\s*440/)
   })
@@ -170,6 +181,7 @@ describe('the sending step with Variant B', () => {
     const w = mount(DeliveryProgress, { props: { delivery, status: 'completed' } })
     const table = w.get('[data-testid="variant-comparison"]')
     expect(table.findAll('thead th').map((t) => t.text())).toEqual(['Varyant', 'Kişi', 'SMS', 'E-posta', 'Başarısız'])
+    expect(w.get('[data-testid="variant-comparison-head"]').text()).toBe('Varyant karşılaştırma · %47,8 / %52,2') // 11 / 12 people
     expect(w.get('[data-testid="compare-A"]').findAll('td').map((t) => t.text())).toEqual(['11', '9', '11', '1'])
     expect(w.get('[data-testid="compare-total"]').findAll('td').map((t) => t.text())).toEqual(['23', '18', '22', '2'])
     // it is the last panel of the report
@@ -205,11 +217,16 @@ describe('the speed table', () => {
       },
     })
 
-  it('shows the busiest second next to the average, and names the 429s as the provider\'s', () => {
+  it('shows the busiest second next to the limit, explains the time, and names the 429s as the provider\'s', () => {
     const w = make(97)
     const heads = w.get('[data-testid="speed"]').findAll('thead th').map((t) => t.text())
-    expect(heads).toEqual(['Kanal', 'Ortalama', 'En yüksek (1 sn)', 'Süre', 'Tekrar deneme', '429 (provider)'])
+    expect(heads).toEqual(['Kanal', 'En yüksek (1 sn)', 'Sınır', 'Süre', 'Tekrar deneme', '429 (provider)'])
     expect(w.get('[data-testid="speed-sms"] [data-testid="speed-peak"]').text()).toBe('97/sn')
+    expect(w.get('[data-testid="speed-sms"] [data-testid="speed-limit"]').text()).toBe('100/sn')
+    expect(w.get('[data-testid="speed-sms"] [data-testid="speed-time"]').text()).toBe('3 sn')
+    const timeTip = w.get('[data-testid="speed-time-head"] [role="img"]')
+    expect(timeTip.attributes('title')).toBe('Tekrar denenen mesajların beklemesi dahil.')
+    expect(timeTip.attributes('aria-label')).toBe('Tekrar denenen mesajların beklemesi dahil.')
     const tip = w.get('[data-testid="speed-429-head"] [role="img"]')
     expect(tip.attributes('title')).toBe('Sağlayıcının test amaçlı döndürdüğü 429\'lar; bizim hız sınırımız aşılmadı.')
   })
