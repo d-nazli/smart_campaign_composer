@@ -1,0 +1,1562 @@
+> Segment'e yaş desteği ekle.
+
+  1. Seed: kullanıcılara gerçekçi dağılımla birth_date ekle (18-75 yaş).
+     Migration ile kolon ekle. Seed deterministik kalsın (SEED=42).
+  2. Segment allow-list'ine "age" alanı: tam sayı, 13-100 aralığı,
+     operatörler eq/gte/lte/gt/lt. SQL'de yaş birth_date'ten hesaplansın,
+     parametreli, diğer alanlarla aynı yöntemle.
+  3. JSON şemasına ve prompt'a age alanını ekle. "Genç", "yaşlı",
+     "orta yaşlı" gibi belirsiz ifadelerde Claude yaş aralığını SORSUN;
+     "18-25 yaş arası", "65 yaş üstü" gibi net ifadelerde doğrudan kural
+     üretsin.
+  4. Mock LLM: net yaş aralıklarını tanısın, belirsiz ifadelerde soru dönsün.
+  5. Segment kartındaki rozetlere yaş koşulu eklensin ("Yaş 18–25").
+  6. Testler: parse/compile, değer aralığı dışı reddediliyor, kesin sayım,
+     mock akışı, belirsiz ifade → soru. Canlı eval setine iki senaryo ekle:
+     "18-25 yaş arası İstanbul'daki kullanıcılar" ve "gençlere özel indirim"
+     (→ soru).
+  7. README'de desteklenen alanlara yaşı ekle, "desteklenmeyenler"den çıkar.
+     DECISIONS'a kısa bir kayıt.
+
+  make test yeşil kalsın, tek commit, push etme.
+
+● Bash(Read relevant memory files)
+  ⎿  ---
+     name: feedback-scope-and-phases
+     description: "Insider One case: stay within CASE.md scope; the user opted INTO …
+     metadata:
+       node_type: memory
+       type: feedback
+     … +50 lines
+
+● Bash(Survey repo layout)
+  ⎿  D ai-sessions/001-frontend-insider-ui.txt
+      D ai-sessions/03-front.txt
+     ?? ai-sessions/03-frontend-insider-ui.txt
+     ?? ai-sessions/05-localization.txt
+     ?? ai-sessions/06-ab-variants.txt
+     ?? ai-sessions/07-bugfix.txt
+     … +146 lines
+
+● Bash(Check existing birth_date support)
+  ⎿  -- +goose Up
+     -- Profile fields used to personalise campaigns.
+     --   language:   the language this person receives messages in (tr | en | de).
+     --               NOT NULL with a default so existing rows stay valid.
+     --   gender:     optional; NULL means "not stated".
+     --   birth_date: optional; NULL means "not stated".
+     … +72 lines
+
+● Bash(Read seed profile code and tests)
+● Bash(Read segment field and rule code)
+  ⎿  package seed
+     import (
+     	"math/rand/v2"
+     	"time"
+     )
+     // profileStream selects the random stream of the profile fields, separate from
+     … +236 lines
+
+  ⎿  216 segment/audience_test.go
+        31 segment/cities.go
+        95 segment/compile.go
+       109 segment/everyone_test.go
+       248 segment/fields.go
+        42 segment/gender_test.go
+     … +554 lines
+
+● Bash(Find all gender touchpoints as template)
+  ⎿  backend/internal/brief/analyze.go:69:	// Gender is "female" or "male" when the …
+     backend/internal/brief/analyze.go:70:	// audience by gender; GenderPhrase is th…
+     backend/internal/brief/analyze.go:72:	Gender, GenderPhrase string
+     backend/internal/brief/analyze.go:73:	BothGenders          bool
+     backend/internal/brief/analyze.go:240:	// Special days and gender words are rea…
+     backend/internal/brief/analyze.go:241:	// "Kadınlar Günü" is a theme, not a gen…
+     … +74 lines
+
+● Bash(Read schema, gender test, prompts)
+  ⎿  package segment
+     import "smartcampaign/internal/offer"
+     // JSONSchema is the structured-output schema sent to the LLM. It is derived
+     // from the field whitelist. The API's schema language cannot express ranges,
+     // lengths or per-field value types, so Parse re-checks everything; the schema
+     // only makes malformed JSON very unlikely.
+     … +241 lines
+
+● Bash(Find age-related mock analyzer code)
+  ⎿  brief/analyze.go:1:// Package brief reads a marketer's brief with plain code an…
+     brief/analyze.go:6:// rule itself shows what is missing. This package extracts,…
+     brief/analyze.go:11://     unsupported or needs_clarification, decided here, wi…
+     brief/analyze.go:18:// is a safety net, not a language model: words it does not…
+     brief/analyze.go:19:// the model's own "unsupported" judgement and by the unkno…
+     brief/analyze.go:25:package brief
+     … +50 lines
+
+● Bash(Read analyzer intent and unsupported lexicon)
+  ⎿  package brief
+     import (
+     	"fmt"
+     	"regexp"
+     	"sort"
+     	"strconv"
+     … +269 lines
+
+● Bash(Read analyzer audience and rule builder)
+  ⎿  for _, v := range valid {
+     		if !uniq[v] {
+     			uniq[v] = true
+     			distinctDates = append(distinctDates, v)
+     		}
+     	}
+     … +390 lines
+
+● Bash(Find age tests and read verify)
+  ⎿  ./internal/brief/brief_test.go:1:package brief_test
+     ./internal/brief/brief_test.go:80:// message shown on screen must contain, so t…
+     ./internal/brief/brief_test.go:159:	{name: "city: adanada", brief: "Sepeti terk…
+     ./internal/brief/brief_test.go:183:	{name: "unsupported: age", brief: "35 yaş ü…
+     ./internal/brief/brief_test.go:184:	{name: "unsupported: age, other wording", b…
+     ./internal/brief/brief_test.go:268:	{name: "special day: 8 Mart", brief: "8 Mar…
+     … +151 lines
+
+● Bash(Find frontend condition badge code)
+  ⎿  frontend/src/utils/formatRule.test.ts
+     frontend/src/utils/formatRule.ts
+     frontend/src/components/SegmentCard.test.ts:34:      conditions: [{ field: 'gen…
+     frontend/src/components/SegmentCard.test.ts:96:describe('describeCondition: gen…
+     frontend/src/components/SegmentCard.test.ts:97:  it('says the gender in Turkish…
+     frontend/src/components/SegmentCard.test.ts:98:    expect(describeCondition({ f…
+     … +2 lines
+
+● Rozetlerin üretildiği frontend koduna ve segment derleyicisine bakıyorum.
+
+● Bash(Read formatRule, SegmentCard, compile)
+  ⎿  import type { Condition, Segment } from '../types'
+     const SYMBOL: Record<string, string> = { eq: '=', gt: '>', gte: '≥', lt: '<', l…
+     function days(field: 'cart' | 'order', op: string, n: number): string {
+       const what = field === 'cart' ? 'sepete ürün eklemiş' : 'sipariş vermiş'
+       switch (op) {
+         case 'lte':
+     … +299 lines
+
+● Bash(Check timezone use, frontend usage, tests)
+  ⎿  backend/internal/offer/terms.go:47:	t := time.Date(y, time.Month(m), d, 0, 0, 0…
+     backend/internal/seed/profile.go:67:	today := time.Date(now.Year(), now.Month()…
+     frontend/src/components/SegmentCard.vue:8:import { describeCondition } from '..…
+     frontend/src/components/SegmentCard.vue:32:const chips = computed(() => props.s…
+     frontend/src/utils/formatRule.ts:22:export function describeCondition(c: Condit…
+     frontend/src/utils/formatRule.ts:52:export function describeSegment(s: Segment)…
+     … +68 lines
+
+● Bash(Read segment test helpers)
+  ⎿  where string
+     		nargs int
+     	}{
+     		{"any", `{"status":"ok","match":"any","conditions":[{"field":"order_count","o…
+     			"((order_count >= $1) OR (total_spent > $2))", 2},
+     		{"city in", `{"status":"ok","match":"all","conditions":[{"field":"city","op":…
+     … +238 lines
+
+● Bash(Read resolve and clarify flow)
+  ⎿  package brief
+     import (
+     	"context"
+     	"errors"
+     	"strings"
+     	"smartcampaign/internal/llm"
+     … +132 lines
+
+● Bash(Read live eval set)
+  ⎿  40:func TestLiveSegmentForExampleBrief(t *testing.T) {
+     74:func TestLiveMessagesForExampleBrief(t *testing.T) {
+     90:			return ct, []string{"geçersiz JSON: " + err.Error()}
+     131:func TestLiveBriefsWithTermsAndEveryone(t *testing.T) {
+     144:		{"a special day without an audience means everyone", mothersDay,
+     146:		{"herkese %10 indirim", "herkese %10 indirim",
+     … +96 lines
+
+● Bash(Read affected tests and mask helper)
+  ⎿  112:func liveConds(r segment.Rule) string {
+     113-	var parts []string
+     114-	for _, c := range r.Conditions {
+     115-		v := c.Value
+     116-		if list, ok := v.([]string); ok {
+     117-			list = append([]string(nil), list...)
+     … +155 lines
+
+● Kod yazmaya başlıyorum: önce seed dağılımı ve segment alanı (`age`), sonra
+  mock analyzer, prompt, frontend, testler ve dokümanlar.
+
+● Bash(Find pct helper and profile stream usage)
+  ⎿  seed/generate.go:163:func pct(n, p int) int { return n * p / 100 }
+     seed/generate.go-164-
+     seed/generate.go-165-func (g *gen) assignCities(users []User) {
+     seed/generate.go-166-	n := len(users)
+     seed/generate.go-167-	cities := make([]string, 0, n)
+     seed/generate.go-168-	for _, c := range cityShares {
+     … +1 lines
+
+● Bash(Check seed imports)
+  ⎿  (Bash completed with no output)
+
+● Bash(Add age field to segment whitelist)
+  ⎿  segment/fields.go:19:	kindInt
+     segment/fields.go:222:		kind: kindInt,
+     segment/fields.go:228:		kind: kindInt,
+     segment/fields.go:234:		kind: kindInt,
+     segment/fields.go:240:		kind: kindInt,
+     segment/rule.go:270:	case kindInt, kindAge:
+
+● Bash(Add age bounds check and seed age bands)
+  ⎿  3:go 1.25
+
+● Bash(Check offer/date parsing and occasions)
+  ⎿  if w.days != wins[0].days {
+     				in.block(segment.StatusNeedsClarification, w.phrase, fmt.Sprintf(
+     					"Brief'te birden fazla zaman aralığı var (%q ve %q). Hangisinin kullanılac…
+     				break
+     			}
+     		}
+     … +158 lines
+
+● Write(c:\insider_one_case\backend\internal\brief\age.go)
+  ⎿  File created successfully at: c:\insider_one_case\backend\internal\brief\age.go…
+
+● Bash(Wire age into analyzer, rule and verify)
+  ⎿  <stdin>:6: SyntaxWarning: invalid escape sequence '\d'
+     <stdin>:19: SyntaxWarning: invalid escape sequence '\w'
+     <stdin>:64: SyntaxWarning: invalid escape sequence '\w'
+     Traceback (most recent call last):
+       File "<stdin>", line 66, in <module>
+     AssertionError
+     … +1 lines
+
+● Bash(Verify age.go edits)
+  ⎿  // word is only the theme.
+     // yasForm is "yaş" with the endings an age is written with ("yaşında",
+     // "yaşından", "yaşlarındaki"). It never matches "yaşayan" or "yasal".
+     const yasForm = `yas(?:i|in|inda\w*|indan|ina|lar\w*)?\b`
+     type ageReading struct {
+     	re *regexp.Regexp
+     … +46 lines
+
+● Bash(Check for stray backspace characters)
+  ⎿  3
+     0000000   v   a   r       a   g   e   R   e   a   d   i   n   g   s    
+     0000020   =       [   ]   a   g   e   R   e   a   d   i   n   g   {  \n
+     0000040  \t   {       /   /       "   1   8   -   2   5       y   a 305
+     0000060 237       a   r   a   s 304 261   "   ,       "   1   8 342 200
+     0000100 223   2   5       y   a 305 237   l   a   r 304 261   n   d   a
+
+● Fixing three stray backspace characters from my script (should be `\b`).
+
+● Bash(Replace backspace chars with \b)
+  ⎿  3
+     51:		re:    regexp.MustCompile(`(\d{1,3})\s*(?:-|–|—)\s*(\d{1,3})\s*` + yasFor…
+     55:		re:    regexp.MustCompile(`(\d{1,3})\s+(?:ile|ila|ve)\s+(\d{1,3})\s*` + y…
+     59:		re:    regexp.MustCompile(`(\d{1,3})\s*yas(?:tan)?\s*(?:-|–|—|ile|ila|ve)…
+     63:		re:    regexp.MustCompile(`\ben\s+az\s+(\d{1,3})\s*` + yasForm),
+
+● Read(c:\insider_one_case\backend\internal\brief\age.go)
+  ⎿  49	var ageReadings = []ageReading{
+     50		{ // "18-25 yaş arası", "18–25 yaşlarındaki", "18-25 yaş"
+     51			re:    regexp.MustCompile(`(\d{1,3})\s*(?:-|–|—)\s*(\d{1,3})\s*` + yasFor…
+     52			conds: rangeConds, words: rangeWords,
+     53		},
+     54		{ // "18 ile 25 yaş arası", "18 ve 25 yaş arasındaki": a word between needs…
+     … +6 lines
+
+● Write(C:\Users\USER\AppData\Local\Temp\claude\MASKED-ID\MASKED-SESSION\sc…)
+  ⎿  File created successfully at: C:\Users\USER\AppData\Local\Temp\claude\4d8e4057…
+
+● Bash(Fix backspace chars via script)
+  ⎿  0
+     		re:    regexp.MustCompile(`\b(\d{1,3})\s*(?:-|–|—)\s*(\d{1,3})\s*` + yasForm …
+
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\verify.go)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\verify.go has been updated …
+
+● Bash(Check other edited files for stray chars)
+  ⎿  214:		FieldInfo: FieldInfo{Name: "age", Type: "integer", Ops: cmpOps, Min: MinA…
+     		FieldInfo: FieldInfo{Name: "age", Type: "integer", Ops: cmpOps, Min: MinAge, …
+     			Description: "Customer's age in whole years, from their stated birth date. C…
+     		kind: kindAge,
+     		sql:  ageSQL,
+     	},
+
+● Backend age alanı, seed ve mock analizörü yazıldı; şimdi prompt'u güncelleyip
+  derleme + mevcut testleri Docker'da çalıştırıyorum.
+
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+  ⎿  <tool_use_error>String to replace not found in file.
+     String: ask when, for example: no audience is named (see below); a requirement …
+
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+● Now the existing tests that assumed age is unsupported, then a first
+  compile/test run.
+
+● Bash(Read brief test table header)
+  ⎿  {name: "offer: percent together with a code", brief: "Sepeti terk edenlere %15 …
+     	{name: "offer: no offer at all", brief: "Sepeti terk edenlere hatırlatma gönde…
+     	{name: "offer: percent and free shipping go together", brief: "Sepeti terk ede…
+     	{name: "offer: two different percentages", brief: "Sepeti terk edenlere %15 in…
+     	{name: "offer: impossible percentage", brief: "Sepeti terk edenlere %150 indir…
+     	{name: "offer: 'kod' without a code", brief: "Sepeti terk edenlere indirim kod…
+     … +28 lines
+
+● Bash(Check test helpers for conditions)
+  ⎿  45:	freeShipping = offer.Offer{Kind: offer.KindFreeShipping}
+     154:		status: segment.StatusOK, want: []string{"city neq İstanbul", noOrder + "…
+     173:	{name: "offer: ücretsiz kargo", brief: "Sepeti terk edenlere ücretsiz karg…
+     brief/brief_test.go:33:func conds(r segment.Rule) []string {
+     brief/brief_test.go-34-	out := make([]string, 0, len(r.Conditions))
+     brief/brief_test.go-35-	for _, c := range r.Conditions {
+     … +30 lines
+
+● Edit(c:\insider_one_case\backend\internal\brief\brief_test.go)
+● Edit(c:\insider_one_case\backend\internal\brief\brief_test.go)
+● Edit(c:\insider_one_case\backend\internal\brief\brief_test.go)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\brief_test.go has been upda…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\brief_test.go has been upda…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\brief_test.go has been upda…
+
+● Edit(c:\insider_one_case\backend\internal\brief\model_driven_test.go)
+● Edit(c:\insider_one_case\backend\internal\brief\model_driven_test.go)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\model_driven_test.go has be…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\model_driven_test.go has be…
+
+● Bash(Check model-driven test helpers)
+  ⎿  package brief_test
+     import (
+     	"context"
+     	"strings"
+     	"testing"
+     	"smartcampaign/internal/brief"
+     … +73 lines
+
+● Bash(Read backend-test compose service)
+  ⎿  141:  backend-test:
+     142-    profiles: [test]
+     143-    build: { context: ./backend, target: dev }
+     144-    # -parallel 8: tests marked t.Parallel run 8 at a time per package, whi…
+     145-    # every package's pools well under Postgres' 100 connections.
+     146-    command: ["go", "test", "-parallel", "8", "./..."]
+     … +20 lines
+
+● İlk derleme ve ilgili paket testlerini Docker'da çalıştırıyorum (brief,
+  segment, seed, llm).
+
+● Bash(Vet and run affected backend tests in Docker)
+  ⎿  #7 resolve docker.io/library/golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a…
+     #7 DONE 0.1s
+     #8 [internal] load build context
+     #8 transferring context: 184.31kB 0.1s done
+     #8 DONE 0.1s
+     #9 [base 2/4] WORKDIR /src
+     … +45 lines
+
+● Bash(Read llm smart mock variant test)
+  ⎿  func TestSmartMockUnderstandsTheExampleBrief(t *testing.T) {
+     	out, err := mock.New(0).Segment(context.Background(), llm.SegmentRequest{Brief…
+     	if err != nil {
+     		t.Fatal(err)
+     	}
+     	rule, err := segment.Parse(out.Raw)
+     … +44 lines
+
+● Bash(Update llm test, yasForm, brief test)
+  ⎿  <stdin>:15: SyntaxWarning: invalid escape sequence '\w'
+     <stdin>:17: SyntaxWarning: invalid escape sequence '\w'
+     Traceback (most recent call last):
+       File "<stdin>", line 16, in <module>
+     AssertionError: yasForm
+     24:const yasForm = `yas(?:i|in|inda\w*|indan|ina|lar\w*)?\b`
+
+● Edit(c:\insider_one_case\backend\internal\brief\age.go)
+● Edit(c:\insider_one_case\backend\internal\brief\brief_test.go)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\age.go has been updated suc…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\brief_test.go has been upda…
+
+● Edit(c:\insider_one_case\backend\internal\seed\profile_test.go)
+● Edit(c:\insider_one_case\backend\internal\seed\profile_test.go)
+● Edit(c:\insider_one_case\backend\internal\seed\profile_test.go)
+  ⎿  The file c:\insider_one_case\backend\internal\seed\profile_test.go has been upd…
+
+  ⎿  The file c:\insider_one_case\backend\internal\seed\profile_test.go has been upd…
+
+  ⎿  The file c:\insider_one_case\backend\internal\seed\profile_test.go has been upd…
+
+● Edit(c:\insider_one_case\backend\internal\seed\profile_test.go)
+● Edit(c:\insider_one_case\backend\internal\seed\profile_test.go)
+  ⎿  The file c:\insider_one_case\backend\internal\seed\profile_test.go has been upd…
+
+  ⎿  The file c:\insider_one_case\backend\internal\seed\profile_test.go has been upd…
+
+● Bash(Check testdb API and user insert example)
+  ⎿  27:func New(t *testing.T) (pool *pgxpool.Pool, dsn string) {
+     28-	t.Helper()
+     29-	dsn = NewEmpty(t)
+     30-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+     31-	defer cancel()
+     32-	if err := store.Migrate(ctx, dsn); err != nil {
+     … +24 lines
+
+● Write(c:\insider_one_case\backend\internal\segment\age_test.go)
+  ⎿  File created successfully at: c:\insider_one_case\backend\internal\segment\age_…
+
+● Edit(c:\insider_one_case\backend\internal\segment\age_test.go)
+● Bash(Re-run affected backend tests)
+  ⎿  The file c:\insider_one_case\backend\internal\segment\age_test.go has been upda…
+
+  ⎿  ok  	smartcampaign/internal/brief	0.294s
+     --- FAIL: TestAgeCountsMatchPostgresAge (1.37s)
+         age_test.go:113: invalid segment rule: yaş koşulları birbirini dışlıyor (en…
+     --- FAIL: TestAgeRangeInACityGoldenCount (1.06s)
+         age_test.go:134: matched 330, SQL 330, golden -1
+     --- FAIL: TestAgeAtTheBirthdayEdges (1.20s)
+     … +8 lines
+
+● Edit(c:\insider_one_case\backend\internal\segment\age_test.go)
+● Edit(c:\insider_one_case\backend\internal\segment\age_test.go)
+● Edit(c:\insider_one_case\backend\internal\segment\rule.go)
+  ⎿  The file c:\insider_one_case\backend\internal\segment\age_test.go has been upda…
+
+  ⎿  The file c:\insider_one_case\backend\internal\segment\age_test.go has been upda…
+
+  ⎿  The file c:\insider_one_case\backend\internal\segment\rule.go has been updated …
+
+● Bash(Read formatRule tests and Condition type)
+  ⎿  Exit code 2
+     import { describe, expect, it } from 'vitest'
+     import type { Segment } from '../types'
+     import { describeCondition, describeSegment } from './formatRule'
+     describe('describeCondition', () => {
+       it('describes the example brief', () => {
+     … +39 lines
+
+● Backend testleri yeşile yakın; şimdi frontend'de yaş rozetini ("Yaş 18–25")
+  ekliyorum.
+
+● Edit(c:\insider_one_case\frontend\src\utils\formatRule.ts)
+● Edit(c:\insider_one_case\frontend\src\utils\formatRule.ts)
+● Edit(c:\insider_one_case\frontend\src\components\SegmentCard.vue)
+● Edit(c:\insider_one_case\frontend\src\components\SegmentCard.vue)
+  ⎿  The file c:\insider_one_case\frontend\src\utils\formatRule.ts has been updated …
+
+  ⎿  The file c:\insider_one_case\frontend\src\utils\formatRule.ts has been updated …
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\SegmentCard.vue has been u…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\SegmentCard.vue has been u…
+
+● Bash(Read test file tails)
+  ⎿  it('reads old offers without the new fields', () => {
+         expect(describeOffer({ kind: 'free_shipping', value: 0, code: '', extras: n…
+       })
+     })
+     describe('describeCondition: gender', () => {
+       it('says the gender in Turkish', () => {
+     … +25 lines
+
+● Bash(Add frontend age badge tests)
+  ⎿  import { describe, expect, it } from 'vitest'
+     import type { Segment } from '../types'
+     import { describeCondition, describeConditions, describeSegment } from './forma…
+
+● Bash(Read live ambiguous test loop)
+  ⎿  for _, tt := range tests {
+     		t.Run(tt.name, func(t *testing.T) {
+     			rule := liveResolve(ctx, t, c, tt.brief)
+     			ok := false
+     			for _, s := range tt.statuses {
+     				ok = ok || rule.Status == s
+     … +29 lines
+
+● Edit(c:\insider_one_case\backend\internal\llm\anthropic\live_test.go)
+● Edit(c:\insider_one_case\backend\internal\llm\anthropic\live_test.go)
+● Edit(c:\insider_one_case\backend\internal\llm\anthropic\live_test.go)
+  ⎿  The file c:\insider_one_case\backend\internal\llm\anthropic\live_test.go has be…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\anthropic\live_test.go has be…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\anthropic\live_test.go has be…
+
+● Bash(Find README field list and last decision)
+  ⎿  660:## D111 — Gerçek Claude modunda eksik / ters kitle koşulu: bir geri bildiri…
+     667:## D112 — Çeviride kupon kodu aynen geçer; kaynak metin çeviri sayılmaz · `…
+     672:## D113 — Claude modunda brief'i yalnız Claude yorumlar; kural tabanlı anla…
+     685:## D114 — Kitle sorusunun cevabı aynı kampanyaya gider; onaylanmamış kampan…
+     693:## D115 — Brief düzenleme aynı kampanyada; listede filtre, "Desteklenmiyor"…
+     147:## Brief'te özel gün, cinsiyet, birleşik ve kademeli teklif
+     … +7 lines
+
+● README ve DECISIONS'ı güncelliyorum; ardından tam `make test` koşacağım.
+
+● Bash(Read README sections to edit)
+  ⎿  anda aynı kuralla bölünür. Bölünme yaklaşık %50'dir; küçük kitlede sapma görülü…
+     - **Onay** ekranında %50 / %50 çubuğu ve varyant başına kişi / SMS / e-posta; *…
+       varyant karşılaştırma tablosu: kişi, SMS, e-posta, başarısız ve toplam.
+     - API: `POST /api/campaigns/{id}/messages/stream?variant=B`, `PUT /content` ve …
+       `"variant": "B"`, `DELETE /api/campaigns/{id}/variants/B`. `GET` yanıtında `v…
+       gönderim ilerlemesinde `delivery.variants`.
+     … +62 lines
+
+● Bash(Find supported field list in README)
+  ⎿  183:  **Tümü / Aktif / Taslak** filtresi vardır; "Desteklenmiyor" kayıtları var…
+     248:- Mock modunda desteklenmeyen kısıtlar (yaş, ürün kategorisi, doğum günü) v…
+
+● Bash(Check README anchors and LLM section)
+  ⎿  - `ANTHROPIC_API_KEY` boş → **mock LLM** (varsayılan; anahtar gerekmez). Anahta…
+       `docker compose up -d api` ile yeniden başlatırsanız kod değişikliği olmadan …
+       (`CLAUDE_MODEL`, varsayılan `claude-sonnet-5-5`). Aktif mod açılış logunda ve…
+     - **Brief'i kim anlıyor?** Gerçek Claude modunda (`brief.ModelDriven`) brief'in…
+       koşullarına çevirir; anlayamadığını uydurmaz, `needs_clarification` ile sorar…
+       okumaz, Claude'un kuralını brief'le karşılaştırmaz; yalnız teknik doğrulama y…
+     … +4 lines
+
+● Edit(c:\insider_one_case\README.md)
+● Edit(c:\insider_one_case\README.md)
+● Edit(c:\insider_one_case\README.md)
+● Edit(c:\insider_one_case\README.md)
+  ⎿  The file c:\insider_one_case\README.md has been updated successfully.
+
+  ⎿  The file c:\insider_one_case\README.md has been updated successfully.
+
+  ⎿  The file c:\insider_one_case\README.md has been updated successfully.
+
+  ⎿  The file c:\insider_one_case\README.md has been updated successfully.
+
+● Edit(c:\insider_one_case\DECISIONS.md)
+● Bash(Run full make test (backend + frontend))
+  ⎿  The file c:\insider_one_case\DECISIONS.md has been updated successfully.
+
+  ⎿  docker compose --profile test run --rm --build backend-test
+     ?   	smartcampaign/cmd/api	[no test files]
+     ?   	smartcampaign/cmd/mockprovider	[no test files]
+     ?   	smartcampaign/cmd/tool	[no test files]
+     ?   	smartcampaign/cmd/worker	[no test files]
+     ok  	smartcampaign/internal/brief	0.444s
+     … +33 lines
+
+● Bash(Find age briefs in campaign tests)
+  ⎿  campaign/approve_test.go:241:	unsupported, err := svc.Create(ctx, "Adana'daki 3…
+     campaign/campaign_test.go:180:	v, err = svc.Create(context.Background(), "35 ya…
+     campaign/clarify_test.go:126:	unsupported, err := svc.Create(ctx, "35 yaş üstü …
+     campaign/clarify_test.go:261:	unsupported, err := svc.Create(ctx, "35 yaş üstü …
+     campaign/list_test.go:16:	unsupported, err := svc.Create(ctx, "Adana'daki 35 ya…
+     campaign/offer_test.go:60:	v, err := svc.Create(context.Background(), "Adana'da…
+     … +31 lines
+
+● Bash(Read remaining age usages in tests)
+  ⎿  if count() != before-1 {
+     		t.Fatal("the list must lose it")
+     	}
+     }
+     // PUT /brief: the same campaign takes the edited brief (200, same id, no new
+     // campaign); an approved one answers 409.
+     … +45 lines
+
+● Bash(Swap age-as-unsupported test briefs to product category)
+  ⎿  6
+     [This command modified 3 files you've previously read: httpapi\httpapi_test.go,…
+
+● Bash(Re-run campaign/httpapi tests and frontend tests)
+  ⎿  ok  	smartcampaign/internal/campaign	20.701s
+     ok  	smartcampaign/internal/httpapi	22.489s
+      ✓ src/utils/locales.test.ts (6 tests) 20ms
+      ✓ src/views/ComposeView.flow.test.ts (5 tests) 1300ms
+        ✓ the campaign wizard, from the brief to sending > brief → audience → stream…
+      ✓ src/utils/formatRule.test.ts (8 tests) 23ms
+     … +21 lines
+
+● Bash(Read clarify test helpers)
+  ⎿  package campaign_test
+     import (
+     	"context"
+     	"errors"
+     	"sync"
+     	"testing"
+     … +47 lines
+
+● Bash(Read newService helper)
+  ⎿  const exampleBrief = "Son 30 günde sepetine ürün ekleyip alışveriş yapmayan İst…
+     func newService(t *testing.T, client llm.Client) (*campaign.Service, *pgxpool.P…
+     	t.Helper()
+     	pool := testdb.NewSeeded(t)
+     	policy, err := content.NewPolicy(nil)
+     	if err != nil {
+     … +16 lines
+
+● Mock uçtan uca akış testi ekliyorum: "Gençlere %10 indirim" → yaş sorusu →
+  "18-25 yaş arası" cevabı → aynı kampanyada kesin sayım.
+
+● Write(c:\insider_one_case\backend\internal\campaign\age_test.go)
+● Bash(Run full make test)
+  ⎿  File created successfully at: c:\insider_one_case\backend\internal\campaign\age…
+
+  ⎿  docker compose --profile test run --rm --build backend-test
+     ?   	smartcampaign/cmd/api	[no test files]
+     ?   	smartcampaign/cmd/mockprovider	[no test files]
+     ?   	smartcampaign/cmd/tool	[no test files]
+     ?   	smartcampaign/cmd/worker	[no test files]
+     ok  	smartcampaign/internal/brief	0.333s
+     … +30 lines
+
+● Tüm testler yeşil. Son olarak `gofmt` ve canlı test dosyasının (build tag
+  `live`) derlendiğini kontrol ediyorum.
+
+● Bash(Check gofmt and live-tag vet, show status)
+  ⎿  internal/brief/analyze.go
+     internal/campaign/service.go
+     internal/seed/profile.go
+     LIVE_VET_OK
+      M DECISIONS.md
+      M README.md
+     … +30 lines
+
+● Bash(Show gofmt diffs for my files)
+  ⎿  diff internal/brief/analyze.go.orig internal/brief/analyze.go
+     --- internal/brief/analyze.go.orig
+     +++ internal/brief/analyze.go
+     @@ -76,10 +76,10 @@
+      	// says them (age.go).
+      	Ages                []segment.Condition
+     … +23 lines
+
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\seed\profile.go)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\seed\profile.go has been updated …
+
+● Bash(Recheck gofmt and build)
+  ⎿  internal/campaign/service.go
+     BUILD_OK
+      frontend/src/utils/formatRule.test.ts       | 28 +++++++++++++++-
+      frontend/src/utils/formatRule.ts            | 48 ++++++++++++++++++++++++++-
+      23 files changed, 401 insertions(+), 45 deletions(-)
+
+● Only the pre-existing `campaign/service.go` (not mine) remains unformatted.
+  Committing just this work (leaving the unrelated `ai-sessions/` changes
+  untouched).
+
+● Bash(Stage feature files and commit)
+  ⎿  M  DECISIONS.md
+     M  README.md
+      D ai-sessions/001-frontend-insider-ui.txt
+      D ai-sessions/03-front.txt
+     A  backend/internal/brief/age.go
+     M  backend/internal/brief/analyze.go
+     … +29 lines
+
+● Write(C:\Users\USER\.claude\projects\c--insider-one-case\memory\project_age_field.md)
+  ⎿  File created successfully at: C:\Users\USER\.claude\projects\c--insider-one-ca…
+
+● Bash(Add memory index entry)
+  ⎿  - [Model-driven segment](project_model_driven_segment.md) — D113: Claude mode h…
+     - [Age field](project_age_field.md) — D116 age segment field done 2026-11-19 (d…
+     Shell cwd was reset to c:\insider_one_case
+
+● Yaş desteği eklendi ve tek commit olarak kaydedildi: `df8547d`, push edilmedi.
+  `make test` yeşil: backend paketlerinin hepsi geçti, frontend'de 358 test
+  geçti.
+
+  **İstekten iki sapma var:**
+  - **Migration eklemedim.** `users.birth_date` kolonu zaten
+  `00006_user_profile.sql` ile vardı (D67). Aynı kolonu ikinci kez eklemek hata
+  verirdi. Seed'i yine değiştirdim: yaşlar artık tek düze değil, 18–75 arası
+  bantlara dağılıyor (%16 / 28 / 24 / 16 / 10 / 6). Sayılar tam ve `SEED=42` ile
+  deterministik; örnek brief'in 300 kişilik kohortu değişmedi.
+  - **"65 yaş üstü" 65'i dahil sayıyor (`gte 65`).** Günlük kullanımda böyle
+  anlaşılıyor. "65 yaşından büyük" ise `gt 65`. Bu yorum hem Claude'un
+  prompt'unda hem mock'ta aynı ve DECISIONS D116'da yazılı. Değerlendirmede
+  sorulabilecek bir seçim.
+
+  **Ne yapıldı:**
+  - **Segment alanı:** `age`, 13–100 arası tam sayı, `eq/gte/lte/gt/lt`
+  operatörleriyle ([fields.go](backend/internal/segment/fields.go)). Yaş satır
+  satır hesaplanmıyor. Bugünden geriye bir sınır tarih hesaplanıp bind
+  parametresi olarak gidiyor; gün sayılı alanlarla aynı yöntem. Doğum tarihi boş
+  olan kişi yaş koşuluna hiç girmiyor. Birbirini dışlayan yaş sınırları (ör. "40
+  ve üzeri" ile "30'dan küçük" birlikte) de reddediliyor.
+  - **Prompt ve şema:** "18-25 yaş arası" doğrudan kurala dönüyor. "Genç",
+  "yaşlı", "orta yaşlı" gibi sayısız ifadede Claude hangi yaş aralığını
+  kastettiğinizi soruyor. Yaş artık "desteklenmeyen" örnekleri arasında değil.
+  - **Mock:** yeni [age.go](backend/internal/brief/age.go) yaş aralıklarını ve
+  alt/üst sınırları okuyor. Sayısız yaş ifadesine, iki ayrı yaş koşuluna ve
+  13–100 dışı değerlere soru dönüyor. Brief'te sayı da varsa sayı geçerli.
+  "Yaşayan", "yaşam" ve "Gençlik ve Spor Bayramı" yaş sayılmıyor.
+  - **Kitle kartı:** aralık tek rozet olarak görünüyor ("Yaş 18–25"). Tek
+  taraflı koşullar "Yaş 65+" ya da "Yaş < 30" şeklinde.
+  - **Testler:**
+    - Kuralın okunması ve SQL'e derlenmesi.
+    - Aralık dışı ve yanlış tipteki değerlerin reddi.
+    - Kesin sayım: her operatör ve sınır yaş, PostgreSQL'in `age()` sonucuyla
+  birebir karşılaştırılıyor. Bugün, yarın ve 29 Şubat doğum günleri de dahil.
+    - Seed'den gelen sabit sayı: "18-25 yaş arası İstanbul" her gün 330 kişi.
+    - Mock akışı: "Gençlere özel %10 indirim" → soru → "18-25 yaş arası" cevabı
+  → aynı kampanyada tam sayım.
+    - Canlı eval setine iki senaryo eklendi.
+  - **Dokümanlar:** README'ye desteklenen kitle alanları listesi eklendi, yaş
+  "desteklenmeyenler"den çıkarıldı. DECISIONS'a D116 kaydı eklendi.
+
+  Eskiden "desteklenmiyor" örneği olarak "35 yaş üstü…" kullanan yedi test vardı
+  (campaign ve httpapi). Bu brief'ler artık geçerli olduğu için onları ürün
+  kategorisi örneğine ("telefon kategorisine bakan…") çevirdim.
+
+  **Bilmeniz gerekenler:**
+  - Canlı eval'i (`make test-live`) çalıştırmadım; API anahtarı ve ücret
+  gerektiriyor. Yalnızca derlendiğini kontrol ettim.
+  - `ai-sessions/` altındaki değişikliklerinize dokunmadım, commit'e girmediler.
+  - `campaign/service.go` gofmt'ten geçmiyor ama bu dosyayı ben değiştirmedim;
+  sorun önceden vardı.
+
+
+> Hata: "Kış ürünlerinde geçerli 200 TL indirim" veya secılı urunlerde gibi
+  brief'lerde Claude ürün ifadesini kitle koşulu sanıyor ve "ürün bilgisi yok /
+  desteklenmiyor" diyor ya da soru soruyor. Oysa burada ürün, indirimin KAPSAMI;
+  kitleyi değil mesajı etkiler. (Aynı brief bir kez tamamlandı, bir kez "Soru
+  bekliyor"da kaldı; davranış tutarsız.) Önce koddan doğrula: teklifte (offer)
+  ürün/kategori kapsamı için bir alan var mı, mesaj üretimine nasıl aktarılıyor?
+  Düzeltme: 1. Teklife serbest metinli bir kapsam alanı ekle (ör. offer.scope:
+  "kış ürünleri"; ≤60 karakter, boş olabilir). JSON şemasına ve doğrulamaya
+  ekle. 2. Prompt'a net kural: "X ürünlerinde/kategorisinde geçerli, X'te
+  indirim" → offer.scope; kitleyi daraltmaz. "X almış/satın almış/görüntülemiş
+  kişiler" → ürün verisi olmadığı için desteklenmez, bunu açıkça söyle. Kitle
+  diğer koşullardan (şehir, sepet vb.) ya da herkes olarak çıksın. 3. Mesaj
+  üretimi offer.scope'u kullansın: SMS ve e-postada kapsam geçsin ("Kış
+  ürünlerinde 200 TL indirim"). Çevirilerde de kapsam korunsun. 4. Segment
+  kartında teklifin yanında kapsam görünsün ("200 TL indirim · Kış ürünleri ·
+  KIS200"). 5. Mock LLM: "… ürünlerinde/kategorisinde geçerli" kalıbını scope
+  olarak tanısın. 6. Testler: scope'lu brief kitleyi daraltmıyor ve soru
+  üretmiyor; mesajda kapsam geçiyor; "kış ürünü almış kişiler" desteklenmiyor
+  diyor. Canlı eval setine bu iki senaryoyu ekle. 7. DECISIONS'a kısa bir kayıt:
+  ürün verisi yok; ürün ifadeleri teklif kapsamı olarak mesaja gider, kitle
+  hedeflemesi için kullanılmaz. make test yeşil kalsın, tek commit, push etme.
+
+● Önce koddan doğruluyorum: teklif yapısı, şema ve mesaj üretimine aktarım.
+
+● Bash(Inspect Offer struct and any scope field)
+  ⎿  34:type Offer struct {
+     35-	Kind  Kind    `json:"kind"`
+     36-	Value float64 `json:"value"`
+     37-	Code  string  `json:"code"`
+     38-	// MinSpend is the smallest basket (TRY) the offer applies to; 0 means no
+     39-	// minimum. It is a TERM OF THE OFFER, never an audience condition.
+     … +36 lines
+
+● Bash(Read rest of offer.go)
+● Bash(Read message user prompts and request types)
+  ⎿  var codeRe = regexp.MustCompile(`^[A-Za-z0-9_-]{3,32}$`)
+     // IsNone reports whether the brief promises nothing.
+     func (o Offer) IsNone() bool { return o.Kind == "" || o.Kind == KindNone }
+     // Normalize upper-cases the code, clears fields the kind does not use and puts
+     // the parts of a combined offer in canonical order (the first one becomes the
+     // main part), so two offers that promise the same compare Equal.
+     … +244 lines
+
+  ⎿  src, _ := json.Marshal(req.Source)
+     	s := "Source text (" + req.SourceLocale.Code + "):\n<source>\n" + string(src) …
+     	if th := themeLine(req.Theme); th != "" {
+     		s += "\n\nTheme of the campaign: " + th
+     	}
+     	return s + "\n\nWrite it in " + req.Target.Name + " (" + req.Target.Code + ")."
+     … +150 lines
+
+● Bash(Find where offer is checked in messages)
+  ⎿  ./brief/verify.go:30:			bad("Brief'te bir teklif geçmiyor ama offer alanında %q…
+     ./brief/verify.go:32:			bad("Brief'teki teklif %q ama offer alanı %q. offer ala…
+     ./content/quality.go:30:		if !o.Mentions(c.SMSBody) {
+     ./content/quality.go:31:			add(FieldSMSBody, CodeOfferMissing, fmt.Sprintf("SMS…
+     ./content/quality.go:33:		for _, bad := range o.Conflicts(c.SMSBody) {
+     ./content/quality.go:36:		if !o.Mentions(c.EmailSubject + "\n" + c.EmailBody) {
+     … +35 lines
+
+● Bash(Read quality checks and fallback template)
+  ⎿  package content
+     import (
+     	"fmt"
+     	"regexp"
+     	"strings"
+     	"smartcampaign/internal/offer"
+     … +215 lines
+
+● Bash(See where Quality applies per locale)
+  ⎿  func nilIfEmpty(l []string) []string {
+     	if len(l) == 0 {
+     		return nil
+     	}
+     	return l
+     }
+     … +124 lines
+
+● Bash(Outline mock copy and translate code)
+  ⎿  llm/mock/copy.go:15:// The mock's copywriter. It writes like a working model wo…
+     llm/mock/copy.go:19:// How it stays varied AND inside the rules: it assembles c…
+     llm/mock/copy.go:24:// The banks are tried most specific first (the special day…
+     llm/mock/copy.go:30:// The phrases are the Turkish of the sentence bank (bank.g…
+     llm/mock/copy.go:37:func (p pair) in(formal bool) string {
+     llm/mock/copy.go:44:func same(s string) pair { return pair{s, s} }
+     … +67 lines
+
+● Bash(Read mock copywriter offer text and write)
+  ⎿  }
+     func seedOf(s string) int {
+     	h := fnv.New32a()
+     	_, _ = h.Write([]byte(strings.TrimSpace(s)))
+     	return int(h.Sum32() & 0x7fffffff)
+     }
+     … +223 lines
+
+● Bash(Read offer language phrases and mock translator)
+  ⎿  package offer
+     // The offer's wording for the source text (tr), and in English and German
+     // (the mock writes every other language from its sentence bank); lang is a
+     // language part ("en" for every en-* locale). The offer
+     // itself (kind, value, minimum, last day) is language independent; only these
+     // phrases change. The numbers, the amounts in TL and the dd.mm.yyyy date are
+     … +312 lines
+
+● Bash(See how coupon code slot is defined in bank)
+  ⎿  llm/mock/bank.go:14://	{c}              a coupon code
+     llm/mock/bank.go:281:	{kindPart, L(same("{c} kodlu indirim"), tx{"a discount wi…
+     llm/mock/bank.go:282:	{kindPart, L(same("Kupon kodu {c}"), tx{"Coupon code {c}"…
+     llm/mock/bank.go:283:	{kindCode, L(same("Kupon kodu: {c}"), tx{"Coupon code: {c…
+     llm/mock/bank.go:284:	{kindCode, L(same("Kod: {c}"), tx{"Code: {c}", "Code: {c}…
+     llm/mock/translate.go:41:	kindCode // "Kupon kodu: X"
+     … +122 lines
+
+● Bash(Read bank header, term lines, kit struct)
+  ⎿  package mock
+     import "smartcampaign/internal/brief"
+     // The sentence bank of the mock. The mock writes the Turkish source only from
+     // these lines, and every line carries the same sentence in the eight other
+     // languages, so the mock translator can translate any text made of them,
+     // including a text the user edited by hand (see translate.go).
+     … +96 lines
+
+● Bash(Find offer field usages and fallback modes)
+  ⎿  backend/internal/brief/verify.go:32:			bad("Brief'teki teklif %q ama offer alan…
+     backend/internal/llm/prompts.go:47:- TIERED DISCOUNTS: "her 1000 TL'lik alışver…
+     backend/internal/llm/prompts.go:49:- EVERY TL amount and EVERY percentage writt…
+     backend/internal/offer/offer.go:49:	MaxDiscount float64 `json:"max_discount"`
+     backend/internal/offer/offer.go:92:			return fmt.Errorf("offer.kind \"none\" ik…
+     backend/internal/offer/parts.go:118:		return fmt.Errorf("offer.max_discount 0 i…
+     … +57 lines
+
+● Teklif paketinden başlıyorum: `Scope` alanı, normalize/doğrulama/eşitlik ve
+  metinde geçme kontrolü.
+
+● Bash(Read offer.go header and terms.go)
+  ⎿  // Package offer describes the incentive a campaign brief promises (for example
+     // "%15 discount" or "free shipping") and checks message texts against it.
+     //
+     // The offer is extracted at the segment step and travels with the segment rule.
+     // The message step must state it in both the SMS and the email; the backend
+     // verifies that, so a model that forgets the discount is caught by code.
+     … +71 lines
+
+● Writing a new `offer/scope.go` and wiring it into the existing offer
+  functions.
+
+● Write(c:\insider_one_case\backend\internal\offer\scope.go)
+● Edit(c:\insider_one_case\backend\internal\offer\offer.go)
+● Edit(c:\insider_one_case\backend\internal\offer\offer.go)
+● Edit(c:\insider_one_case\backend\internal\offer\offer.go)
+● Edit(c:\insider_one_case\backend\internal\offer\offer.go)
+● Edit(c:\insider_one_case\backend\internal\offer\offer.go)
+● Edit(c:\insider_one_case\backend\internal\offer\offer.go)
+● Edit(c:\insider_one_case\backend\internal\offer\offer.go)
+  ⎿  File created successfully at: c:\insider_one_case\backend\internal\offer\scope.…
+
+  ⎿  The file c:\insider_one_case\backend\internal\offer\offer.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\offer\offer.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\offer\offer.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\offer\offer.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\offer\offer.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\offer\offer.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\offer\offer.go has been updated s…
+
+● Bash(Check how offer is persisted)
+  ⎿  campaign/service.go:460:func rowOffer(r *campaignRow) offer.Offer {
+     campaign/service.go-461-	if len(r.segmentRule) == 0 {
+     campaign/service.go-462-		return offer.Offer{Kind: offer.KindNone}
+     campaign/service.go-463-	}
+     campaign/service.go-464-	var stored segment.Rule
+     campaign/service.go-465-	if err := json.Unmarshal(r.segmentRule, &stored); err …
+     … +7 lines
+
+● Bash(Add scope to JSON schema)
+  ⎿  66:			"scope":        str, // the products / category the offer applies to, or …
+     68:		"required":             []any{"kind", "value", "code", "min_spend", "expir…
+
+● Şimdi Claude prompt'ları: segment kuralı (kapsam ≠ kitle; ürün geçmişi
+  desteklenmez; yalnız kapsam varsa herkes), mesaj ve çeviri adımı.
+
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+● Edit(c:\insider_one_case\backend\internal\llm\prompts.go)
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\prompts.go has been updated s…
+
+● Şimdi yerleşik şablon (fallback) ve mock metin yazarı/çevirmeni.
+
+● Bash(Read minimal fallback form)
+  ⎿  // its minimum basket, the code and the last day. The body is the plain one.
+     func minimalIn(o offer.Offer) Content {
+     	const lang = "tr"
+     	plain := fallbackIn(o, fallbackPlain)
+     	what, minP := o.WhatIn(lang), o.MinSpendPhraseIn(lang)
+     	label := offer.CouponLabelIn(lang)
+     … +28 lines
+
+● Edit(c:\insider_one_case\backend\internal\content\fallback_forms.go)
+● Edit(c:\insider_one_case\backend\internal\content\fallback.go)
+  ⎿  The file c:\insider_one_case\backend\internal\content\fallback_forms.go has bee…
+
+  ⎿  The file c:\insider_one_case\backend\internal\content\fallback.go has been upda…
+
+● Bash(Read translateField fitting logic)
+  ⎿  // field is a parsed text: its lines.
+     type field [][]tok
+     func parseField(text string) (field, []string) {
+     	var f field
+     	var unknown []string
+     	for _, l := range strings.Split(text, "\n") {
+     … +81 lines
+
+● Adding the scope slot `{s}` and the bank line to the mock translator, and the
+  scope sentence to the mock copywriter.
+
+● Bash(Locate lines to edit in translator and bank)
+  ⎿  65:var slotRe = regexp.MustCompile(`\{\{\s*[A-Za-z_]\w*\s*\}\}|\{[12dco]\}`)
+     72:	"o": `(.+?)`,
+     14://	{c}              a coupon code
+
+● Edit(c:\insider_one_case\backend\internal\llm\mock\translate.go)
+● Edit(c:\insider_one_case\backend\internal\llm\mock\translate.go)
+● Edit(c:\insider_one_case\backend\internal\llm\mock\bank.go)
+● Edit(c:\insider_one_case\backend\internal\llm\mock\bank.go)
+● Edit(c:\insider_one_case\backend\internal\llm\mock\copy.go)
+  ⎿  The file c:\insider_one_case\backend\internal\llm\mock\translate.go has been up…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\mock\translate.go has been up…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\mock\bank.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\mock\bank.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\mock\copy.go has been updated…
+
+● Mock tarafı: brief okuyucusuna kapsam okuma ve ürün-geçmişi tespiti ekliyorum
+  (`brief/scope.go`).
+
+● Write(c:\insider_one_case\backend\internal\brief\scope.go)
+  ⎿  File created successfully at: c:\insider_one_case\backend\internal\brief\scope.…
+
+● Bash(Fix helper references in scope.go)
+  ⎿  10:	"smartcampaign/internal/trtext"
+     38:	productStartRe   = regexp.MustCompile(`^` + productWords)
+     99:		if !qualified && !productStartRe.MatchString(noun) {
+     129:	if inLocativeRe.MatchString(trtext.Fold(string(last))) {
+
+● Now wiring into `Analyze`, the audience default, the lexicon and Verify's
+  feedback.
+
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Bash(Locate lexicon line and defaulted-audience note usage)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  195:	{"ürün kategorisi / marka", regexp.MustCompile(`\b(?:kategori\w*|urun\s+gr…
+     brief/analyze.go:1105:		rule.Note = AudienceDefaultedNote
+     brief/model_driven_test.go:220:	all.Note = brief.AudienceDefaultedNote
+     brief/model_driven_test.go:223:	if rule.Note != brief.AudienceDefaultedNote || …
+     brief/occasion.go:176:// AudienceDefaultedNote is shown in the audience step wh…
+     brief/occasion.go:178:const AudienceDefaultedNote = "Kitle belirtilmediği için …
+     … +5 lines
+
+● verifyEveryone dereferences `in.Occasion` when the audience was defaulted —
+  with a scope-only brief that'd be nil. Fixing.
+
+● Edit(c:\insider_one_case\backend\internal\brief\verify.go)
+● Bash(View verify offer feedback line)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\verify.go has been updated …
+
+  ⎿  if !r.Offer.Equal(in.Offer) {
+     		if in.Offer.IsNone() {
+     			bad("Brief'te bir teklif geçmiyor ama offer alanında %q var; offer.kind \"no…
+     		} else {
+     			bad("Brief'teki teklif %q ama offer alanı %q. offer alanını brief'teki tekli…
+     		}
+     … +1 lines
+
+● Edit(c:\insider_one_case\backend\internal\brief\verify.go)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\verify.go has been updated …
+
+● Frontend: tipe `scope` ve kartta teklif metnine kapsam.
+
+● Bash(Read formatOffer and Offer type)
+  ⎿  import type { Offer } from '../types'
+     const nf = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 })
+     /** 2026-12-31 -> 31.12.2026, by splitting the text (never through Date: no tim…
+     function formatDate(iso: string): string {
+       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+       return m ? `${m[3]}.${m[2]}.${m[1]}` : iso
+     … +89 lines
+
+● Edit(c:\insider_one_case\frontend\src\utils\formatOffer.ts)
+● Edit(c:\insider_one_case\frontend\src\types.ts)
+● Bash(Add frontend scope tests)
+  ⎿  The file c:\insider_one_case\frontend\src\utils\formatOffer.ts has been updated…
+
+  ⎿  The file c:\insider_one_case\frontend\src\types.ts has been updated successfull…
+
+  ⎿  (Bash completed with no output)
+
+● Adding a SegmentCard test for the offer row with scope.
+
+● Edit(c:\insider_one_case\frontend\src\components\SegmentCard.test.ts)
+● Bash(Vet and run affected backend tests)
+  ⎿  The file c:\insider_one_case\frontend\src\components\SegmentCard.test.ts has be…
+
+  ⎿  Volume smart-campaign_pgdata Creating 
+      Volume smart-campaign_pgdata Creating 
+      Network smart-campaign_app Creating 
+      Network smart-campaign_app Creating 
+      Volume smart-campaign_pgdata Created 
+      Volume smart-campaign_pgdata Created 
+     … +13 lines
+
+● Bash(Read prompt content test)
+  ⎿  }
+     // ---- special days, combined and tiered offers, as the prompts put them -----…
+     func TestSegmentPromptExplainsSpecialDaysAndCombinedAndTieredOffers(t *testing.…
+     	seg := llm.SegmentSystemPrompt()
+     	for _, want := range []string{
+     		"SPECIAL DAYS", "never its audience", "gender", "kadın müşterilere özel",
+     … +32 lines
+
+● Edit(c:\insider_one_case\backend\internal\llm\offer_messages_test.go)
+● Edit(c:\insider_one_case\backend\internal\llm\offer_messages_test.go)
+● Bash(Check imports in llm test)
+  ⎿  The file c:\insider_one_case\backend\internal\llm\offer_messages_test.go has be…
+
+  ⎿  The file c:\insider_one_case\backend\internal\llm\offer_messages_test.go has be…
+
+  ⎿  3:import (
+     9:	"smartcampaign/internal/content"
+
+● Bash(Find tests using product phrases)
+  ⎿  backend/internal/brief/brief_test.go:217:	{name: "unsupported: product category…
+     backend/internal/brief/brief_test.go:311:	{name: "special day: Yılbaşı", brief:…
+     backend/internal/campaign/campaign_test.go:53:const goodMessages = `{"sms_body"…
+     backend/internal/campaign/clarify_test.go:34:	v, err := svc.Create(ctx, "Kış ür…
+     backend/internal/campaign/clarify_test.go:57:	if got.Brief != "Kış ürünlerinde …
+     backend/internal/campaign/clarify_test.go:193:	v, err := svc.Create(ctx, "Kış ü…
+     … +7 lines
+
+● Bash(Swap no-audience example brief in clarify tests)
+  ⎿  ok := `{"name":"Ankara kış ürünleri · 200 TL","status":"ok","match":"all","cond…
+     	m := mock.NewScripted([]mock.Step{raw(ask), raw(ok)}, nil)
+     	svc, pool := newService(t, m)
+     	svc.UseSegmentMode(brief.ModelDriven)
+     	ctx := context.Background()
+     	v, err := svc.Create(ctx, "Hafta sonu 200 TL indirim duyurusu")
+     … +7 lines
+
+● Bash(Simplify the replacement brief)
+  ⎿  3
+
+● Kod değişiklikleri tamam; şimdi testleri yazıyorum (offer, segment, brief
+  tablosu, mesaj/çeviri, kampanya akışı).
+
+● Write(c:\insider_one_case\backend\internal\offer\scope_test.go)
+● Bash(Check brief test offer helpers)
+  ⎿  File created successfully at: c:\insider_one_case\backend\internal\offer\scope_…
+
+  ⎿  }
+     var (
+     	none         = offer.Offer{Kind: offer.KindNone}
+     	pct          = func(v float64) offer.Offer { return offer.Offer{Kind: offer.Ki…
+     	freeShipping = offer.Offer{Kind: offer.KindFreeShipping}
+     	amountOf     = func(v float64) offer.Offer { return offer.Offer{Kind: offer.Ki…
+     … +15 lines
+
+● Edit(c:\insider_one_case\backend\internal\brief\brief_test.go)
+● Edit(c:\insider_one_case\backend\internal\brief\brief_test.go)
+● Bash(Check duplicate table row)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\brief_test.go has been upda…
+
+  ⎿  The file c:\insider_one_case\backend\internal\brief\brief_test.go has been upda…
+
+  ⎿  236:	{name: "scope: 'tüm ürünlerde' is everything", brief: "Yılbaşına özel tüm …
+     337:	{name: "special day: Yılbaşı", brief: "Yılbaşına özel tüm ürünlerde %30 in…
+
+● Duplicate of an existing row — removing mine.
+
+● Edit(c:\insider_one_case\backend\internal\brief\brief_test.go)
+● Bash(Add scope note test and check feedback helper)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\brief_test.go has been upda…
+
+  ⎿  582:func feedback(t *testing.T, m *mock.Client) string {
+     583-	t.Helper()
+     584-	calls := m.Calls()
+     585-	if len(calls) != 2 || len(calls[1].Previous) != 1 {
+     586-		t.Fatalf("expected exactly one repair round, got %d calls", len(calls))
+     587-	}
+     … +7 lines
+
+● Bash(Find message generation test patterns)
+  ⎿  18:func TestReportedBriefExcludesPeopleWhoBought(t *testing.T) {
+     56:func TestUnsupportedBriefIsDecidedByTheBackendAndExplained(t *testing.T) {
+     101:func TestMessagesThatForgetTheOfferAreRepaired(t *testing.T) {
+     110:	if err := svc.GenerateMessages(context.Background(), id, rec.events()); er…
+     129:func TestMessagesWithAWrongDiscountAreRepaired(t *testing.T) {
+     136:	if err := svc.GenerateMessages(context.Background(), id, rec.events()); er…
+     … +10 lines
+
+● Bash(Read message test helpers)
+  ⎿  }
+     func msgs(sms, subject, body string) string {
+     	return `{"sms_body":"` + sms + `","email_subject":"` + subject + `","email_bod…
+     }
+     func TestMessagesThatForgetTheOfferAreRepaired(t *testing.T) {
+     	t.Parallel()
+     … +123 lines
+
+● Bash(Read translation flow test setup)
+  ⎿  return content.Content{SMSBody: r.Replace(c.SMSBody), EmailSubject: r.Replace(c…
+     }
+     // ---- writing ---------------------------------------------------------------…
+     // The source is written first, then translated into every locale of the
+     // audience: the locales with at least one reachable person, and only those.
+     func TestTheSourceIsTranslatedIntoEveryLocaleOfTheAudience(t *testing.T) {
+     … +48 lines
+
+● Write(c:\insider_one_case\backend\internal\campaign\scope_test.go)
+● Bash(Check recorded helper and ContentView shape)
+  ⎿  File created successfully at: c:\insider_one_case\backend\internal\campaign\sco…
+
+  ⎿  campaign/campaign_test.go:227:type recorded struct {
+     campaign/campaign_test.go-228-	names  []string
+     campaign/campaign_test.go-229-	deltas map[string]string
+     campaign/campaign_test.go-230-	valid  *content.Content
+     campaign/campaign_test.go-231-	fbMsg  string
+     campaign/campaign_test.go-232-	fb     *content.Content
+     … +11 lines
+
+● Claude-modu (scripted) testleri ve canlı eval senaryoları:
+
+● Bash(Add model-driven scope test and live eval cases)
+  ⎿  216:		{"scope: products the offer is valid on are not an audience", "Kış ürünle…
+     256:		{"scope: people chosen by products they bought", "Kış ürünü almış kişiler…
+
+● Bash(Run affected backend tests)
+  ⎿  ok  	smartcampaign/internal/offer	0.012s
+     ok  	smartcampaign/internal/brief	0.392s
+     ok  	smartcampaign/internal/segment	19.616s
+     ok  	smartcampaign/internal/content	0.162s
+     ok  	smartcampaign/internal/llm	0.128s
+     ok  	smartcampaign/internal/llm/anthropic	0.035s
+     … +2 lines
+
+● Hepsi ilk seferde geçti; yeni testlerin gerçekten koştuğunu doğruluyorum.
+
+● Bash(Run scope tests verbosely)
+  ⎿  --- PASS: TestScopeValidation (0.00s)
+     --- PASS: TestScopeIsPartOfTheOffer (0.00s)
+     --- PASS: TestMentionsScope (0.00s)
+     --- PASS: TestScopePhrase (0.00s)
+     ok  	smartcampaign/internal/offer	0.007s
+     --- PASS: TestAScopeOnlyBriefGoesToEveryoneWithTheNote (0.00s)
+     … +21 lines
+
+● Gerçekten koştular. Şimdi DECISIONS/README kaydı, ardından tam `make test`.
+
+● Edit(c:\insider_one_case\DECISIONS.md)
+● Edit(c:\insider_one_case\README.md)
+● Bash(Run full make test)
+  ⎿  The file c:\insider_one_case\DECISIONS.md has been updated successfully.
+
+  ⎿  The file c:\insider_one_case\README.md has been updated successfully.
+
+  ⎿  docker compose --profile test run --rm --build backend-test
+     ?   	smartcampaign/cmd/api	[no test files]
+     ?   	smartcampaign/cmd/mockprovider	[no test files]
+     ?   	smartcampaign/cmd/tool	[no test files]
+     ?   	smartcampaign/cmd/worker	[no test files]
+     ok  	smartcampaign/internal/brief	0.462s
+     … +30 lines
+
+● `make test` yeşil. gofmt kontrolü ve commit:
+
+● Bash(Check gofmt and working tree)
+  ⎿  internal/brief/analyze.go
+     internal/campaign/service.go
+      M DECISIONS.md
+      M README.md
+      D ai-sessions/001-frontend-insider-ui.txt
+      D ai-sessions/03-front.txt
+     … +27 lines
+
+● Bash(Show gofmt diff for analyze.go)
+  ⎿  diff internal/brief/analyze.go.orig internal/brief/analyze.go
+     --- internal/brief/analyze.go.orig
+     +++ internal/brief/analyze.go
+     @@ -78,11 +78,11 @@
+      	AgePhrase, AgeWords string
+      	// Scope is the products the offer is valid on ("kış ürünleri"; scope.go). It
+     … +13 lines
+
+● Edit(c:\insider_one_case\backend\internal\brief\analyze.go)
+● Bash(Recheck format, build, then commit)
+  ⎿  The file c:\insider_one_case\backend\internal\brief\analyze.go has been updated…
+
+  ⎿  internal/campaign/service.go
+     ok  	smartcampaign/internal/brief	0.222s
+     OK
+     3ef7f13 Offer scope: products the offer is valid on shape the message, not the …
+     df8547d Age audience field: explicit ages become conditions, vague age groups a…
+      D ai-sessions/001-frontend-insider-ui.txt
+     … +5 lines
+
+● Write(C:\Users\USER\.claude\projects\c--insider-one-case\memory\project_offer_scope.md)
+  ⎿  File created successfully at: C:\Users\USER\.claude\projects\c--insider-one-ca…
+
+● Bash(Add memory index entry)
+  ⎿  - [Offer scope](project_offer_scope.md) — D117 offer.scope done 2026-11-19 (3ef…
+     Shell cwd was reset to c:\insider_one_case
+
+● Hata düzeltildi ve tek commit olarak kaydedildi: `3ef7f13`, push edilmedi.
+  `make test` yeşil: backend paketlerinin hepsi geçti, frontend'de 361 test
+  geçti.
+
+  **Koddan doğrulama (düzeltmeden önce):**
+  - Teklifte ürün veya kategori kapsamı için **hiçbir alan yoktu**.
+  - Mesaj adımına yalnız brief metni ve teklif özeti (`Describe()`) gidiyordu.
+  Ürünlerin mesajda geçip geçmediğini kontrol eden bir şey yoktu. Çeviri
+  prompt'unda teklif hiç yoktu.
+  - Mock'ta "ayakkabı kategorisinde geçerli" kategori sözlüğü yüzünden
+  "desteklenmiyor" oluyordu. "Kış ürünlerinde" ise kitle bulunamadığı için "Bu
+  kampanya kime gönderilsin?" sorusuna düşüyordu.
+  - Claude'da da kural yoktu. Bu yüzden aynı brief'i bir seferinde tamamladı,
+  bir seferinde soruda bıraktı.
+
+  **Ne değişti:**
+  - **`offer.scope`:** serbest metin, en fazla 60 karakter, tek satır, boş
+  olabilir. Teklif yoksa boş olmak zorunda. JSON şemasına ve doğrulamaya
+  eklendi; büyük/küçük harf ve Türkçe harf farkı eşitlikte sayılmıyor
+  ([scope.go](backend/internal/offer/scope.go)).
+  - **Kitle:** kapsam kitleyi daraltmıyor. Brief'te başka kitle koşulu yoksa
+  (yalnız ürün + teklif) kampanya herkese gidiyor, soru sorulmuyor. Kartta özel
+  gündeki gibi "Kitle belirtilmediği için tüm müşteriler seçildi." notu çıkıyor.
+    - "Kış ürünü almış kişiler" ya da "kategorisini görüntüleyenler" gibi
+  kişileri ürünle seçen brief'ler "desteklenmiyor" oluyor ve satın
+  alma/görüntüleme geçmişi olmadığı açıkça yazıyor.
+    - "En az bir ürün satın almış" ürün verisi değil, sipariş sayılıyor
+  (`order_count > 0`).
+  - **Mesaj:** SMS'te ve e-postada kapsam geçmek zorunda. "Kış ürünlerinde" gibi
+  ekli hali de kabul ediliyor. Geçmezse metin onarıma dönüyor; elle düzenlemede
+  uyarı çıkıyor. Yerleşik şablon da kapsamı yazıyor.
+  - **Çeviri:** çeviri prompt'u kapsamı korumayı istiyor. Mock çevirmenin
+  sözlüğü olmadığı için kapsamı kupon kodu gibi olduğu gibi taşıyor ("Applies
+  to: kış ürünleri"). Gerçek Claude ise çeviriyor.
+  - **Mock:** yeni [brief/scope.go](backend/internal/brief/scope.go) "…
+  ürünlerinde / kategorisinde / ürün grubunda geçerli" ve "spor ayakkabılarda
+  %20" gibi kalıpları kapsam olarak okuyor. Cinsiyet ve kategori kontrollerinden
+  önce çalışıyor; böylece "kadın ürünlerinde" cinsiyet sayılmıyor.
+  - **Testler:** kapsamlı brief kitleyi daraltmıyor ve soru üretmiyor; kitle
+  "herkese" ile aynı sayı. Kaynak metinde ve en-GB/de-DE çevirilerinde kapsam
+  geçiyor. Kapsamı unutan metin onarılıyor, şablon kapsamı yazıyor. "Kış ürünü
+  almış" desteklenmiyor. İstediğiniz iki senaryo canlı eval setine eklendi.
+  - **Dokümanlar:** DECISIONS'a D117 kaydı, README'ye kısa bir madde eklendi.
+
+  **Kararınız gereken üç nokta:**
+  - **Kart biçimi örneğinizden farklı.** Kartta "200 TL indirim · Kış ürünleri
+  (kupon kodu KIS200)" görünüyor. Kupon kodu mevcut parantezli biçimde kaldı;
+  örneğinizdeki "· KIS200" biçimine geçirirseniz tüm teklif satırlarının
+  görünümü değişir. İsterseniz çeviririm.
+  - **Davranış değişti.** "Kış ürünlerinde 200 TL indirim" eskiden "kime
+  gönderilsin?" diye soruyordu, artık herkese gidiyor. Bu brief'i "kitle yok"
+  örneği olarak kullanan test brief'ini "200 TL indirim duyurusu" ile
+  değiştirdim.
+  - **"Tüm ürünlerde %20 indirim" kapsam sayılmıyor** (her şey demek). Başka
+  kitle yoksa hâlâ "kime gönderilsin?" diye soruyor.
+
+  Canlı eval'i (`make test-live`) çalıştırmadım; API anahtarı ve ücret
+  gerektiriyor. Yalnızca derlendiğini kontrol ettim. `ai-sessions/` altındaki
+  değişikliklere dokunmadım.
+
+
+> ## 2. Zamanlama saat seçici (DateTimeField)
+  - Saat ve dakika sütunlarının üstüne "Saat" ve "Dakika" başlıkları ekle;
+    seçili zaman da metin olarak görünsün (ör. "19 Kasım 2026, 15:00").
+  - Dakikalar 5'er 5'er değil 1'er 1'er seçilebilsin (00–59).
+  - Mevcut kurallar korunsun: geçmiş saat seçilemesin, en az +1 dk, en fazla
+    +30 gün, klavyeyle erişilebilir olsun.
+  - Kısayollar (1 saat sonra, Bu akşam 18:00, Yarın 09:00) aynen kalsın.
+  Testleri güncelle.
+
+● Bash(Locate DateTimeField component and tests)
+  ⎿  Exit code 1
+     ./components/ApprovalCard.vue
+     ./components/DeliveryAndApproval.test.ts
+     ./components/ui/DateTimeField.test.ts
+     ./designSystem.test.ts
+     0 total
+
+● Bash(Read DateTimeField component)
+  ⎿  DateTimeField.test.ts
+     DateTimeField.vue
+     <script setup lang="ts">
+     import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+     import { CalendarClock, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+     import {
+     … +392 lines
+
+● Bash(Read calendar utils and tests)
+  ⎿  // Date arithmetic behind the date-and-time picker. Plain functions, no browser…
+     // only draws what these decide. All dates are in the viewer's own time zone.
+     export const WEEKDAYS = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz']
+     export const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'T…
+     export interface Cell {
+       date: Date
+     … +235 lines
+
+● Bash(Read calendar tests and ApprovalCard usage)
+  ⎿  expect(withDay(d(2026, 11, 18, 18, 0), d(2026, 11, 20), min, max)).toEqual(max)
+       })
+       it('changes the time of the current day, or of the fallback day when nothing …
+         expect(withTime(d(2026, 11, 18, 10, 0), d(2026, 11, 17), 15, 45, min, max))…
+         expect(withTime(null, d(2026, 11, 17), 8, 5, min, max)).toEqual(d(2026, 11,…
+       })
+     … +28 lines
+
+● Updating `calendar.ts`: every minute, plus a long Turkish display ("19 Kasım
+  2026, 15:00").
+
+● Edit(c:\insider_one_case\frontend\src\utils\calendar.ts)
+● Edit(c:\insider_one_case\frontend\src\utils\calendar.test.ts)
+● Bash(Fix calendar test imports)
+  ⎿  The file c:\insider_one_case\frontend\src\utils\calendar.ts has been updated su…
+
+  ⎿  The file c:\insider_one_case\frontend\src\utils\calendar.test.ts has been updat…
+
+  ⎿  import { describe, expect, it } from 'vitest'
+     import {
+       clampDate,
+       dayDisabled,
+       displayValue,
+       HOURS,
+     … +12 lines
+
+● Now the component: column headings, the written-out selection, every minute,
+  and arrow-key navigation inside each column.
+
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+● Bash(Check design tokens exist)
+  ⎿  --s-1:
+       --text-sm:
+       --text-xs:
+
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue)
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.vue has b…
+
+● Bileşen hazır. Mevcut kuralların (en az +1 dk, en fazla +30 gün, kısayollar)
+  ApprovalCard'da nasıl tanımlandığını kontrol ediyorum.
+
+● Bash(Check schedule bounds and shortcuts)
+  ⎿  8:import { quickTimes, scheduleBounds, toLocalInput } from '../utils/schedule'
+     47:// The earliest and latest times the picker offers move with the clock.
+     53:const earliest = computed(() => toLocalInput(bounds.value.earliest))
+     54:const latest = computed(() => toLocalInput(bounds.value.latest))
+     55:const quick = computed(() => quickTimes(clock.value))
+     95:              :min="earliest"
+     … +46 lines
+
+● Kurallar ApprovalCard/`schedule.ts` tarafında ve değişmedi. Şimdi
+  DateTimeField testlerini güncelliyorum.
+
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.test.ts)
+● Edit(c:\insider_one_case\frontend\src\components\ui\DateTimeField.test.ts)
+● Bash(Run frontend typecheck and tests)
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.test.ts h…
+
+  ⎿  The file c:\insider_one_case\frontend\src\components\ui\DateTimeField.test.ts h…
+
+  ⎿  ✓ src/components/ui/ui.test.ts (26 tests) 485ms
+      ✓ src/utils/calendar.test.ts (17 tests) 27ms
+      ✓ src/components/ui/DateTimeField.test.ts (28 tests) 1968ms
+      Test Files  35 passed (35)
+           Tests  369 passed (369)
+
+● Saat seçici güncellendi; typecheck ve frontend testleri yeşil (369 test,
+  DateTimeField testleri 28). Backend'e dokunulmadı. Değişiklikleri gözle
+  kontrol etmedim (ekran görüntüsü almadım). Bu sefer commit istemediğiniz için
+  commit atmadım; isterseniz atarım.
+
+  **Ne değişti**
+  ([DateTimeField.vue](frontend/src/components/ui/DateTimeField.vue),
+  [calendar.ts](frontend/src/utils/calendar.ts)):
+  - **Başlıklar:** saat ve dakika sütunlarının üstünde "Saat" ve "Dakika"
+  başlıkları var. Ekran okuyucu her sütunu kendi başlığıyla okuyor.
+  - **Seçili zaman metin olarak:** açılır pencerede "Seçilen: 19 Kasım 2026,
+  15:00" yazıyor ve her seçimde güncelleniyor. Henüz seçim yoksa "Henüz zaman
+  seçilmedi" görünüyor. Kapalıyken alanın üzerindeki "18.11.2026 10:00" biçimi
+  aynen kaldı.
+  - **Dakikalar 1'er 1'er:** 00–59 arası 60 seçenek var. Eski 5'er dakikalık
+  liste kaldırıldı.
+  - **Kurallar aynı:** geçmiş saat seçilemiyor, en az +1 dk ve en fazla +30 gün
+  sınırı korunuyor. Bu sınırlar ApprovalCard'dan geliyor ve değişmedi. Artık
+  dakika dakika uygulanıyor: en erken an 09:31 ise 09:00–09:30 kapalı, 09:31
+  açık. Kısayollar (1 saat sonra, Bu akşam 18:00, Yarın 09:00) aynen duruyor.
+  - **Klavye:** 60 dakikalık listeyi Tab ile tek tek geçmek zorunda kalmamak
+  için her sütun tek bir Tab durağı oldu. Durak seçili değerde, seçili değer
+  kapalıysa seçilebilen ilk değerde. Sütun içinde yukarı/aşağı ok tuşları, Home
+  ve End ile geziliyor; kapalı değerler atlanıyor. Enter ya da Boşluk seçiyor,
+  Escape kapatıyor.
+
+  **Testlerde** eski "5'er dakika" testleri ve dakika indeksine bağlı testler
+  güncellendi. Yeni testler şunları kapsıyor:
+  - 60 dakika ve 07, 59 gibi değerlerin seçilmesi
+  - sütun başlıkları
+  - seçili zamanın metni ve güncellenmesi
+  - en erken ve en geç an sınırında dakika dakika kapanma
+  - Tab durağı, ok tuşları, Home, End ve Enter
+  - `longValue`, `HOURS` ve `MINUTES`
+
+
+> comoıtle ve txt kaydet ai sessıon a
+
+● Bash(Inspect ai-sessions folder and conventions)
+  ⎿  total 2628
+     drwxr-xr-x 1 USER GROUP       0 Nov 19 04:17 .
+     drwxr-xr-x 1 USER GROUP       0 Nov 19 13:38 ..
+     -rw-r--r-- 1 USER GROUP  264412 Nov 15 23:33 01-plan-ve-segment.txt
+     -rw-r--r-- 1 USER GROUP  368969 Nov 16 15:20 02-asama-4-5.txt
+     -rw-r--r-- 1 USER GROUP  422076 Nov 17 22:18 03-frontend-insider-ui.txt
+     … +44 lines
+
+● Önce saat seçici değişikliğini commitliyorum (yalnız bu dört dosya).
+
+● Bash(Commit picker change and locate session transcript)
+  ⎿  3822f90 Time picker: "Saat"/"Dakika" headings, every minute, chosen time writte…
+     MASKED-SESSION.jsonl
+
+● Commit tamam (`3822f90`). Şimdi oturum kaydını mevcut `ai-sessions`
+  dosyalarının biçiminde çıkarıyorum; önce biçime bakıyorum.
+
+● Bash(Inspect export format markers)
+  ⎿  2:> Onaylanmış kampanyanın içeriği onaydan sonra değişebiliyor; bunu düzelt
+     181:> sytematıc debug skılını kullanarak çöz
+     189:  ⎿  Loaded skill
+     217:  ⎿  Wrote 324 lines to
+     241:  ⎿  Added 1 line, removed 1 line
+     267:  ⎿  Added 22 lines
+     … +34 lines
+
+● Bash(View a sample of the export formatting)
+  ⎿  > sytematıc debug skılını kullanarak çöz
+       Plan onaylı, başla.
+       1. Tek kalem olsun.
+       2. writeTranslation'ı da düzelt, ama FOR SHARE kullan ki paralel çeviriler
+          birbirini beklemesin (Approve'u engellemesi yeterli).
+          Testlerin düzeltmeden önce kaldığını göster, sonra devam et.
+     … +46 lines
+
+● Biçim Claude Code'un `/export` çıktısı. Bu oturumun kaydını (JSONL) aynı
+  biçime çeviren küçük bir betik yazıyorum; önce kaydın yapısına bakıyorum.
+
+● Bash(Inspect session transcript structure)
+  ⎿  1389 MASKED-SESSION.jsonl
+     218 ('assistant', ('tool_use',), False, False)
+     217 ('user', ('tool_result',), False, False)
+     168 ('attachment', ('str',), False, False)
+     142 ('api-request', ('str',), False, False)
+     99 ('assistant', ('thinking',), False, False)
+     … +19 lines
+
+● Write(C:\Users\USER\AppData\Local\Temp\claude\MASKED-ID\MASKED-SESSION\sc…)
+  ⎿  File created successfully at: C:\Users\USER\AppData\Local\Temp\claude\4d8e4057…
+
+● Bash(Export session to txt and check for private data)

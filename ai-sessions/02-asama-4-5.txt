@@ -99,10 +99,10 @@
   ⎿  Referenced file PLAN.md
   ⎿  Referenced file backend\internal\campaign\service.go
   ⎿  Referenced file backend\internal\brief\analyze.go
-  ⎿  Read ..\Users\nazli\AppData\Local\Temp\claude\4d8e40579cca4869\91e4a1b9-8b5
-     6-4f5c-a72c-b8c625ea66f9\scratchpad\brief3.json (2 lines)
-  ⎿  Read ..\Users\nazli\AppData\Local\Temp\claude\4d8e40579cca4869\91e4a1b9-8b5
-     6-4f5c-a72c-b8c625ea66f9\scratchpad\brief2.json (2 lines)
+  ⎿  Read ..\Users\USER\AppData\Local\Temp\claude\MASKED-ID\MASKED-SESSION
+     MASKED-SESSION\scratchpad\brief3.json (2 lines)
+  ⎿  Read ..\Users\USER\AppData\Local\Temp\claude\MASKED-ID\MASKED-SESSION
+     MASKED-SESSION\scratchpad\brief2.json (2 lines)
   ⎿  Skills restored (superpowers:systematic-debugging)
 
 ● Compacted using a summary written while you were away · turn off with

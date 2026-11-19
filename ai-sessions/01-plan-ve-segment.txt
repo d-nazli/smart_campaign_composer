@@ -1009,7 +1009,7 @@
   ├──────────────────────┼────────────────────────┼─────────────────────────┤
   │ email                │ TEXT NULL              │                         │
   ├──────────────────────┼────────────────────────┼─────────────────────────┤
-  │ phone                │ TEXT NULL              │ +905551234567 biçimi    │
+  │ phone                │ TEXT NULL              │ +90XXXXXXXXXX biçimi    │
   ├──────────────────────┼────────────────────────┼─────────────────────────┤
   │ city                 │ TEXT NOT NULL          │ Kanonik yazım           │
   │                      │                        │ (İstanbul)              │
@@ -2264,7 +2264,7 @@
   # 4) Tek SMS (ilk istek 200; kaos açıksa 5xx/429 de gelebilir, tekrar dene)
   curl.exe -s -i -X POST localhost:8090/v1/sms/send -H "Idempotency-Key: demo-1"
   -H "Content-Type: application/json" -d
-  '{\"to\":\"+905550000001\",\"body\":\"merhaba\"}'
+  '{\"to\":\"+90XXXXXXXXXX\",\"body\":\"merhaba\"}'
 
   # 5) AYNI Idempotency-Key ile ikinci istek:
   #    200 + "Idempotent-Replay: true" + aynı provider_message_id (yeniden
@@ -2273,7 +2273,7 @@
   çalıştır.
   curl.exe -s -i -X POST localhost:8090/v1/sms/send -H "Idempotency-Key: demo-1"
   -H "Content-Type: application/json" -d
-  '{\"to\":\"+905550000001\",\"body\":\"merhaba\"}'
+  '{\"to\":\"+90XXXXXXXXXX\",\"body\":\"merhaba\"}'
 
   # 6) Kalıcı hata: seed'deki bozuk numaraya benzer istek -> 400, retry
   edilmemeli
@@ -2286,7 +2286,7 @@
   curl.exe -s -o NUL -w "%{http_code}`n" --parallel --parallel-max 100 -X POST
   "localhost:8090/v1/sms/send?n=[1-400]" -H "Idempotency-Key: burst-1" -H
   "Content-Type: application/json" -d
-  '{\"to\":\"+905550000002\",\"body\":\"x\"}' | Group-Object
+  '{\"to\":\"+90XXXXXXXXXX\",\"body\":\"x\"}' | Group-Object
 
   # 8) 429 ve 5xx'i sebebiyle loglardan gör (canlı)
   docker compose logs -f mock-provider --no-log-prefix
