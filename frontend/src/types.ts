@@ -107,6 +107,8 @@ export interface Offer {
   max_discount?: number
   /** Other incentives promised together with the main one ("%20 indirim + ücretsiz kargo"). */
   extras?: OfferPart[] | null
+  /** The products the offer is valid on ("kış ürünleri"); empty or absent = everything. Never an audience. */
+  scope?: string
 }
 
 /** One incentive of a combined offer. */

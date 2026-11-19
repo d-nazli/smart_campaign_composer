@@ -54,6 +54,10 @@ func fallbackTexts(o offer.Offer, smsHello, subjectHello, bodyHello, bodySana, l
 		}
 		body += " Fırsatı kaçırmamak için hemen " + lookAt + ".\n\nSevgiler"
 	}
+	if scope := o.ScopePhraseIn("tr"); scope != "" && what != "" {
+		sms += " " + scope + "."
+		body = strings.Replace(body, "\n\nSevgiler", " "+scope+".\n\nSevgiler", 1)
+	}
 	if code != "" {
 		sms += " Kupon kodu: " + code + "."
 		body = strings.Replace(body, "\n\nSevgiler", " Kupon kodu: "+code+".\n\nSevgiler", 1)

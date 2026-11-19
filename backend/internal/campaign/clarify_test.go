@@ -31,7 +31,7 @@ func TestAnAnswerResolvesTheSameCampaign(t *testing.T) {
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 
-	v, err := svc.Create(ctx, "Kış ürünlerinde 200 TL indirim")
+	v, err := svc.Create(ctx, "200 TL indirim duyurusu")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestAnAnswerResolvesTheSameCampaign(t *testing.T) {
 	if n := campaignCount(t, pool); n != before {
 		t.Fatalf("campaigns %d → %d: an answer must not add one", before, n)
 	}
-	if got.Brief != "Kış ürünlerinde 200 TL indirim" {
+	if got.Brief != "200 TL indirim duyurusu" {
 		t.Fatalf("the brief stays as written: %q", got.Brief)
 	}
 
@@ -190,7 +190,7 @@ func TestAnAnswerInModelDrivenMode(t *testing.T) {
 	svc, pool := newService(t, m)
 	svc.UseSegmentMode(brief.ModelDriven)
 	ctx := context.Background()
-	v, err := svc.Create(ctx, "Kış ürünlerinde 200 TL indirim")
+	v, err := svc.Create(ctx, "200 TL indirim duyurusu")
 	if err != nil {
 		t.Fatal(err)
 	}

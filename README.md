@@ -167,6 +167,10 @@ bu yana gün (`days_since_last_cart_add`, `days_since_last_order`, `days_since_l
   ve `age lte 25` (iki uç dahil), "65 yaş üstü" / "65 yaş ve üzeri" → `gte 65`, "65 yaşından büyük" → `gt 65`, "30 yaş
   altı" → `lt 30`, "30 yaşındaki" → `eq 30`. Sayısız yaş grubu ("gençlere", "yaşlı", "orta yaşlı") tahmin edilmez: hangi
   yaş aralığı olduğu sorulur. Kitle kartında aralık tek rozettir: "Yaş 18–25".
+- **Ürünler teklifin kapsamıdır, kitle değil.** "Kış ürünlerinde geçerli 200 TL indirim", "seçili ürünlerde %20" →
+  `offer.scope` ("kış ürünleri", en fazla 60 karakter). Kitleyi daraltmaz: başka koşul yoksa herkes seçilir ve soru
+  sorulmaz. Kapsam SMS'te ve e-postada geçmek zorundadır, çevirilerde korunur; kartta "200 TL indirim · Kış ürünleri".
+  Ürün verisi olmadığı için kişileri ürünle seçmek ("kış ürünü almış", "kategorisini görüntüleyen") desteklenmez (D117).
 - **Birleşik teklif:** farklı türden en fazla 3 teklif birlikte verilir ("%20 indirim + ücretsiz kargo", "%10 indirim, 50
   TL hediye çeki ve ücretsiz kargo"); her parça SMS'te ve e-postada geçmek zorundadır. Aynı türden iki değer ("%20 ya da
   %30") ya da seçenek olarak yazılmış teklifler ("%20 indirim ya da ücretsiz kargo") sorulur.

@@ -213,6 +213,8 @@ func TestLiveModelDrivenClearBriefs(t *testing.T) {
 			"days_since_last_cart_add lte 14 | order_count gte 1 | purchased_since_last_cart_add eq false"},
 		{"age: an explicit range in a city", "18-25 yaş arası İstanbul'daki kullanıcılar",
 			"age gte 18 | age lte 25 | city eq İstanbul", offer.Offer{Kind: offer.KindNone}, ""},
+		{"scope: products the offer is valid on are not an audience", "Kış ürünlerinde geçerli 200 TL indirim",
+			"all_customers eq true", offer.Offer{Kind: offer.KindAmount, Value: 200, Scope: "kış ürünleri"}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -251,6 +253,7 @@ func TestLiveModelDrivenAmbiguousBriefsAreAskedAbout(t *testing.T) {
 		{"data the database does not have", "35 yaş üstü ve son 30 günde telefon kategorisine bakan müşterilere %10 indirim",
 			[]string{segment.StatusUnsupported, segment.StatusNeedsClarification}},
 		{"age: a vague age group is asked about", "gençlere özel indirim", []string{segment.StatusNeedsClarification}},
+		{"scope: people chosen by products they bought", "Kış ürünü almış kişilere %10 indirim", []string{segment.StatusUnsupported}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

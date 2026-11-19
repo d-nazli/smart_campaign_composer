@@ -100,6 +100,23 @@ describe('describeCondition: gender', () => {
   })
 })
 
+describe('SegmentCard: the scope of the offer', () => {
+  it('shows the products next to the offer, not as a rule condition', () => {
+    const segment: Segment = {
+      status: 'ok',
+      match: 'all',
+      conditions: [{ field: 'all_customers', op: 'eq', value: true }],
+      explanation: 'tüm müşteriler (izin vermiş olanlar)',
+      audience,
+      offer: { kind: 'amount', value: 200, code: 'KIS200', scope: 'kış ürünleri' },
+      note: 'Kitle belirtilmediği için tüm müşteriler seçildi.',
+    }
+    const w = mount(SegmentCard, { props: { segment } })
+    expect(w.get('[data-testid="offer"]').text()).toContain('200 TL indirim · Kış ürünleri (kupon kodu KIS200)')
+    expect(w.findAll('.chip').map((c) => c.text())).toEqual(['Tüm müşteriler (iletişim izni olanlar)'])
+  })
+})
+
 describe('SegmentCard: age', () => {
   it('shows an age range as one badge', () => {
     const segment: Segment = {

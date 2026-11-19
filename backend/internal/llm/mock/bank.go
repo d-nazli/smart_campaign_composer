@@ -12,6 +12,7 @@ import "smartcampaign/internal/brief"
 //	{1} {2}          a number (an amount, a percentage)
 //	{d}              a date (31.12.2026)
 //	{c}              a coupon code
+//	{s}              the offer's scope ("kış ürünleri"), copied as written
 //	{o}              the offer phrase, itself made of bank lines
 //	{{first_name}}   a placeholder (any {{variable}})
 //
@@ -286,6 +287,7 @@ var termLines = []struct {
 	{kindCap, L(same("en fazla {1} TL"), tx{"up to {1} TL", "höchstens {1} TL", "jusqu'à {1} TL", "hasta {1} TL", "fino a {1} TL", "maximaal {1} TL", "até {1} TL", "بحد أقصى {1} TL"}), ""},
 	{kindMin, L(same("{1} TL ve üzeri alışverişte"), tx{"on orders of {1} TL and over", "ab einem Einkaufswert von {1} TL", "dès {1} TL d'achat", "en compras desde {1} TL", "per una spesa minima di {1} TL", "bij besteding vanaf {1} TL", "em compras a partir de {1} TL", "على الطلبات بقيمة {1} TL فأكثر"}), "{1} TL üzeri"},
 	{kindMin, L(same("{1} TL üzeri"), tx{"over {1} TL", "ab {1} TL", "dès {1} TL", "desde {1} TL", "da {1} TL", "vanaf {1} TL", "acima de {1} TL", "فوق {1} TL"}), ""},
+	{kindTerm, L(same("Geçerli ürünler: {s}"), tx{"Applies to: {s}", "Gilt für: {s}", "Valable sur : {s}", "Válido en: {s}", "Valido su: {s}", "Geldig op: {s}", "Válido em: {s}", "يسري على: {s}"}), ""},
 	{kindTerm, L(same("Son kullanım: {d}"), tx{"Valid until: {d}", "Gültig bis: {d}", "Valable jusqu'au {d}", "Válido hasta el {d}", "Valido fino al {d}", "Geldig tot {d}", "Válido até {d}", "صالح حتى {d}"}), "Son gün {d}"},
 	{kindTerm, L(same("Son gün {d}"), tx{"Until {d}", "Bis {d}", "Jusqu'au {d}", "Hasta el {d}", "Fino al {d}", "Tot {d}", "Até {d}", "حتى {d}"}), ""},
 

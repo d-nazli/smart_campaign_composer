@@ -76,10 +76,13 @@ type Intent struct {
 	// says them (age.go).
 	Ages                []segment.Condition
 	AgePhrase, AgeWords string
-	HasSpend            bool   // an explicit total-spending audience (toplam harcaması N TL'den fazla)
-	SpendOp             string // gt, gte or lt
-	SpendValue          float64
-	Blockers            []Blocker
+	// Scope is the products the offer is valid on ("kış ürünleri"; scope.go). It
+	// goes into Offer.Scope and never narrows the audience.
+	Scope      string
+	HasSpend   bool   // an explicit total-spending audience (toplam harcaması N TL'den fazla)
+	SpendOp    string // gt, gte or lt
+	SpendValue float64
+	Blockers   []Blocker
 
 	folded   string   // the folded brief, for checks that need to look at it again
 	consumed [][2]int // spans (byte offsets in folded) already explained as part of an offer term
@@ -243,6 +246,10 @@ func Analyze(text string) Intent {
 	in := Intent{Offer: offer.Offer{Kind: offer.KindNone}}
 	// Special days and gender words are read first and taken out of the text:
 	// "Kadınlar Günü" is a theme, not a gender; "8 Mart" is not a date.
+	// The products an offer is valid on are read first: "kadın ürünlerinde" is a
+	// scope, not a gender, and "ayakkabı kategorisinde geçerli" is not an
+	// unsupported category.
+	d.mask(in.analyzeScope(d, d.foldString))
 	var spans [][2]int
 	in.Occasion, spans = findOccasions(d.foldString)
 	d.mask(spans)
@@ -255,6 +262,9 @@ func Analyze(text string) Intent {
 	in.analyzeUnsupported(d, f)
 	in.analyzeTime(d, f)
 	in.analyzeOffer(d, text)
+	if in.Scope != "" && !in.Offer.IsNone() {
+		in.Offer.Scope = in.Scope
+	}
 	in.analyzeCities(f)
 	in.analyzePurchase(d, f, work)
 	in.crossChecks()
@@ -749,6 +759,12 @@ func (in *Intent) analyzeAudience(f string) {
 	// A special day names a theme, not an audience: when nothing else narrows it,
 	// the campaign goes to everyone who may be contacted, and the screen says so.
 	if in.Occasion != nil && len(in.Blockers) == 0 {
+		in.Everyone, in.AudienceDefaulted = true, true
+		return
+	}
+	// So does an offer's scope ("kış ürünlerinde 200 TL indirim"): the products
+	// shape the message, the campaign goes to everyone.
+	if in.Offer.Scope != "" && len(in.Blockers) == 0 {
 		in.Everyone, in.AudienceDefaulted = true, true
 		return
 	}

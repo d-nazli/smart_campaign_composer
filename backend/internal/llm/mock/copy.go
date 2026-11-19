@@ -175,6 +175,10 @@ func (k kit) offerText(o offer.Offer) offerText {
 	default:
 		t.none = true
 	}
+	if sc := o.ScopePhraseIn(k.lang); sc != "" && !t.none {
+		t.tail += " " + sc + "."
+		t.shortTail += " " + sc + "."
+	}
 	if o.Code != "" && o.Kind != offer.KindCouponCode {
 		t.tail += " " + label + ": " + o.Code + "."
 		t.shortTail += " " + k.shortCode + ": " + o.Code + "."

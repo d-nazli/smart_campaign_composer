@@ -29,7 +29,7 @@ func Verify(in Intent, r segment.Rule) []string {
 		if in.Offer.IsNone() {
 			bad("Brief'te bir teklif geçmiyor ama offer alanında %q var; offer.kind \"none\", value 0, code \"\", min_spend 0 ve expires_at \"\" olmalı.", r.Offer.Describe())
 		} else {
-			bad("Brief'teki teklif %q ama offer alanı %q. offer alanını brief'teki teklifle aynen doldur (kind, value, code, min_spend, expires_at, step_spend, max_discount, extras). Alışveriş tutarı şartı (ör. \"1000 TL üzeri alışverişe\") teklife aittir: min_spend; son kullanma tarihi expires_at (YYYY-MM-DD). Birlikte verilen farklı türden teklifler (ör. \"%%20 indirim + ücretsiz kargo\") tek teklifin parçalarıdır: biri kind/value, diğerleri extras. \"Her 1000 TL'ye 100 TL\" kademeli indirimdir: kind amount, value 100, step_spend 1000; \"toplamda en fazla 300 TL\" max_discount 300.", in.Offer.Describe(), r.Offer.Describe())
+			bad("Brief'teki teklif %q ama offer alanı %q. offer alanını brief'teki teklifle aynen doldur (kind, value, code, min_spend, expires_at, step_spend, max_discount, extras, scope). Teklifin geçerli olduğu ürünler (ör. \"kış ürünlerinde geçerli\") scope'a yazılır: \"kış ürünleri\". Alışveriş tutarı şartı (ör. \"1000 TL üzeri alışverişe\") teklife aittir: min_spend; son kullanma tarihi expires_at (YYYY-MM-DD). Birlikte verilen farklı türden teklifler (ör. \"%%20 indirim + ücretsiz kargo\") tek teklifin parçalarıdır: biri kind/value, diğerleri extras. \"Her 1000 TL'ye 100 TL\" kademeli indirimdir: kind amount, value 100, step_spend 1000; \"toplamda en fazla 300 TL\" max_discount 300.", in.Offer.Describe(), r.Offer.Describe())
 		}
 	}
 
@@ -280,8 +280,10 @@ func describe(conds []intCondition) string {
 // everyone, and then it must stand alone.
 func (in Intent) verifyEveryone(r segment.Rule, bad func(string, ...any)) {
 	switch {
-	case in.AudienceDefaulted && !has(r, "all_customers"):
+	case in.AudienceDefaulted && !has(r, "all_customers") && in.Occasion != nil:
 		bad("Brief bir özel günden söz ediyor (%s) ama kitle belirtmiyor. Özel gün mesajın konusudur, kitleyi daraltmaz: kitle tüm müşterilerdir, yalnızca all_customers eq true koşulunu kullan.", in.Occasion.NameIn("tr"))
+	case in.AudienceDefaulted && !has(r, "all_customers"):
+		bad("Brief'teki ürünler (%q) teklifin kapsamıdır (offer.scope), kitleyi daraltmaz; brief kitle belirtmediği için kitle tüm müşterilerdir: yalnızca all_customers eq true koşulunu kullan.", in.Offer.Scope)
 	case in.Everyone && !has(r, "all_customers"):
 		bad("Brief açıkça tüm müşterilere/herkese diyor ama kuralda all_customers eq true koşulu yok. Kitle için yalnızca bu tek koşulu kullan (başka koşul ekleme).")
 	case !in.Everyone && has(r, "all_customers"):

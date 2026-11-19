@@ -44,6 +44,10 @@ export function describeOffer(o: Offer | undefined): string {
     return 'Bilinmeyen teklif'
   }
 
+  // The products the offer is valid on: a term of the offer, never the audience.
+  const scope = (o.scope ?? '').trim()
+  if (scope) main += ` · ${scope.charAt(0).toLocaleUpperCase('tr-TR')}${scope.slice(1)}`
+
   // Terms of the offer. A minimum basket and a last day are part of WHAT is
   // promised; they never describe who receives the message.
   const terms: string[] = []

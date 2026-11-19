@@ -62,7 +62,7 @@ var (
 )
 
 // slotRe finds the slots of a template.
-var slotRe = regexp.MustCompile(`\{\{\s*[A-Za-z_]\w*\s*\}\}|\{[12dco]\}`)
+var slotRe = regexp.MustCompile(`\{\{\s*[A-Za-z_]\w*\s*\}\}|\{[12dcos]\}`)
 
 var slotPatterns = map[string]string{
 	"1": `(\d+(?:[.,]\d+)*)`,
@@ -70,6 +70,9 @@ var slotPatterns = map[string]string{
 	"d": `(\d{1,2}\.\d{1,2}\.\d{4})`,
 	"c": `([\p{L}\p{N}_-]+)`,
 	"o": `(.+?)`,
+	// The offer's scope, copied as it is written (the mock has no dictionary for
+	// free text): everything up to the end of the sentence.
+	"s": `([^.!?\n{}]+)`,
 	"p": `(\{\{\s*[A-Za-z_]\w*\s*\}\})`,
 }
 

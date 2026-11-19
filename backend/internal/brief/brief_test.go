@@ -52,6 +52,7 @@ var (
 	}
 	withExtras = func(o offer.Offer, extras ...offer.Part) offer.Offer { o.Extras = extras; return o }
 	withCode   = func(o offer.Offer, code string) offer.Offer { o.Code = code; return o }
+	scoped     = func(o offer.Offer, scope string) offer.Offer { o.Scope = scope; return o }
 	// tier is "her step TL'ye value TL, toplamda en fazla max TL".
 	tier = func(value, step, max float64) offer.Offer {
 		return offer.Offer{Kind: offer.KindAmount, Value: value, StepSpend: step, MaxDiscount: max}
@@ -212,6 +213,30 @@ var table = []row{
 	{name: "age: 'yaş' without numbers is asked", brief: "Belirli bir yaştaki müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "18-25 yaş arası"},
 	{name: "age: below the allowed range", brief: "10 yaş altı müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "13"},
 	{name: "age: two age conditions", brief: "18-25 yaş arası ve 65 yaş üstü müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "birden fazla yaş"},
+
+	// ---- offer scope: products the offer is valid on never narrow the audience
+	{name: "scope: kış ürünlerinde geçerli, nobody named", brief: "Kış ürünlerinde geçerli 200 TL indirim", status: segment.StatusOK,
+		want: []string{everyone}, offer: scoped(amountOf(200), "kış ürünleri")},
+	{name: "scope: without 'geçerli'", brief: "Kış ürünlerinde 200 TL indirim", status: segment.StatusOK,
+		want: []string{everyone}, offer: scoped(amountOf(200), "kış ürünleri")},
+	{name: "scope: seçili ürünlerde", brief: "Seçili ürünlerde %20 indirim", status: segment.StatusOK,
+		want: []string{everyone}, offer: scoped(pct(20), "seçili ürünler")},
+	{name: "scope: written without Turkish letters", brief: "secili urunlerde %20 indirim", status: segment.StatusOK,
+		want: []string{everyone}, offer: scoped(pct(20), "secili urunler")},
+	{name: "scope: a category", brief: "Ayakkabı kategorisinde geçerli %15 indirim", status: segment.StatusOK,
+		want: []string{everyone}, offer: scoped(pct(15), "ayakkabı kategorisi")},
+	{name: "scope: a product word", brief: "Spor ayakkabılarda ücretsiz kargo", status: segment.StatusOK,
+		want: []string{everyone}, offer: scoped(freeShipping, "spor ayakkabılar")},
+	{name: "scope: kadın ürünleri is not a gender", brief: "Kadın ürünlerinde %20 indirim", status: segment.StatusOK,
+		want: []string{everyone}, offer: scoped(pct(20), "kadın ürünleri")},
+	{name: "scope with a city", brief: "İstanbul'daki müşterilere kış ürünlerinde geçerli %10 indirim", status: segment.StatusOK,
+		want: []string{"city eq İstanbul"}, offer: scoped(pct(10), "kış ürünleri")},
+	{name: "scope with cart abandoners", brief: "Sepeti terk edenlere yeni sezon ürünlerinde %20 indirim, kupon kodu SEZON20", status: segment.StatusOK,
+		want: []string{abandoned}, offer: scoped(withCode(pct(20), "SEZON20"), "yeni sezon ürünleri")},
+	{name: "products as an audience: bought", brief: "Kış ürünü almış kişilere %10 indirim", status: segment.StatusUnsupported, say: "ürün satın alma / görüntüleme geçmişi yok"},
+	{name: "products as an audience: viewed", brief: "Ayakkabı kategorisini görüntüleyenlere %10 indirim", status: segment.StatusUnsupported, say: "görüntüleme"},
+	{name: "any product bought is an order", brief: "En az bir ürün satın almış müşterilere %10 indirim", status: segment.StatusOK,
+		want: []string{"order_count gt 0"}, offer: pct(10)},
 
 	// ---- things we cannot do: must be said out loud ----------------------
 	{name: "unsupported: product category", brief: "Ayakkabı kategorisinde sepete ürün ekleyenlere %10 indirim", status: segment.StatusUnsupported, say: "kategori"},
@@ -650,5 +675,29 @@ func TestASpendingAudienceStillGoesToTheModel(t *testing.T) {
 	}
 	if n := len(m.Calls()); n != 1 {
 		t.Fatalf("calls = %d", n)
+	}
+}
+
+// A brief that names only products and an offer goes to everyone without a
+// question, and says why; the model is asked once and its scope is checked.
+func TestAScopeOnlyBriefGoesToEveryoneWithTheNote(t *testing.T) {
+	for _, b := range []string{"Kış ürünlerinde geçerli 200 TL indirim", "Seçili ürünlerde %20 indirim"} {
+		rule, err := brief.ResolveSegment(context.Background(), mock.New(0), b, llm.Hooks{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rule.Status != segment.StatusOK || rule.Question != "" || rule.Note != brief.AudienceDefaultedNote || rule.Offer.Scope == "" {
+			t.Errorf("%q: %+v", b, rule)
+		}
+	}
+	// A model that dropped the scope, or turned it into "unsupported", is sent back.
+	want := scoped(amountOf(200), "kış ürünleri")
+	m := mock.NewScripted([]mock.Step{rawRule(t, okRule(amountOf(200), c("all_customers", "eq", true))), rawRule(t, okRule(want, c("all_customers", "eq", true)))}, nil)
+	rule, err := brief.ResolveSegment(context.Background(), m, "Kış ürünlerinde geçerli 200 TL indirim", llm.Hooks{})
+	if err != nil || !rule.Offer.Equal(want) || len(m.Calls()) != 2 {
+		t.Fatalf("rule %+v err %v calls %d", rule, err, len(m.Calls()))
+	}
+	if fb := feedback(t, m); !strings.Contains(fb, "scope") {
+		t.Errorf("the feedback must name the scope: %s", fb)
 	}
 }

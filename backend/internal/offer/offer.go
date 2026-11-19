@@ -50,6 +50,9 @@ type Offer struct {
 	// Extras are the other incentives promised together with the main one
 	// ("%20 indirim + ücretsiz kargo"); each of a different kind.
 	Extras []Part `json:"extras"`
+	// Scope is what the offer applies to ("kış ürünleri"); empty = everything.
+	// It shapes the messages, never the audience (scope.go).
+	Scope string `json:"scope"`
 }
 
 const (
@@ -71,6 +74,7 @@ func (o Offer) Normalize() Offer {
 	}
 	o.Code = strings.ToUpper(strings.TrimSpace(o.Code))
 	o.ExpiresAt = strings.TrimSpace(o.ExpiresAt)
+	o.Scope = normalizeScope(o.Scope)
 	if o.Kind == KindCouponCode {
 		o.Value, o.Extras = 0, nil
 		return o
@@ -88,8 +92,8 @@ func (o Offer) Validate() error {
 	switch o.Kind {
 	case "", KindNone:
 		if o.Value != 0 || strings.TrimSpace(o.Code) != "" || o.MinSpend != 0 || strings.TrimSpace(o.ExpiresAt) != "" ||
-			o.StepSpend != 0 || o.MaxDiscount != 0 || len(o.Extras) != 0 {
-			return fmt.Errorf("offer.kind \"none\" iken value 0, code, min_spend, expires_at, step_spend, max_discount ve extras boş olmalı")
+			o.StepSpend != 0 || o.MaxDiscount != 0 || len(o.Extras) != 0 || strings.TrimSpace(o.Scope) != "" {
+			return fmt.Errorf("offer.kind \"none\" iken value 0, code, min_spend, expires_at, step_spend, max_discount, extras ve scope boş olmalı")
 		}
 	case KindPercent, KindAmount:
 		if err := valueError("offer", o.Kind, o.Value); err != nil {
@@ -115,6 +119,9 @@ func (o Offer) Validate() error {
 	if err := partsError(o); err != nil {
 		return err
 	}
+	if err := scopeError(o); err != nil {
+		return err
+	}
 	return termsError(o)
 }
 
@@ -123,7 +130,8 @@ func (o Offer) Equal(p Offer) bool {
 	a, b := o.Normalize(), p.Normalize()
 	return a.Kind == b.Kind && near(a.Value, b.Value) && a.Code == b.Code &&
 		near(a.MinSpend, b.MinSpend) && a.ExpiresAt == b.ExpiresAt &&
-		near(a.StepSpend, b.StepSpend) && near(a.MaxDiscount, b.MaxDiscount) && partsEqual(a.Extras, b.Extras)
+		near(a.StepSpend, b.StepSpend) && near(a.MaxDiscount, b.MaxDiscount) && partsEqual(a.Extras, b.Extras) &&
+		sameScope(a.Scope, b.Scope)
 }
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
@@ -141,6 +149,9 @@ func (o Offer) Describe() string {
 		return "teklif yok"
 	}
 	var terms []string
+	if o.Scope != "" {
+		terms = append(terms, "geçerli ürünler: "+o.Scope)
+	}
 	if o.Code != "" && o.Kind != KindCouponCode {
 		terms = append(terms, "kupon kodu "+o.Code)
 	}
@@ -284,7 +295,7 @@ func (o Offer) Mentions(text string) bool {
 	if ok && o.ExpiresAt != "" {
 		ok = containsString(Dates(text), o.ExpiresAt)
 	}
-	return ok
+	return ok && o.MentionsScope(text)
 }
 
 // Conflicts lists claims in text that contradict the offer: a percentage other

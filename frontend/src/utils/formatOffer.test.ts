@@ -40,3 +40,18 @@ describe('describeOffer: the terms of the offer', () => {
     expect(describeOffer({ kind: 'amount', value: 1, code: '', expires_at: '2026-01-01' })).toBe('1 TL indirim (son kullanım 01.01.2026)')
   })
 })
+
+describe('describeOffer: the scope of the offer', () => {
+  it('names the products next to the offer, before its terms', () => {
+    expect(describeOffer({ kind: 'amount', value: 200, code: '', scope: 'kış ürünleri' })).toBe('200 TL indirim · Kış ürünleri')
+    expect(describeOffer({ kind: 'amount', value: 200, code: 'KIS200', scope: 'kış ürünleri' })).toBe(
+      '200 TL indirim · Kış ürünleri (kupon kodu KIS200)',
+    )
+    expect(describeOffer({ kind: 'percent', value: 20, code: '', scope: 'işlem gören ürünler' })).toBe('%20 indirim · İşlem gören ürünler')
+  })
+
+  it('says nothing when the offer is valid on everything', () => {
+    expect(describeOffer({ kind: 'percent', value: 20, code: '', scope: '' })).toBe('%20 indirim')
+    expect(describeOffer({ kind: 'percent', value: 20, code: '', scope: '  ' })).toBe('%20 indirim')
+  })
+})

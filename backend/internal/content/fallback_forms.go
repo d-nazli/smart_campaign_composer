@@ -52,6 +52,9 @@ func minimalIn(o offer.Offer) Content {
 	if o.Code != "" && o.Kind != offer.KindCouponCode {
 		sms += " " + label + ": " + o.Code + "."
 	}
+	if s := o.ScopePhraseIn(lang); s != "" {
+		sms += " " + s + "."
+	}
 	if e := o.ExpiryPhraseIn(lang); e != "" {
 		sms += " " + e + "."
 	}

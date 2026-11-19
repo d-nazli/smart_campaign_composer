@@ -137,7 +137,7 @@ func TestSegmentPromptExplainsSpecialDaysAndCombinedAndTieredOffers(t *testing.T
 		"SPECIAL DAYS", "never its audience", "gender", "kadın müşterilere özel",
 		"COMBINED OFFERS", "extras", "ya da", "needs_clarification",
 		"TIERED DISCOUNTS", "step_spend", "max_discount",
-		"names a special day, the audience is everyone",
+		"names a special day or an offer scope (the products the offer is valid on), the audience is everyone",
 		"1000 TL'ye varan siparişte 300 TL indirim", "1000 TL ve üzeri siparişlerde", "EVERY TL amount", "1000 TL ne için",
 	} {
 		if !strings.Contains(seg, want) {
@@ -146,6 +146,33 @@ func TestSegmentPromptExplainsSpecialDaysAndCombinedAndTieredOffers(t *testing.T
 	}
 	if strings.Contains(seg, "age, gender") {
 		t.Error("gender is a supported field now; the prompt must not call it unsupported")
+	}
+}
+
+// The scope is the offer's, never the audience's; selecting people by
+// products is unsupported. The message and translation steps carry it.
+func TestPromptsCarryTheOfferScope(t *testing.T) {
+	seg := llm.SegmentSystemPrompt()
+	for _, want := range []string{"OFFER SCOPE", "offer.scope", "Kış ürünlerinde geçerli 200 TL indirim", "never to the audience",
+		"Never return \"unsupported\" or a question because of a scope", "kış ürünü almış", "return \"unsupported\""} {
+		if !strings.Contains(seg, want) {
+			t.Errorf("segment system prompt should contain %q", want)
+		}
+	}
+	o := offer.Offer{Kind: offer.KindAmount, Value: 200, Code: "KIS200", Scope: "kış ürünleri"}
+	user := llm.MessagesUserPromptFor(llm.MessageRequest{Brief: "b", Offer: o})
+	if !strings.Contains(user, "geçerli ürünler: kış ürünleri") {
+		t.Errorf("messages user prompt must give the scope:\n%s", user)
+	}
+	if sys := llm.MessagesSystemPrompt(policy(t)); !strings.Contains(sys, "MUST say what it is valid on") {
+		t.Error("messages system prompt must ask for the scope")
+	}
+	tr := llm.TranslateUserPrompt(llm.TranslateRequest{Offer: o, Target: content.Locale{Code: "en-GB", Name: "English"}})
+	if !strings.Contains(tr, "valid only on: kış ürünleri") {
+		t.Errorf("translate prompt must keep the scope:\n%s", tr)
+	}
+	if strings.Contains(llm.TranslateUserPrompt(llm.TranslateRequest{Offer: offer.Offer{Kind: offer.KindPercent, Value: 10}}), "valid only on") {
+		t.Error("no scope, no scope line")
 	}
 }
 

@@ -229,3 +229,23 @@ func TestModelDrivenTheNoteIsTheModels(t *testing.T) {
 		t.Fatalf("code must not add a note: %q", rule.Note)
 	}
 }
+
+// Claude mode: a scope comes through as the model wrote it, with everyone as
+// the audience; a scope that breaks the technical rules is sent back.
+func TestModelDrivenOfferScope(t *testing.T) {
+	ok := okRule(scoped(amountOf(200), "kış ürünleri"), c("all_customers", "eq", true))
+	ok.Note = brief.AudienceDefaultedNote
+	rule, m := modelDriven(t, "Kış ürünlerinde geçerli 200 TL indirim", rawRule(t, ok))
+	if rule.Status != segment.StatusOK || rule.Offer.Scope != "kış ürünleri" || rule.Note != brief.AudienceDefaultedNote || len(m.Calls()) != 1 {
+		t.Fatalf("%+v (calls %d)", rule, len(m.Calls()))
+	}
+
+	long := okRule(scoped(amountOf(200), strings.Repeat("kış ürünleri ", 6)), c("all_customers", "eq", true))
+	rule, m = modelDriven(t, "Kış ürünlerinde geçerli 200 TL indirim", rawRule(t, long), rawRule(t, ok))
+	if rule.Offer.Scope != "kış ürünleri" || len(m.Calls()) != 2 {
+		t.Fatalf("a 72-character scope must be repaired: %+v", rule.Offer)
+	}
+	if fb := feedback(t, m); !strings.Contains(fb, "offer.scope") {
+		t.Errorf("feedback: %s", fb)
+	}
+}

@@ -63,8 +63,9 @@ func JSONSchema() map[string]any {
 			"step_spend":   map[string]any{"type": "number"}, // 0 = not tiered
 			"max_discount": map[string]any{"type": "number"}, // 0 = no cap
 			"extras":       map[string]any{"type": "array", "items": part},
+			"scope":        str, // the products / category the offer applies to, or ""
 		},
-		"required":             []any{"kind", "value", "code", "min_spend", "expires_at", "step_spend", "max_discount", "extras"},
+		"required":             []any{"kind", "value", "code", "min_spend", "expires_at", "step_spend", "max_discount", "extras", "scope"},
 		"additionalProperties": false,
 	}
 	return map[string]any{
