@@ -312,7 +312,9 @@ func (s *Service) loadRow(ctx context.Context, q interface {
 
 // messageBrief is the brief the message step reads: the brief with the
 // person's answers to the audience questions.
-func (r *campaignRow) messageBrief() string { return briefs.WithAnswers(r.brief, llmClarifications(r.clarifications)) }
+func (r *campaignRow) messageBrief() string {
+	return briefs.WithAnswers(r.brief, llmClarifications(r.clarifications))
+}
 
 // Get returns the campaign with its segment and content.
 func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
