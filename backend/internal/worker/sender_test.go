@@ -20,6 +20,7 @@ func stub(t *testing.T, h http.HandlerFunc) *worker.HTTPSender {
 }
 
 func TestSendPostsTheMessageWithAnIdempotencyKey(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotKey, gotCT string
 	var gotBody map[string]string
 	s := stub(t, func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +49,7 @@ func TestSendPostsTheMessageWithAnIdempotencyKey(t *testing.T) {
 }
 
 func TestRetryAfterAndReasonAreExtracted(t *testing.T) {
+	t.Parallel()
 	s := stub(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "7")
 		w.WriteHeader(429)
@@ -60,6 +62,7 @@ func TestRetryAfterAndReasonAreExtracted(t *testing.T) {
 }
 
 func TestPermanentRejectionKeepsItsReason(t *testing.T) {
+	t.Parallel()
 	s := stub(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)
 		_, _ = w.Write([]byte(`{"error":"invalid_recipient","message":"to must be a phone number"}`))
@@ -71,6 +74,7 @@ func TestPermanentRejectionKeepsItsReason(t *testing.T) {
 }
 
 func TestAnUnreadableErrorBodyDoesNotBreakAnything(t *testing.T) {
+	t.Parallel()
 	s := stub(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(502)
 		_, _ = w.Write([]byte("<html>bad gateway</html>"))
@@ -84,6 +88,7 @@ func TestAnUnreadableErrorBodyDoesNotBreakAnything(t *testing.T) {
 // A provider that never answers must not hang a sender: the call times out and
 // is reported as a transport error (which the policy retries).
 func TestASlowProviderTimesOutAsATransportError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-time.After(500 * time.Millisecond):
@@ -103,6 +108,7 @@ func TestASlowProviderTimesOutAsATransportError(t *testing.T) {
 }
 
 func TestAnUnreachableProviderIsATransportError(t *testing.T) {
+	t.Parallel()
 	s := worker.NewHTTPSender("http://127.0.0.1:1", time.Second)
 	res := s.Send(context.Background(), "sms", worker.Message{To: "+905551234567", Body: "x"}, "1")
 	if res.Err == nil || res.Status != 0 {

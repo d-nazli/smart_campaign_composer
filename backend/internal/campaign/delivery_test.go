@@ -8,6 +8,7 @@ import (
 )
 
 func TestDeliveryProgressAppearsOnlyAfterApprovalAndFollowsTheQueue(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := approvableCampaign(t, svc)
@@ -59,6 +60,7 @@ func TestDeliveryProgressAppearsOnlyAfterApprovalAndFollowsTheQueue(t *testing.T
 // A campaign whose audience was empty is approved with nothing queued; its
 // progress must say "done", not wait forever.
 func TestDeliveryProgressOfAnEmptyApprovalIsDone(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := approvableCampaign(t, svc)
@@ -76,6 +78,7 @@ func TestDeliveryProgressOfAnEmptyApprovalIsDone(t *testing.T) {
 
 // Failed rows are grouped by why they failed, so the dashboard can explain them.
 func TestDeliveryFailuresAreGroupedByReason(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := approvableCampaign(t, svc)

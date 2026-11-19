@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -59,8 +60,15 @@ func main() {
 		"concurrency", cfg.Concurrency, "max_attempts", cfg.Policy.MaxAttempts,
 		"budget_first_name", policy.Budget("first_name"), "budget_city", policy.Budget("city"))
 
+	// Both loops are waited for at shutdown, before the pool closes.
+	var running sync.WaitGroup
+
+	// One worker sends at a time (the rate limit lives in this process's pacer);
+	// another one waits here and takes over when the sending worker stops.
+	running.Add(1)
 	go func() {
-		if err := w.Run(ctx); err != nil && ctx.Err() == nil {
+		defer running.Done()
+		if err := w.RunExclusive(ctx, pool, 5*time.Second); err != nil && ctx.Err() == nil {
 			log.Error("worker stopped", "error", err)
 			stop()
 		}
@@ -70,7 +78,9 @@ func main() {
 	// the deliveries. Several workers can run this at once; each campaign is
 	// taken by exactly one of them.
 	scheduler := campaign.NewScheduler(pool, policy, clock.Real{}, log)
+	running.Add(1)
 	go func() {
+		defer running.Done()
 		if err := scheduler.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Error("scheduler stopped", "error", err)
 			stop()
@@ -88,5 +98,17 @@ func main() {
 	if err := httpx.Serve(ctx, srv, log); err != nil {
 		log.Error("server failed", "error", err)
 		os.Exit(1)
+	}
+
+	// Shutting down: nothing new is claimed; messages already with the provider
+	// get cfg.ShutdownGrace to finish and be recorded (Run enforces it). The pool
+	// closes (deferred) only after that, or after a hard limit.
+	stopped := make(chan struct{})
+	go func() { running.Wait(); close(stopped) }()
+	select {
+	case <-stopped:
+		log.Info("worker stopped cleanly")
+	case <-time.After(cfg.ShutdownGrace + 2*time.Second):
+		log.Warn("worker did not stop within the shutdown grace; closing anyway")
 	}
 }

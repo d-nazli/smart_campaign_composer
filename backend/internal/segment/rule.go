@@ -47,6 +47,8 @@ type rawRule struct {
 	// Note is not in the model's schema; it is accepted here because a stored
 	// rule (which code may have given a note) is parsed again at approval.
 	Note string `json:"note"`
+	// Warnings, like Note, are written by code and accepted from a stored rule.
+	Warnings []string `json:"warnings"`
 }
 
 type rawCondition struct {
@@ -84,6 +86,10 @@ type Rule struct {
 	// Note is a sentence the audience step shows next to an "ok" rule, for
 	// example why everyone was chosen. Set by code, never by the model.
 	Note string `json:"note,omitempty"`
+	// Warnings are shown on the audience step next to an "ok" rule without
+	// blocking it, for example a part of the brief the rule does not contain.
+	// Set by code, never by the model.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ParseError lists every problem found, so it can be fed back to the LLM.
@@ -134,6 +140,17 @@ func validate(rr rawRule) (Rule, error) {
 	out.Explanation = strings.TrimSpace(rr.Explanation)
 	out.Question = strings.TrimSpace(rr.Question)
 	out.Note = strings.TrimSpace(rr.Note)
+	if len(rr.Warnings) > MaxConditions {
+		bad("warnings en fazla %d satır olmalı", MaxConditions)
+	}
+	for _, w := range rr.Warnings {
+		if utf8.RuneCountInString(w) > MaxQuestion {
+			bad("warnings satırları en fazla %d karakter olmalı", MaxQuestion)
+		}
+		if w = strings.TrimSpace(w); w != "" {
+			out.Warnings = append(out.Warnings, w)
+		}
+	}
 
 	switch rr.Status {
 	case StatusOK:

@@ -229,6 +229,7 @@ func scalar(t *testing.T, pool *pgxpool.Pool, q string, args ...any) int {
 // Brief -> approval -> worker -> provider: everyone reachable gets exactly one
 // message, nothing breaks a limit, bad addresses fail without retries.
 func TestApprovedCampaignIsDeliveredToEveryReachableRecipientOnce(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id, approved := approvedCampaign(t, pool)
 	if approved.Queued.SMS < 100 || approved.Queued.Email < 100 {
@@ -281,6 +282,7 @@ func TestApprovedCampaignIsDeliveredToEveryReachableRecipientOnce(t *testing.T) 
 // delivery ends sent or failed, and the idempotency key keeps the provider at
 // one message per recipient even though the worker sent some of them twice.
 func TestChaoticProviderEndsInFinalStatesWithoutDuplicates(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id := sqlCampaign(t, pool, 150, 0)
 	clk := fakeClock()
@@ -322,6 +324,7 @@ func TestChaoticProviderEndsInFinalStatesWithoutDuplicates(t *testing.T) {
 // written. The row is reclaimed after its lease and sent again with the same
 // key: the provider answers from memory, the person gets ONE message.
 func TestCrashBeforeMarkSentIsRecoveredWithoutASecondMessage(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id := sqlCampaign(t, pool, 1, 0)
 	clk := fakeClock()
@@ -368,9 +371,12 @@ func (d *dropFirstMarkSent) MarkSent(ctx context.Context, id int64, pid string, 
 	return d.Queue.MarkSent(ctx, id, pid, now)
 }
 
-// A 429 is obeyed: the retry waits for Retry-After, costs no attempt, and the
-// whole channel pauses, not just the one delivery that was refused.
+// A 429 is obeyed: the refused delivery waits for its Retry-After and costs no
+// attempt. A single 429 does not pause the channel: the next delivery goes out
+// at once. Only a burst (10 or more 429s within one second) pauses the whole
+// channel (Pacer.RateLimited, tested in pacer_test.go).
 func TestALone429DelaysOnlyItsOwnMessage(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	sqlCampaign(t, pool, 2, 0)
 	clk := fakeClock()
@@ -433,6 +439,7 @@ func TestALone429DelaysOnlyItsOwnMessage(t *testing.T) {
 }
 
 func TestConsentWithdrawnAfterApprovalIsRespected(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id, approved := approvedCampaign(t, pool)
 
@@ -540,6 +547,7 @@ func TestRealPaceNeverTriggersTheProvidersRateLimit(t *testing.T) {
 // Every provider call is timed, retries included, so the response-time metric
 // reflects what the provider really did.
 func TestEveryProviderCallIsTimed(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id := sqlCampaign(t, pool, 20, 0)
 	clk := fakeClock()
@@ -579,6 +587,7 @@ func wording(code string) string {
 // Everyone gets the text in THEIR locale (an exact match), and each person
 // gets it once.
 func TestEveryRecipientGetsTheirOwnLocale(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id, approved := approvedCampaign(t, pool)
 	clk := fakeClock()
@@ -640,6 +649,7 @@ func TestEveryRecipientGetsTheirOwnLocale(t *testing.T) {
 // A recipient whose locale has no stored text gets nothing: never another
 // locale's text (Insider's localization drops them the same way).
 func TestARecipientWhoseLocaleHasNoTextGetsNothing(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id := sqlCampaign(t, pool, 0, 0)
 	if _, err := pool.Exec(ctx, `DELETE FROM campaign_contents WHERE campaign_id=$1 AND locale='de-DE'`, id); err != nil {
@@ -668,6 +678,7 @@ func TestARecipientWhoseLocaleHasNoTextGetsNothing(t *testing.T) {
 // the subject to 82 characters. The worker measures again and does not send
 // it; the delivery fails for good with the reason. A short name still goes out.
 func TestAMessageOverTheLimitAfterPersonalizationIsNeverSent(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	var id int64
 	if err := pool.QueryRow(ctx, `INSERT INTO campaigns (brief, status) VALUES ('b', 'approved') RETURNING id`).Scan(&id); err != nil {
@@ -734,6 +745,7 @@ func TestAMessageOverTheLimitAfterPersonalizationIsNeverSent(t *testing.T) {
 // With Variant B every person gets the text of their own variant (decided when
 // queued) in their own locale, and each delivery once.
 func TestEveryRecipientGetsTheirVariantInTheirLocale(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	policy, err := content.NewPolicy(nil)
 	if err != nil {
@@ -815,6 +827,7 @@ func TestEveryRecipientGetsTheirVariantInTheirLocale(t *testing.T) {
 // is not a malformed e-mail address): over a wide audience the people whose SMS
 // failed and the people whose e-mail failed are not the same set.
 func TestTheTwoChannelsFailForDifferentPeople(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	policy, err := content.NewPolicy(nil)
 	if err != nil {

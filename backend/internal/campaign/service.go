@@ -91,6 +91,9 @@ type SegmentView struct {
 	// Note is a sentence shown with an ok audience, for example why everyone was
 	// chosen ("Kitle belirtilmediği için tüm müşteriler seçildi.").
 	Note string `json:"note,omitempty"`
+	// Warnings are shown with an ok audience without blocking it, for example a
+	// part of the brief the rule does not contain (D111).
+	Warnings []string `json:"warnings,omitempty"`
 	// Locales is how many reachable people each locale has (for example
 	// {"tr-TR": 120, "en-GB": 45}); it is recounted when the audience is built.
 	Locales map[string]int `json:"locales,omitempty"`
@@ -309,6 +312,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 				return nil, fmt.Errorf("stored rule is corrupt: %w", err)
 			}
 			sv.Match, sv.Conditions, sv.Offer, sv.Suggestion, sv.Note = stored.Match, stored.Conditions, stored.Offer.Normalize(), stored.Suggestion, stored.Note
+			sv.Warnings = stored.Warnings
 		}
 		if r.matched != nil {
 			sv.Audience = &segment.Audience{Matched: *r.matched, SMSReachable: *r.smsReachable,

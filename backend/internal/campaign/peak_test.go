@@ -13,6 +13,7 @@ import (
 // inside one second read as 101 (the limit is broken), the same calls spread
 // over two seconds read lower; the calls of each channel are counted apart.
 func TestPeakPerSecondCountsCallsInAnySlidingSecond(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	var id int64

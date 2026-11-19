@@ -48,6 +48,8 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
   minimum sepet mi, üst sınır mı…?" diye sorulur (tarihler ve özel gün ifadeleri sayılmaz, D89). Mock modunda brief'i kural okuyucusu
   anlar (`brief.Analyze`): tanımadığı ya da belirsiz bulduğu ifadeyi sorar (DECISIONS.md D87).
 - `make test` **her zaman mock** ile çalışır; `.env`'de anahtar olsa bile okunmaz, internet gerekmez.
+- Veritabanı testleri `TEST_DATABASE_URL` ister (compose verir). Host'ta düz `go test` bu yüzden hata verir; yalnız
+  veritabanı gerektirmeyen testler için `SKIP_DB_TESTS=1 go test ./...`.
 - `make test-live` gerçek Claude'a duman testi yapar (yalnız anahtar varsa, birkaç sent tutar; `make test`'e dahil değil).
 
 ## Mesaj limitleri
@@ -224,15 +226,19 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
   müşteriler") "kime gönderilsin?" sorusu alır. Ayrıntı: DECISIONS.md D62–D65.
 
 - **Yazım hatası "satın almama" koşulunu düşürebilir.** Brief'teki kitle ifadeleri (ör. "sipariş oluşturmamış") bilinen
-  kalıplarla okunur ve model kuralı bunlara karşı doğrulanır. Sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz;
-  gerçek Claude ile bu durumda `purchased=false` koşulunun kuraldan düştüğü görüldü. Kampanyayı onaylamadan önce
-  ekrandaki kitle kartındaki koşulları kontrol edin. Açık iş olarak PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
+  kalıplarla okunur. Kalıp tanındığında gerçek Claude modunda da kural buna karşı denetlenir (D111): "alışveriş
+  yapmayan" kuraldan düşerse ya da ters çevrilirse Claude'a bir kez geri bildirim gider; yine eksikse kural kullanılır
+  ama kitle kartında "Brief'te … var, kuralda yok. Kitle beklediğinden geniş olabilir." uyarısı çıkar. Sözlükte olmayan
+  bir yazım ("oluşturmmaış") ise tanınmaz, uyarı da çıkmaz. Kampanyayı onaylamadan önce kitle kartındaki koşulları
+  kontrol edin. Açık iş olarak PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
 - Mock modunda desteklenmeyen kısıtlar (yaş, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen
   hafta") sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
   Sözlükte hiç olmayan bir kısıt ise mock'ta fark edilmeyebilir.
 - **Gerçek Claude modunda kitle yorumu Claude'a aittir** (D87). Kod Claude'un brief'te olmayan bir şehir, sayı, tutar,
-  kod ya da tarih uydurmasını yakalar, ama bir koşulu yanlış anlamasını ya da düşürmesini yakalamaz. Onaydan önce kitle
-  kartındaki koşul rozetlerini ve kişi sayısını kontrol edin.
+  kod ya da tarih uydurmasını yakalar. Kodun emin okuduğu şehir, satın alma durumu ve gün sayısının (yönüyle) kuraldan
+  düşmesini ya da ters çevrilmesini de yakalar ve uyarı gösterir (D111); bunların dışındaki bir yanlış anlamayı yakalamaz,
+  Claude'un eklediği fazladan koşula da karışmaz. Onaydan önce kitle kartındaki koşul rozetlerini ve kişi sayısını
+  kontrol edin.
 
 ## Seed verisi hakkında notlar
 

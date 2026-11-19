@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"smartcampaign/internal/content"
@@ -217,6 +218,16 @@ func RepairPrompt(problems []string) string {
 	return b.String()
 }
 
+// briefCloseTag matches a closing brief tag in any letter case (and with
+// spaces inside, "</ brief >").
+var briefCloseTag = regexp.MustCompile(`(?i)<\s*/\s*brief\s*>`)
+
+// sanitizeBrief removes every closing brief tag, so the brief cannot end its
+// own <brief> block and continue as instructions. Removal repeats until none is
+// left: one pass over "</</brief>brief>" would leave "</brief>" behind.
 func sanitizeBrief(brief string) string {
-	return strings.ReplaceAll(brief, "</brief>", "")
+	for briefCloseTag.MatchString(brief) {
+		brief = briefCloseTag.ReplaceAllString(brief, "")
+	}
+	return brief
 }

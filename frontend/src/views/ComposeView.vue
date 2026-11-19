@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '../api/info'
 import { approveCampaign, cancelCampaign, createCampaign, deleteVariant, getCampaign, saveContent, translateCampaign } from '../api/campaigns'
 import { ApiError } from '../api/http'
@@ -29,10 +29,12 @@ import { ArrowLeft, Clock, FileText, Plus, RefreshCw, Sparkles, XCircle } from '
 import { briefTitle, statusLabel } from '../utils/dashboard'
 import { attemptLabel } from '../utils/preview'
 import { withAllCustomers } from '../utils/sendToAll'
+import { conflictMessage, isFrozen } from '../utils/editing'
 import { currentStep, type StepKey } from '../utils/steps'
 import { barAction, direction, nextStep, prevStep, reachableSteps } from '../utils/wizard'
 import ApprovalCard from '../components/ApprovalCard.vue'
 import DeliveryProgress from '../components/DeliveryProgress.vue'
+import EditPencil from '../components/EditPencil.vue'
 import LocaleList, { type LocaleStatus } from '../components/LocaleList.vue'
 import MessageEditor from '../components/MessageEditor.vue'
 import SegmentCard from '../components/SegmentCard.vue'
@@ -46,6 +48,8 @@ import Modal from '../components/ui/Modal.vue'
 import StatTile from '../components/ui/StatTile.vue'
 
 const props = defineProps<{ info: AppInfo | null }>()
+// dirty: an edit is open or a text is not saved; App asks before the page is left.
+const emit = defineEmits<{ dirty: [boolean] }>()
 
 // A sensible first choice for "later": the next full hour, at least an hour from now.
 function defaultSendTime(): Date {
@@ -116,6 +120,8 @@ const translateError = ref<string | null>(null)
 // "Onayla" with a changed source: how many translations will be made again before approval.
 const retranslateAsk = ref<number | null>(null)
 const saving = ref(false)
+// The variant whose source text is open for editing (the pencil); null: every field is read-only.
+const editing = ref<Variant | null>(null)
 const saveError = ref<string | null>(null)
 const serverIssues = ref<Issue[]>([])
 
@@ -132,7 +138,7 @@ const cancelError = ref<string | null>(null)
 const approveError = ref<string | null>(null)
 
 // After approval the text is frozen: earlier steps still open, read-only.
-const frozen = computed(() => ['scheduled', 'approved', 'sending', 'completed', 'cancelled', 'failed'].includes(campaign.value?.status ?? ''))
+const frozen = computed(() => isFrozen(campaign.value?.status))
 const changedFor = (v: Variant) => changedLocales(forVariant(campaign.value, v), draftsBy.value[v] ?? {})
 const changed = computed(() => changedFor(activeVariant.value))
 // Edits are kept per variant: an unsaved edit of A is not lost by looking at B.
@@ -163,6 +169,7 @@ const canApprove = computed(
     !streaming.value &&
     !saving.value &&
     !unsaved.value &&
+    editing.value === null &&
     !approving.value,
 )
 const difference = computed(() =>
@@ -174,7 +181,16 @@ const variables = computed(() => props.info?.variables ?? [])
 const segmentReady = computed(() => campaign.value?.segment?.status === 'ok' && campaign.value.status !== 'draft')
 const hasContent = computed(() => !!stream.value.locales[sourceCode.value]?.result || campaign.value?.content != null)
 const briefChanged = computed(() => !!campaign.value && brief.value.trim() !== campaign.value.brief.trim())
-const busy = computed(() => creating.value || streaming.value || saving.value || approving.value || removing.value || translating.value.length > 0)
+// An open edit counts too: "Onayla", the other steps and the other buttons wait for Kaydet or Vazgeç.
+// The model's text arriving in the fields is not an edit: only an open edit or an unsaved text counts.
+watch(
+  () => editing.value !== null || (unsaved.value && !streaming.value),
+  (dirty) => emit('dirty', dirty),
+  { immediate: true },
+)
+const busy = computed(
+  () => creating.value || streaming.value || saving.value || approving.value || removing.value || translating.value.length > 0 || editing.value !== null,
+)
 
 // The limits are checked per locale of the variant on screen; saving needs every edited text clean.
 const localChecks = computed(() => {
@@ -409,7 +425,7 @@ const sourceLabel = computed(() =>
     : source.value === 'fallback'
       ? 'Hazır şablon'
       : source.value === 'edited'
-        ? 'Elle düzenlendi'
+        ? 'Düzenlendi'
         : source.value === 'translated'
           ? 'Çeviri'
           : null,
@@ -565,11 +581,65 @@ async function runTranslate(list: LocaleCode[], v: Variant) {
     const failed = Object.keys(c.translation_failures ?? {})
     if (failed.length > 0) translateError.value = `Çevrilemedi: ${failed.join(', ')}`
   } catch (e) {
-    translateError.value = (e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')).message
+    const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
+    translateError.value = err.status === 409 ? await afterConflict(err) : err.message
   } finally {
     translating.value = []
   }
 }
+
+// ---- editing (the pencil) ---------------------------------------------------------
+// The source text of the variant on screen opens for editing; Kaydet stores it and the
+// translations that it made stale are written again at once, Vazgeç goes back to the stored text.
+const canEdit = computed(() => !!cv.value?.content && !frozen.value && !busy.value && !bMissing.value)
+const editingHere = computed(() => editing.value !== null && editing.value === activeVariant.value)
+
+function startEdit() {
+  if (!canEdit.value) return
+  editing.value = activeVariant.value
+  activeLocale.value = sourceCode.value
+  saveError.value = null
+  serverIssues.value = []
+  void nextTick(() => document.getElementById('sms')?.focus())
+}
+
+function cancelEdit() {
+  editing.value = null
+  saveError.value = null
+  serverIssues.value = []
+  if (campaign.value) adopt(campaign.value)
+}
+
+async function saveEdit() {
+  const v = editing.value
+  if (v === null || !campaign.value || saving.value) return
+  if (unsaved.value) {
+    await save()
+    if (saveError.value) return // a rejected text stays open (a 409 has closed it already)
+  }
+  editing.value = null
+  const list = pendingOf(campaign.value, v)
+  if (list.length > 0) await runTranslate(list, v)
+}
+
+// A write the server refused with 409 (approved meanwhile, e.g. in another tab): take the
+// campaign as the server has it now, close the edit, and say why.
+async function afterConflict(err: ApiError): Promise<string> {
+  editing.value = null
+  if (campaign.value) {
+    try {
+      adopt(await getCampaign(campaign.value.id))
+    } catch {
+      /* keep what is on screen */
+    }
+  }
+  return conflictMessage(err.message, campaign.value?.status)
+}
+const streamErrorText = computed(() => {
+  const e = shownStream.value.error
+  if (!e) return ''
+  return e.code === 'invalid_state' ? conflictMessage(e.message, campaign.value?.status) : e.message
+})
 
 async function submitBrief() {
   if (creating.value || brief.value.trim().length === 0) return
@@ -615,6 +685,13 @@ async function generate(v: Variant = 'A') {
   streamVariant.value = v
   activeVariant.value = v
   await startStream(campaign.value.id, v)
+  if (stream.value.phase === 'error' && stream.value.error?.code === 'invalid_state') {
+    try {
+      adopt(await getCampaign(campaign.value.id)) // approved meanwhile: show the text that was approved
+    } catch {
+      /* the error is already on screen */
+    }
+  }
   if (stream.value.phase === 'done') {
     try {
       adopt(await getCampaign(campaign.value.id), unsavedVariants.value.filter((u) => u !== v)) // pick up status = content_ready
@@ -640,6 +717,10 @@ async function save() {
     resetStream()
   } catch (e) {
     const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
+    if (err.status === 409) {
+      saveError.value = await afterConflict(err)
+      return
+    }
     saveError.value = err.message
     serverIssues.value = (err.details?.report?.issues ?? []).map((i: Issue) => (current === 'B' ? { ...i, variant: current } : i))
     // Show the variant and the locale that have the first problem.
@@ -750,7 +831,7 @@ onMounted(async () => {
             <MessageEditor
               v-if="limits && (hasContent || streaming)"
               v-model="draft"
-              :readonly="streaming || frozen || !activeIsSource || bMissing || translatingHere.includes(activeLocale)"
+              :readonly="!editingHere || streaming || frozen || !activeIsSource || bMissing || translatingHere.includes(activeLocale)"
               :typing="streamingHere || translatingHere.includes(activeLocale)"
               :limits="limits"
               :variables="variables"
@@ -764,6 +845,7 @@ onMounted(async () => {
                   Güncel <b class="num">{{ upToDate }}/{{ translationTotal }}</b>
                 </Badge>
                 <Badge v-if="unsaved && !frozen && !streaming" tone="warn" dot data-testid="unsaved">Kaydedilmedi</Badge>
+                <Badge v-if="translating.length > 0" tone="accent" dot role="status" data-testid="translating">Çeviriler güncelleniyor…</Badge>
                 <Button
                   v-if="pending.length && !frozen && !streaming"
                   variant="outline"
@@ -818,7 +900,6 @@ onMounted(async () => {
                   </Badge>
                   <Badge v-if="sourceLabel && hasContent && !streaming && activeStored" data-testid="source">{{ sourceLabel }}</Badge>
                   <Badge v-if="activeInfo.direction === 'rtl'" tone="plan">RTL</Badge>
-                  <Badge v-if="activeIsSource && activeStored">v{{ activeStored.version }}</Badge>
                   <span class="loc-head__people muted num">{{ people(activeLocale) }} alıcı</span>
                   <Button
                     v-if="!activeIsSource && !frozen && !streaming"
@@ -843,7 +924,7 @@ onMounted(async () => {
                   </ul>
                 </div>
                 <p v-if="shownStream.fallbackReason" class="notice warn" role="alert"><strong>{{ fallbackText }}</strong> Hazır bir şablon yerleştirildi.</p>
-                <p v-if="shownStream.error" class="notice error" role="alert" data-testid="stream-error">{{ shownStream.error.message }}</p>
+                <p v-if="shownStream.error" class="notice error" role="alert" data-testid="stream-error">{{ streamErrorText }}</p>
                 <p v-if="failedNow.length && !streaming" class="notice error" role="alert" data-testid="translate-failed">Çevrilemedi: {{ failedNow.join(', ') }}</p>
                 <p v-else-if="translateError" class="notice error" role="alert" data-testid="translate-error">{{ translateError }}</p>
 
@@ -859,15 +940,23 @@ onMounted(async () => {
                   <strong>{{ sourceCode }} ile aynı şeyi söylemiyor:</strong>
                   <span v-for="m in mismatchesHere" :key="m.message" class="block">• {{ m.message }}</span>
                 </div>
+                <!-- Right above the fields it opens, apart from the recipient count. -->
+                <div v-if="activeIsSource && activeStored && !streaming && !bMissing && !editingHere" class="edit-row">
+                  <EditPencil :label="`${activeInfo.native_name} metni düzenle`" :locked="frozen" :disabled="!canEdit" @edit="startEdit" />
+                </div>
               </template>
               <template #bottom>
-                <p v-if="saveError" class="notice error" role="alert">{{ saveError }}</p>
+                <p v-if="saveError" class="notice error" role="alert" data-testid="save-error">{{ saveError }}</p>
+                <div v-if="editingHere" class="edit-bar">
+                  <Button variant="ghost" size="sm" :disabled="saving" data-testid="edit-cancel" @click="cancelEdit">Vazgeç</Button>
+                  <Button variant="primary" size="sm" :loading="saving" :disabled="anyLocalIssues" data-testid="edit-save" @click="saveEdit">Kaydet</Button>
+                </div>
               </template>
             </MessageEditor>
 
             <Card v-else title="Mesajlar">
               <p v-if="shownStream.fallbackReason" class="notice warn" role="alert"><strong>{{ fallbackText }}</strong> Hazır bir şablon yerleştirildi.</p>
-              <p v-if="shownStream.error" class="notice error" role="alert">{{ shownStream.error.message }}</p>
+              <p v-if="shownStream.error" class="notice error" role="alert">{{ streamErrorText }}</p>
               <div v-if="!streaming" class="empty">
                 <p class="muted">Henüz mesaj yok.</p>
                 <Button v-if="segmentReady" variant="primary" @click="generate('A')">Mesajları üret</Button>
@@ -1219,6 +1308,15 @@ details ul {
 .loc-head__people {
   margin-left: auto;
   font-size: var(--text-sm);
+}
+.edit-row {
+  display: flex;
+  justify-content: flex-start;
+}
+.edit-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
 }
 .diff {
   padding: var(--s-2) var(--s-3);

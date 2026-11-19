@@ -35,6 +35,7 @@ const unreachableText = computed(() => (f.value && f.value.unreachable > 0 ? `${
       <div class="body">
         <p class="explanation">{{ sentenceCase(segment.explanation) }}</p>
         <p v-if="segment.note" class="notice info" role="note" data-testid="audience-note">{{ segment.note }}</p>
+        <p v-for="w in segment.warnings ?? []" :key="w" class="notice warn" role="note" data-testid="audience-warning">{{ w }}</p>
 
         <section v-if="chips.length">
           <h3 class="label">Kural</h3>

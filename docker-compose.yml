@@ -42,6 +42,7 @@ services:
 
   mock-provider:
     build: { context: ./backend, target: mockprovider }
+    restart: unless-stopped
     # Empty value = "use the built-in default" (see backend/internal/provider/config.go).
     # Defaults and how to lower the failure rates are documented in .env.example.
     environment:
@@ -67,6 +68,7 @@ services:
 
   api:
     build: { context: ./backend, target: api }
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/${POSTGRES_DB:-campaign}?sslmode=disable
       # auto: real Claude if ANTHROPIC_API_KEY is set, otherwise mock LLM.
@@ -93,6 +95,10 @@ services:
 
   worker:
     build: { context: ./backend, target: worker }
+    restart: unless-stopped
+    # SIGTERM lets messages already with the provider finish and be recorded
+    # (worker ShutdownGrace 10 s); Docker's default 10 s would kill it first.
+    stop_grace_period: 15s
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-campaign}:${POSTGRES_PASSWORD:-campaign}@postgres:5432/${POSTGRES_DB:-campaign}?sslmode=disable
       PROVIDER_URL: http://mock-provider:8090
@@ -117,6 +123,7 @@ services:
 
   web:
     build: { context: ./frontend }
+    restart: unless-stopped
     networks: [app]
     ports:
       - "8080:80"
@@ -134,7 +141,9 @@ services:
   backend-test:
     profiles: [test]
     build: { context: ./backend, target: dev }
-    command: ["go", "test", "./..."]
+    # -parallel 8: tests marked t.Parallel run 8 at a time per package, which keeps
+    # every package's pools well under Postgres' 100 connections.
+    command: ["go", "test", "-parallel", "8", "./..."]
     environment:
       LLM_MODE: mock
       ANTHROPIC_API_KEY: ""
@@ -150,7 +159,7 @@ services:
   backend-test-race:
     profiles: [test]
     build: { context: ./backend, target: race }
-    command: ["go", "test", "-race", "./..."]
+    command: ["go", "test", "-race", "-parallel", "8", "./..."]
     environment:
       LLM_MODE: mock
       ANTHROPIC_API_KEY: ""
@@ -163,7 +172,8 @@ services:
   frontend-test:
     profiles: [test]
     build: { context: ./frontend, target: dev }
-    command: ["npm", "test"]
+    # Type check (vue-tsc) first, then the unit tests: a type error fails `make test`.
+    command: ["sh", "-c", "npm run typecheck && npm test"]
     networks: [app]
 
   # ---- send-rate benchmark (`make bench`; never part of `make test`) ----

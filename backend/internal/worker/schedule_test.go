@@ -77,6 +77,7 @@ func startScheduled(t *testing.T, pool *pgxpool.Pool, clk *clock.Fake) {
 // The person changes their locale AFTER the campaign was scheduled (and before
 // it starts): the message comes once, in the new locale.
 func TestALocaleChangedAfterSchedulingGetsOneMessageInTheNewLocale(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	_, target, at := scheduledForTarget(t, pool)
 
@@ -110,6 +111,7 @@ func TestALocaleChangedAfterSchedulingGetsOneMessageInTheNewLocale(t *testing.T)
 // ...and also when the change comes after the deliveries were created but
 // before they were sent: the locale is read when the message goes out.
 func TestALocaleChangedAfterTheStartIsStillRespected(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	_, target, at := scheduledForTarget(t, pool)
 
@@ -141,6 +143,7 @@ func TestALocaleChangedAfterTheStartIsStillRespected(t *testing.T) {
 // moves to it before the start gets nothing (nobody approved a text for them),
 // and everybody else is sent as usual.
 func TestALocaleWithoutAnApprovedTextGetsNothing(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id, target, at := scheduledForTarget(t, pool)
 	if _, err := pool.Exec(ctx, `INSERT INTO locales (code, name, native_name, fallbacks) VALUES
@@ -169,6 +172,7 @@ func TestALocaleWithoutAnApprovedTextGetsNothing(t *testing.T) {
 
 // Nothing is sent before the time, and cancelling means nothing is ever sent.
 func TestACancelledScheduledCampaignSendsNothing(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id, target, at := scheduledForTarget(t, pool)
 	policy, _ := content.NewPolicy(nil)
@@ -200,6 +204,7 @@ func TestACancelledScheduledCampaignSendsNothing(t *testing.T) {
 // The whole thing for the audience of the seed: everyone reachable gets exactly
 // one message once the campaign has started, nobody before.
 func TestAScheduledCampaignDeliversToItsAudienceOnceStarted(t *testing.T) {
+	t.Parallel()
 	pool := testdb.NewSeeded(t)
 	id, _, at := scheduledForTarget(t, pool)
 

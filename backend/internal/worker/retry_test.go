@@ -19,6 +19,7 @@ func policy(rnd float64) worker.RetryPolicy {
 }
 
 func TestSuccessIsSent(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{200, 201, 202} {
 		if d := policy(0.5).Decide(worker.Outcome{Status: status}, 0, 0); d.Action != worker.ActionSent {
 			t.Errorf("%d: %+v", status, d)
@@ -28,6 +29,7 @@ func TestSuccessIsSent(t *testing.T) {
 
 // 429 means "slow down", not "this message is bad": it costs no attempt.
 func TestRateLimitWaitsForRetryAfterAndNeverUsesUpAttempts(t *testing.T) {
+	t.Parallel()
 	p := policy(0.5)
 	for _, attempts := range []int{0, 4, 40} {
 		d := p.Decide(worker.Outcome{Status: 429, RetryAfter: 3 * time.Second}, attempts, time.Minute)
@@ -41,6 +43,7 @@ func TestRateLimitWaitsForRetryAfterAndNeverUsesUpAttempts(t *testing.T) {
 }
 
 func TestRateLimitedDeliveryEventuallyGivesUpByAge(t *testing.T) {
+	t.Parallel()
 	p := policy(0.5)
 	old := p.Decide(worker.Outcome{Status: 429, RetryAfter: time.Second}, 0, 11*time.Minute)
 	if old.Action != worker.ActionFail || !strings.Contains(old.Reason, "too old") {
@@ -58,6 +61,7 @@ func TestRateLimitedDeliveryEventuallyGivesUpByAge(t *testing.T) {
 }
 
 func TestServerErrorsAndTransportErrorsBackOffWithFullJitter(t *testing.T) {
+	t.Parallel()
 	outcomes := map[string]worker.Outcome{
 		"500":     {Status: 500},
 		"503":     {Status: 503},
@@ -84,6 +88,7 @@ func TestServerErrorsAndTransportErrorsBackOffWithFullJitter(t *testing.T) {
 }
 
 func TestTheFifthFailureIsFinal(t *testing.T) {
+	t.Parallel()
 	d := policy(0.5).Decide(worker.Outcome{Status: 503, Detail: "injected"}, 4, time.Minute)
 	if d.Action != worker.ActionFail || !strings.Contains(d.Reason, "5") || !strings.Contains(d.Reason, "503") {
 		t.Fatalf("%+v", d)
@@ -91,6 +96,7 @@ func TestTheFifthFailureIsFinal(t *testing.T) {
 }
 
 func TestBackoffCeilingIsCapped(t *testing.T) {
+	t.Parallel()
 	p := policy(1)
 	p.MaxAttempts = 100
 	if d := p.Decide(worker.Outcome{Status: 500}, 50, time.Minute); d.Delay != 60*time.Second {
@@ -100,6 +106,7 @@ func TestBackoffCeilingIsCapped(t *testing.T) {
 
 // Retrying a bad address can never help, so it must not be retried.
 func TestOtherClientErrorsAreFinalAndNotRetried(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{400, 401, 403, 404, 410, 422} {
 		d := policy(0.5).Decide(worker.Outcome{Status: status, Detail: "invalid_recipient"}, 0, 0)
 		if d.Action != worker.ActionFail || !strings.Contains(d.Reason, "invalid_recipient") {
@@ -109,6 +116,7 @@ func TestOtherClientErrorsAreFinalAndNotRetried(t *testing.T) {
 }
 
 func TestTooOldBeatsRetryForTransientErrorsToo(t *testing.T) {
+	t.Parallel()
 	d := policy(0.5).Decide(worker.Outcome{Status: 503}, 1, 11*time.Minute)
 	if d.Action != worker.ActionFail || !strings.Contains(d.Reason, "too old") {
 		t.Fatalf("%+v", d)
@@ -116,6 +124,7 @@ func TestTooOldBeatsRetryForTransientErrorsToo(t *testing.T) {
 }
 
 func TestDefaultRandomnessStaysInsideTheCeiling(t *testing.T) {
+	t.Parallel()
 	p := policy(0)
 	p.Rand = nil
 	for i := 0; i < 200; i++ {

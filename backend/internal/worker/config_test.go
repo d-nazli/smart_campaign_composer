@@ -11,6 +11,7 @@ import (
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
 func TestLoadConfigDefaults(t *testing.T) {
+	t.Parallel()
 	c, err := worker.LoadConfig(env(nil))
 	if err != nil {
 		t.Fatal(err)
@@ -22,6 +23,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 }
 
 func TestLoadConfigOverrides(t *testing.T) {
+	t.Parallel()
 	c, err := worker.LoadConfig(env(map[string]string{
 		"WORKER_RATE_PER_SEC": "50", "WORKER_CONCURRENCY": "8", "WORKER_MAX_ATTEMPTS": "3", "WORKER_REQUEST_TIMEOUT_MS": "1500",
 	}))
@@ -34,6 +36,7 @@ func TestLoadConfigOverrides(t *testing.T) {
 }
 
 func TestLoadConfigRejectsNonsenseAndNamesTheVariable(t *testing.T) {
+	t.Parallel()
 	for key, bad := range map[string]string{
 		"WORKER_RATE_PER_SEC": "0", "WORKER_CONCURRENCY": "-1", "WORKER_MAX_ATTEMPTS": "abc", "WORKER_REQUEST_TIMEOUT_MS": "0",
 	} {

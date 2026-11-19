@@ -35,16 +35,6 @@ const emit = defineEmits<{ 'update:modelValue': [MessageContent] }>()
 const check = computed(() => checkContent(props.modelValue, props.limits, props.variables))
 const writing = computed(() => (props.typing ? activeField(props.modelValue) : null))
 
-// Built in script: a literal "{{" in the template would be read as interpolation.
-const tokens = computed(() =>
-  props.variables.map((v) => ({
-    name: v.name,
-    token: '{{' + v.name + '}}',
-    budget: v.budget,
-    hint: `${v.budget} karakter pay ayrılır; kişinin değeri bundan uzunsa veya boşsa “${v.fallbacks?.[props.locale ?? ''] ?? v.fallback}” yazılır`,
-  })),
-)
-
 function issuesFor(field: ContentField): Issue[] {
   const seen = new Set<string>()
   return [...check.value.issues, ...(props.serverIssues ?? [])]
@@ -70,11 +60,6 @@ function update(field: ContentField, value: string) {
       <div v-if="$slots.locales" class="msg__locales"><slot name="locales" /></div>
       <div class="editor">
         <slot name="top" />
-
-        <p v-if="tokens.length" class="vars">
-          <span class="label">Kişiselleştirme</span>
-          <code v-for="t in tokens" :key="t.name" :title="t.hint">{{ t.token }} = {{ t.budget }}</code>
-        </p>
 
         <div class="field">
           <div class="row">
@@ -205,19 +190,6 @@ function update(field: ContentField, value: string) {
   color: var(--warn);
   font-size: var(--text-sm);
   margin: 0;
-}
-.vars {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-}
-.vars .label {
-  margin-right: 4px;
-}
-.vars code {
-  cursor: help;
 }
 .previews {
   display: grid;

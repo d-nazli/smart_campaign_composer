@@ -14,6 +14,7 @@ import (
 // audience, the note, the messages in every locale, and the approval, which
 // parses the stored rule again.
 func TestSpecialDayCombinedAndTieredBriefsGoAllTheWay(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	var everyone int

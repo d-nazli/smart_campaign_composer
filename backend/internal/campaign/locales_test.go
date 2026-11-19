@@ -45,6 +45,7 @@ func editAll(c content.Content, r *strings.Replacer) content.Content {
 // The source is written first, then translated into every locale of the
 // audience: the locales with at least one reachable person, and only those.
 func TestTheSourceIsTranslatedIntoEveryLocaleOfTheAudience(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
 	ctx := context.Background()
@@ -106,6 +107,7 @@ func TestTheSourceIsTranslatedIntoEveryLocaleOfTheAudience(t *testing.T) {
 
 // Writing the same source text again is not a new version: nothing goes stale.
 func TestRegeneratingTheSameSourceKeepsTheVersion(t *testing.T) {
+	t.Parallel()
 	svc, id := generated(t)
 	ctx := context.Background()
 	if err := svc.GenerateMessages(ctx, id, campaign.Events{}); err != nil {
@@ -119,6 +121,7 @@ func TestRegeneratingTheSameSourceKeepsTheVersion(t *testing.T) {
 
 // A translation is asked again, with the reason, when it drops {{first_name}}.
 func TestATranslationThatDropsAPlaceholderIsRepaired(t *testing.T) {
+	t.Parallel()
 	noName := translation("15% off is waiting for you!", "15% off", "Hello,\\n\\nEnjoy 15% off.")
 	m := mock.NewScripted(nil, nil).WithTranslation("en-GB", mock.Step{Kind: mock.Raw, Raw: noName}, mock.Step{Kind: mock.Smart})
 	svc, pool := newService(t, m)
@@ -146,6 +149,7 @@ func TestATranslationThatDropsAPlaceholderIsRepaired(t *testing.T) {
 }
 
 func TestATranslationWithADifferentDiscountIsRepaired(t *testing.T) {
+	t.Parallel()
 	wrong := translation("{{first_name}}, 20 % Rabatt wartet!", "20 % Rabatt", "Hallo {{first_name}},\\n\\n20 % Rabatt.")
 	m := mock.NewScripted(nil, nil).WithTranslation("de-DE", mock.Step{Kind: mock.Raw, Raw: wrong}, mock.Step{Kind: mock.Smart})
 	svc, pool := newService(t, m)
@@ -165,6 +169,7 @@ func TestATranslationWithADifferentDiscountIsRepaired(t *testing.T) {
 // A translation that cannot be made is reported and left missing: it never
 // gets a template or another locale's text, and the campaign waits for it.
 func TestAFailingTranslationIsReportedAndBlocksApproval(t *testing.T) {
+	t.Parallel()
 	over := `{"sms_body":"` + strings.Repeat("a", 170) + `","email_subject":"x","email_body":"y"}`
 	m := mock.NewScripted(nil, nil).WithTranslation("it-IT", mock.Step{Kind: mock.Raw, Raw: over})
 	svc, pool := newService(t, m)
@@ -197,6 +202,7 @@ func TestAFailingTranslationIsReportedAndBlocksApproval(t *testing.T) {
 // Editing the source makes every translation stale; the campaign cannot be
 // approved until they are translated again.
 func TestEditingTheSourceMakesTheTranslationsStale(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()
@@ -244,6 +250,7 @@ func TestEditingTheSourceMakesTheTranslationsStale(t *testing.T) {
 // A translation is never written by hand: every other locale is refused and
 // nothing is stored, even next to a valid source edit.
 func TestOnlyTheSourceCanBeEdited(t *testing.T) {
+	t.Parallel()
 	svc, id := generated(t)
 	ctx := context.Background()
 	before, _ := svc.Get(ctx, id)
@@ -270,6 +277,7 @@ func TestOnlyTheSourceCanBeEdited(t *testing.T) {
 
 // The database refuses it too: a translation row is only ever the translator's.
 func TestTheDatabaseRefusesAHandWrittenTranslation(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	if _, err := pool.Exec(context.Background(), `UPDATE campaign_contents SET source='edited' WHERE campaign_id=$1 AND locale='en-GB'`, id); err == nil {
@@ -282,6 +290,7 @@ func TestTheDatabaseRefusesAHandWrittenTranslation(t *testing.T) {
 
 // "Yeniden çevir" works on an up-to-date translation too.
 func TestAnUpToDateTranslationCanBeTranslatedAgain(t *testing.T) {
+	t.Parallel()
 	svc, id := generated(t)
 	ctx := context.Background()
 	before, _ := svc.Get(ctx, id)
@@ -293,6 +302,7 @@ func TestAnUpToDateTranslationCanBeTranslatedAgain(t *testing.T) {
 }
 
 func TestEditingTheSourceIsCheckedAgainstTheLimits(t *testing.T) {
+	t.Parallel()
 	svc, id := generated(t)
 	long := content.Content{SMSBody: strings.Repeat("a", 161), EmailSubject: "k", EmailBody: "b"}
 	_, err := svc.SaveContents(context.Background(), id, map[string]content.Content{"tr-TR": long})
@@ -303,6 +313,7 @@ func TestEditingTheSourceIsCheckedAgainstTheLimits(t *testing.T) {
 }
 
 func TestSavingAnUnknownLocaleIsRefused(t *testing.T) {
+	t.Parallel()
 	svc, id := generated(t)
 	for _, code := range []string{"fr", "fr-CA", "en_GB"} {
 		_, err := svc.SaveContents(context.Background(), id, map[string]content.Content{code: {SMSBody: "a", EmailSubject: "b", EmailBody: "c"}})
@@ -314,6 +325,7 @@ func TestSavingAnUnknownLocaleIsRefused(t *testing.T) {
 }
 
 func TestSavingTheUnchangedSourceKeepsItsSourceAndVersion(t *testing.T) {
+	t.Parallel()
 	svc, id := generated(t)
 	ctx := context.Background()
 	v, _ := svc.Get(ctx, id)
@@ -324,6 +336,7 @@ func TestSavingTheUnchangedSourceKeepsItsSourceAndVersion(t *testing.T) {
 }
 
 func TestTranslatingALocaleOutsideTheCampaignIsRefused(t *testing.T) {
+	t.Parallel()
 	svc, id := generated(t)
 	var in *campaign.InputError
 	for _, codes := range [][]string{{"tr-TR"}, {"xx-XX"}, {}} {
@@ -339,6 +352,7 @@ func TestTranslatingALocaleOutsideTheCampaignIsRefused(t *testing.T) {
 // has it, the campaign needs its translation before it can be approved, and
 // then the person gets their own text.
 func TestANewLocaleInTheAudienceNeedsItsTranslationFirst(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()
@@ -370,6 +384,7 @@ func TestANewLocaleInTheAudienceNeedsItsTranslationFirst(t *testing.T) {
 }
 
 func TestApprovalRefusesATranslationThatDisagreesWithTheSource(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := approvableCampaign(t, svc)
@@ -386,6 +401,7 @@ func TestApprovalRefusesATranslationThatDisagreesWithTheSource(t *testing.T) {
 }
 
 func TestApprovalReportsHowManyPeopleGetEachLocale(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()

@@ -40,6 +40,7 @@ func auditRows(t *testing.T, pool *pgxpool.Pool, id int64, kind string) []auditR
 // written exactly when those things happen, and only then.
 
 func TestAFallbackIsMarkedOnTheLastAttemptOfItsRunOnly(t *testing.T) {
+	t.Parallel()
 	bad := msgs("kısa ama teklif yok", "Konu", "Gövde")
 	svc, pool := newService(t, mock.NewScripted(nil, []mock.Step{raw(bad)})) // repeats: 3 invalid attempts
 	id := offerCampaign(t, svc)
@@ -58,6 +59,7 @@ func TestAFallbackIsMarkedOnTheLastAttemptOfItsRunOnly(t *testing.T) {
 }
 
 func TestARefusedRunIsMarkedRefusedAndFellBack(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.NewScripted(nil, []mock.Step{{Kind: mock.Refusal}}))
 	id := offerCampaign(t, svc)
 	if err := svc.GenerateMessages(context.Background(), id, campaign.Events{}); err != nil {
@@ -70,6 +72,7 @@ func TestARefusedRunIsMarkedRefusedAndFellBack(t *testing.T) {
 }
 
 func TestARepairedRunIsNotAFallback(t *testing.T) {
+	t.Parallel()
 	bad := msgs("kısa ama teklif yok", "Konu", "Gövde")
 	svc, pool := newService(t, mock.NewScripted(nil, []mock.Step{raw(bad), {Kind: mock.Smart}}))
 	id := offerCampaign(t, svc)
@@ -85,6 +88,7 @@ func TestARepairedRunIsNotAFallback(t *testing.T) {
 // Only the run that just ended is marked: an older fallback keeps its mark and
 // a newer, successful run stays clean.
 func TestRegeneratingAfterAFallbackDoesNotMoveTheMark(t *testing.T) {
+	t.Parallel()
 	bad := msgs("kısa ama teklif yok", "Konu", "Gövde")
 	svc, pool := newService(t, mock.NewScripted(nil, []mock.Step{raw(bad), raw(bad), raw(bad), {Kind: mock.Smart}}))
 	id := offerCampaign(t, svc)
@@ -112,6 +116,7 @@ func TestRegeneratingAfterAFallbackDoesNotMoveTheMark(t *testing.T) {
 }
 
 func TestARefusedSegmentIsMarkedRefused(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.NewScripted([]mock.Step{{Kind: mock.Refusal}}, nil))
 	_, err := svc.Create(context.Background(), "Son 30 günde sepete ürün ekleyip almayanlara %15 indirim hatırlatması gönder")
 	asGenErr(t, err)

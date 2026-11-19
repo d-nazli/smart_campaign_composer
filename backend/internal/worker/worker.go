@@ -31,7 +31,10 @@ type Config struct {
 	// RequestTimeout is how long one provider call may take (5s). It stays below
 	// the provider's 10s "hang" mode so a hanging call becomes a retry, not a stall.
 	RequestTimeout time.Duration
-	Policy         RetryPolicy
+	// ShutdownGrace is how long sends already under way may take to finish and
+	// be recorded after Run's context ends (10s). No new row is claimed meanwhile.
+	ShutdownGrace time.Duration
+	Policy        RetryPolicy
 }
 
 // DefaultConfig is the production setting. The rate is 97, not 100: the time
@@ -40,7 +43,7 @@ type Config struct {
 // second (real 429s). At 97 its busiest second held 98.
 func DefaultConfig() Config {
 	return Config{
-		Concurrency: 64, BatchSize: 20, Lease: 30 * time.Second, RatePerSecond: 97, Poll: 200 * time.Millisecond, RequestTimeout: 5 * time.Second,
+		Concurrency: 64, BatchSize: 20, Lease: 30 * time.Second, RatePerSecond: 97, Poll: 200 * time.Millisecond, RequestTimeout: 5 * time.Second, ShutdownGrace: 10 * time.Second,
 		Policy: RetryPolicy{MaxAttempts: 5, MaxAge: 10 * time.Minute, BaseDelay: 2 * time.Second, MaxDelay: 60 * time.Second, DefaultRetryAfter: time.Second},
 	}
 }
@@ -92,7 +95,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				w.process(ctx, d)
+				w.process(ctx, ctx, d)
 			}()
 		}
 		wg.Wait()
@@ -106,14 +109,34 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 
 // Run processes the queue until ctx ends. Each channel has its own claimer that
 // keeps up to Concurrency senders busy; all senders of a channel share one
-// pacer, which is what enforces the rate. In-flight sends finish before it returns.
+// pacer, which is what enforces the rate.
+//
+// When ctx ends no new row is claimed and no new send starts, but sends already
+// with the provider get up to ShutdownGrace to finish, and their results are
+// recorded, before Run returns: an accepted message that is not recorded would
+// be sent again when its lease runs out.
 func (w *Worker) Run(ctx context.Context) error {
+	sendCtx, cancelSends := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelSends()
+	go func() {
+		select {
+		case <-sendCtx.Done():
+			return
+		case <-ctx.Done():
+		}
+		select {
+		case <-sendCtx.Done():
+		case <-time.After(w.cfg.ShutdownGrace):
+			cancelSends()
+		}
+	}()
+
 	var wg sync.WaitGroup
 	for _, ch := range channels {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			w.runChannel(ctx, ch)
+			w.runChannel(ctx, sendCtx, ch)
 		}()
 	}
 	wg.Add(1)
@@ -132,7 +155,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (w *Worker) runChannel(ctx context.Context, ch string) {
+// runChannel claims with ctx; sendCtx outlives it by the shutdown grace.
+func (w *Worker) runChannel(ctx, sendCtx context.Context, ch string) {
 	sem := make(chan struct{}, w.cfg.Concurrency)
 	freed := make(chan struct{}, 1) // a sender finished: there may be room to claim
 	var wg sync.WaitGroup
@@ -167,7 +191,7 @@ func (w *Worker) runChannel(ctx context.Context, ch string) {
 						}
 						wg.Done()
 					}()
-					w.process(ctx, d)
+					w.process(ctx, sendCtx, d)
 				}()
 			}
 			if claimed == 0 {
@@ -185,8 +209,10 @@ func (w *Worker) runChannel(ctx context.Context, ch string) {
 	}
 }
 
-// process sends one delivery and records what happened.
-func (w *Worker) process(ctx context.Context, d queue.Delivery) {
+// process sends one delivery and records what happened. ctx ends at shutdown:
+// no new send starts after it. sendCtx ends later (the shutdown grace): a send
+// under way runs on it, and the answer it gets is recorded.
+func (w *Worker) process(ctx, sendCtx context.Context, d queue.Delivery) {
 	log := w.log.With("delivery", d.ID, "campaign", d.CampaignID, "channel", d.Channel, "variant", d.Variant)
 
 	// Consent and contact data are checked again now: the person may have
@@ -238,9 +264,9 @@ func (w *Worker) process(ctx context.Context, d queue.Delivery) {
 		return // shutting down: the lease expires and the row is picked up again
 	}
 	began := w.clk.Now()
-	res := w.send.Send(ctx, d.Channel, msg, strconv.FormatInt(d.ID, 10))
-	if ctx.Err() != nil {
-		return // interrupted mid-flight: not the provider's fault, do not count it
+	res := w.send.Send(sendCtx, d.Channel, msg, strconv.FormatInt(d.ID, 10))
+	if res.Err != nil && sendCtx.Err() != nil {
+		return // cut off by the shutdown: not the provider's fault, do not count it (the lease brings it back)
 	}
 
 	now := w.clk.Now()

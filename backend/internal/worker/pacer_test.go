@@ -43,6 +43,7 @@ func waits(t *testing.T, p *worker.Pacer, clk *clock.Fake, n int) []time.Time {
 // The point of the pacer: whatever the rate, no 1-second window ever holds
 // more sends than the rate. Strict, not "on average".
 func TestNoOneSecondWindowEverExceedsTheRate(t *testing.T) {
+	t.Parallel()
 	for _, rate := range []int{1, 7, 90, 100, 333} {
 		clk := clock.NewFake(t0)
 		p := worker.NewPacer(clk, rate)
@@ -58,6 +59,7 @@ func TestNoOneSecondWindowEverExceedsTheRate(t *testing.T) {
 }
 
 func TestTheFirstSlotIsImmediate(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 90)
 	if got := waits(t, p, clk, 1)[0]; !got.Equal(t0) {
@@ -67,6 +69,7 @@ func TestTheFirstSlotIsImmediate(t *testing.T) {
 
 // Idle time must not be saved up as a burst allowance.
 func TestIdleTimeDoesNotBuildUpABurst(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 90)
 	waits(t, p, clk, 10)
@@ -79,6 +82,7 @@ func TestIdleTimeDoesNotBuildUpABurst(t *testing.T) {
 
 // A 429 pauses the whole channel until Retry-After is over.
 func TestPauseUntilHoldsBackEverySlotBeforeTheDeadline(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 90)
 	waits(t, p, clk, 5)
@@ -95,6 +99,7 @@ func TestPauseUntilHoldsBackEverySlotBeforeTheDeadline(t *testing.T) {
 }
 
 func TestAnEarlierPauseNeverShortensALaterOne(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 90)
 	p.PauseUntil(t0.Add(10 * time.Second))
@@ -105,6 +110,7 @@ func TestAnEarlierPauseNeverShortensALaterOne(t *testing.T) {
 }
 
 func TestCancelledWaitReturnsTheContextError(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 1)
 	waits(t, p, clk, 1)
@@ -141,6 +147,7 @@ func TestConcurrentSendersShareOnePace(t *testing.T) {
 }
 
 func TestAFewStray429sDoNotPauseTheChannel(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 90)
 	for i := 0; i < 9; i++ { // one short of a burst
@@ -154,6 +161,7 @@ func TestAFewStray429sDoNotPauseTheChannel(t *testing.T) {
 }
 
 func TestABurstOf429sPausesTheChannelForRetryAfter(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 90)
 	resume := t0.Add(3 * time.Second)
@@ -170,6 +178,7 @@ func TestABurstOf429sPausesTheChannelForRetryAfter(t *testing.T) {
 }
 
 func TestOld429sDoNotAddUpToABurst(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(t0)
 	p := worker.NewPacer(clk, 90)
 	for i := 0; i < 9; i++ {

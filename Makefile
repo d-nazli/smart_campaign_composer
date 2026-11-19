@@ -37,6 +37,7 @@ test: test-backend test-frontend
 test-backend:
 	$(COMPOSE) --profile test run --rm --build backend-test
 
+## Frontend: vue-tsc type check, then vitest
 test-frontend:
 	$(COMPOSE) --profile test run --rm --build frontend-test
 

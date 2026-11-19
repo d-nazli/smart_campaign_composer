@@ -328,10 +328,18 @@ func (s *Service) storeVariantCounts(ctx context.Context, id int64, row *campaig
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE campaigns SET variant_counts=$2, updated_at=now() WHERE id=$1`, id, raw); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockEditable(ctx, tx, id, "FOR UPDATE", "varyant sayıları saklanmadı"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE campaigns SET variant_counts=$2, updated_at=now() WHERE id=$1`, id, raw); err != nil {
 		return fmt.Errorf("store variant counts: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // genCheck is what a variant's source text is held to besides the limits and
@@ -463,7 +471,7 @@ func (s *Service) translateOne(ctx context.Context, id int64, row *campaignRow, 
 			}, deltas(scanner, target.Code, ev))
 		},
 		func(raw string) (content.Content, []string) {
-			return s.validateTranslation(raw, srcLocale, src, target)
+			return s.validateTranslation(raw, srcLocale, src, target, promised)
 		},
 		hooks(s, id, "translate", target.Code, variant, ev),
 	)
@@ -510,8 +518,13 @@ func hooks(s *Service, id int64, kind, code, variant string, ev Events) llm.Hook
 // validateTranslation parses a translation strictly and checks it like any
 // text (limits, variables) plus that it says what the source says. The offer
 // wording checks of the source text (Quality) are Turkish and are not applied:
-// the comparison with the source covers the offer.
-func (s *Service) validateTranslation(raw string, srcLocale content.Locale, src content.Content, target content.Locale) (content.Content, []string) {
+// the comparison with the source covers the offer. Two things it does not
+// cover are checked here (D112): the offer's coupon code must be in the SMS
+// and in the email exactly (a code is typed at checkout; "SUMMER30" for
+// "YAZ30" does not work), and the text must be a translation, not the source
+// text again.
+func (s *Service) validateTranslation(raw string, srcLocale content.Locale, src content.Content, target content.Locale,
+	promised offer.Offer) (content.Content, []string) {
 	c, err := decodeStrict(raw)
 	if err != nil {
 		return c, []string{err.Error()}
@@ -521,6 +534,20 @@ func (s *Service) validateTranslation(raw string, srcLocale content.Locale, src 
 	if rep.OK {
 		for _, i := range content.ConsistentWith(srcLocale, src, target, norm) {
 			problems = append(problems, i.Message)
+		}
+		// The same matching as the source text's (offer.Mentions).
+		if code := promised.Normalize().Code; code != "" {
+			for _, ch := range []struct{ label, text string }{
+				{"SMS", norm.SMSBody},
+				{"E-posta (konu veya metin)", norm.EmailSubject + "\n" + norm.EmailBody},
+			} {
+				if !strings.Contains(strings.ToUpper(ch.text), code) {
+					problems = append(problems, fmt.Sprintf("%s: kupon kodu %s çeviride aynen geçmeli. Kodu çevirme, değiştirme, çıkarma; kaynaktaki gibi %s yaz.", ch.label, code, code))
+				}
+			}
+		}
+		if target.Code != srcLocale.Code && sameText(norm, src) {
+			problems = append(problems, fmt.Sprintf("Çeviri, %s kaynak metniyle birebir aynı. Metni %s (%s) diline çevir.", srcLocale.Code, target.Name, target.Code))
 		}
 	}
 	if len(problems) > 0 {
@@ -727,6 +754,9 @@ func (s *Service) SaveVariantContents(ctx context.Context, id int64, variant str
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockEditable(ctx, tx, id, "FOR UPDATE", "içerik düzenlenemez"); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO campaign_contents (campaign_id, variant, locale, sms_body, email_subject, email_body, source, version)
 		VALUES ($1,$2,$3,$4,$5,$6,'edited',1)
@@ -787,6 +817,9 @@ func (s *Service) writeSource(ctx context.Context, id int64, variant string, c c
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockEditable(ctx, tx, id, "FOR UPDATE", "içerik değiştirilemez"); err != nil {
+		return 0, err
+	}
 	ls, err := locale.Load(ctx, tx, s.policy)
 	if err != nil {
 		return 0, err
@@ -819,19 +852,18 @@ func (s *Service) writeTranslation(ctx context.Context, id int64, variant, srcCo
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockEditable(ctx, tx, id, "FOR SHARE", "çeviri saklanmadı"); err != nil {
+		return err
+	}
 	var current int
-	var status string
 	err = tx.QueryRow(ctx, `
-		SELECT cc.version, c.status FROM campaign_contents cc JOIN campaigns c ON c.id = cc.campaign_id
-		WHERE cc.campaign_id=$1 AND cc.variant=$2 AND cc.locale=$3 FOR SHARE OF cc`, id, variant, srcCode).Scan(&current, &status)
+		SELECT version FROM campaign_contents
+		WHERE campaign_id=$1 AND variant=$2 AND locale=$3 FOR SHARE`, id, variant, srcCode).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errSourceChanged // the variant was removed meanwhile
 	}
 	if err != nil {
 		return fmt.Errorf("read source version: %w", err)
-	}
-	if status != StatusSegmentReady && status != StatusContentReady {
-		return &StateError{fmt.Sprintf("kampanya %q durumunda; çeviri saklanmadı", status)}
 	}
 	if current != version {
 		return errSourceChanged
@@ -848,6 +880,28 @@ func (s *Service) writeTranslation(ctx context.Context, id int64, variant, srcCo
 		return fmt.Errorf("store translation: %w", err)
 	}
 	return tx.Commit(ctx)
+}
+
+// lockEditable locks the campaign row (lock is "FOR UPDATE" or "FOR SHARE") and
+// refuses unless its text may still change. Every write of a campaign's text
+// takes it first, in the same transaction: the approval updates that row, so a
+// write either commits before the approval (which then sees it) or waits for it
+// and is refused; it never lands on an approved campaign. The campaign row is
+// always locked before its campaign_contents rows. Translations take FOR SHARE,
+// so parallel translations do not wait for each other.
+func lockEditable(ctx context.Context, tx pgx.Tx, id int64, lock, what string) error {
+	var status string
+	err := tx.QueryRow(ctx, `SELECT status FROM campaigns WHERE id=$1 `+lock, id).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock campaign: %w", err)
+	}
+	if status != StatusSegmentReady && status != StatusContentReady {
+		return &StateError{fmt.Sprintf("kampanya %q durumunda; %s", status, what)}
+	}
+	return nil
 }
 
 // advance moves the campaign from segment_ready to content_ready once Variant A

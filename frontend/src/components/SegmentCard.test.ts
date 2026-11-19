@@ -42,6 +42,31 @@ describe('SegmentCard: the audience note', () => {
   })
 })
 
+describe('SegmentCard: what the rule leaves out of the brief', () => {
+  const base: Segment = {
+    status: 'ok',
+    match: 'all',
+    conditions: [{ field: 'days_since_last_cart_add', op: 'lte', value: 30 }],
+    explanation: 'son 30 günde sepete ekleyenler',
+    audience,
+    offer: { kind: 'percent', value: 10, code: '' },
+  }
+
+  it('shows each warning next to the audience, which stays usable', () => {
+    const warning = 'Brief\'te "almayanlara" var, kuralda yok. Kitle beklediğinden geniş olabilir.'
+    const w = mount(SegmentCard, { props: { segment: { ...base, warnings: [warning] } } })
+    const shown = w.findAll('[data-testid="audience-warning"]')
+    expect(shown.map((p) => p.text())).toEqual([warning])
+    expect(shown[0].classes()).toContain('warn')
+    expect(w.text()).toContain('5.000') // the audience is still shown
+  })
+
+  it('shows none without warnings', () => {
+    const w = mount(SegmentCard, { props: { segment: base } })
+    expect(w.find('[data-testid="audience-warning"]').exists()).toBe(false)
+  })
+})
+
 describe('describeOffer: combined, tiered and capped offers', () => {
   it('names every part of a combined offer', () => {
     expect(describeOffer({ kind: 'percent', value: 20, code: '', extras: [{ kind: 'free_shipping', value: 0 }] })).toBe('%20 indirim + ücretsiz kargo')

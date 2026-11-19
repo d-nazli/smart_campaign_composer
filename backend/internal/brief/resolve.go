@@ -76,9 +76,32 @@ func resolveGrounded(ctx context.Context, client llm.Client, text string, hooks 
 	// lastUnused belongs to the latest rule that parsed. When the loop gives up
 	// on check problems, the latest attempt parsed, so it is that attempt's.
 	var lastUnused []UnusedValue
+	// What the rule reader is certain about must not fall out of the rule or turn
+	// around (LLM-1, D111). The model hears about it once, and never on its last
+	// attempt (a gap must not use up the attempts and block the rule); what is
+	// still missing after that becomes a warning on the audience step.
+	in := Analyze(text)
+	var lastGaps []Gap
+	gapsSent := false
+	attempt := 0
+	onAttempt := hooks.OnAttempt
+	hooks.OnAttempt = func(n, max int) {
+		attempt = n
+		if onAttempt != nil {
+			onAttempt(n, max)
+		}
+	}
 	rule, problems, err := ask(ctx, client, text, hooks, func(r segment.Rule) []string {
 		lastUnused = UnusedValues(text, r)
-		return append(Ground(text, r), unusedFeedback(lastUnused)...)
+		problems := append(Ground(text, r), unusedFeedback(lastUnused)...)
+		lastGaps = Gaps(in, r)
+		if len(lastGaps) > 0 && !gapsSent && attempt < MaxAttempts {
+			gapsSent = true
+			for _, g := range lastGaps {
+				problems = append(problems, g.Feedback)
+			}
+		}
+		return problems
 	})
 	if problems != nil {
 		if len(lastUnused) > 0 {
@@ -91,7 +114,10 @@ func resolveGrounded(ctx context.Context, client llm.Client, text string, hooks 
 	if err != nil {
 		return rule, err
 	}
-	rule.Note, rule.Suggestion = "", ""
+	rule.Note, rule.Suggestion, rule.Warnings = "", "", nil
+	for _, g := range lastGaps { // the gaps of the rule that was accepted
+		rule.Warnings = append(rule.Warnings, g.Warning())
+	}
 	switch {
 	case rule.Status == segment.StatusOK && len(rule.Conditions) == 1 && rule.Conditions[0].Field == "all_customers" && !SaysEveryone(text):
 		// The model chose everyone although the brief does not say so (for example

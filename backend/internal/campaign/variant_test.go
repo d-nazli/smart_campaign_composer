@@ -31,6 +31,7 @@ func abCampaign(t *testing.T, svc *campaign.Service) int64 {
 // Variant B is written with Variant A in view: another text, the same offer,
 // translated into the same locales.
 func TestVariantBIsADifferentTextWithTheSameOffer(t *testing.T) {
+	t.Parallel()
 	m := mock.New(0)
 	svc, pool := newService(t, m)
 	id := abCampaign(t, svc)
@@ -93,6 +94,7 @@ func TestVariantBIsADifferentTextWithTheSameOffer(t *testing.T) {
 }
 
 func TestVariantBNeedsVariantAFirst(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
 	var se *campaign.StateError
@@ -107,6 +109,7 @@ func TestVariantBNeedsVariantAFirst(t *testing.T) {
 
 // A model that writes Variant A again is told so and asked again.
 func TestAModelThatRepeatsVariantAIsAskedAgain(t *testing.T) {
+	t.Parallel()
 	m := mock.NewScripted(nil, []mock.Step{raw(goodMessages), raw(goodMessages), {Kind: mock.Smart}})
 	svc, _ := newService(t, m)
 	id := readyCampaign(t, svc)
@@ -137,6 +140,7 @@ func TestAModelThatRepeatsVariantAIsAskedAgain(t *testing.T) {
 // A Variant B the model cannot write is an error; nothing is stored and the
 // built-in template is not used (it could be A's text again).
 func TestAFailedVariantBStoresNothing(t *testing.T) {
+	t.Parallel()
 	m := mock.NewScripted(nil, []mock.Step{{Kind: mock.Smart}, raw(tooLongSMS())})
 	svc, _ := newService(t, m)
 	id := offerCampaign(t, svc)
@@ -160,6 +164,7 @@ func TestAFailedVariantBStoresNothing(t *testing.T) {
 // Each variant has its own source: changing A makes only A's translations
 // stale, changing B only B's.
 func TestEditingOneVariantMakesOnlyItsTranslationsStale(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -204,6 +209,7 @@ func TestEditingOneVariantMakesOnlyItsTranslationsStale(t *testing.T) {
 
 // Variant B may not become Variant A, nor A become B (case and spaces aside).
 func TestTheTwoVariantsCannotBeTheSameText(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -228,6 +234,7 @@ func TestTheTwoVariantsCannotBeTheSameText(t *testing.T) {
 // A copy that got into the database anyway (written before the rule) is shown
 // as a duplicate and refused at approval.
 func TestApprovalRefusesTwoIdenticalVariants(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -255,6 +262,7 @@ func TestApprovalRefusesTwoIdenticalVariants(t *testing.T) {
 // A stale translation of either variant blocks the approval (409); the error
 // says which variant waits for which locale.
 func TestApprovalWaitsForTheTranslationsOfBothVariants(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -280,6 +288,7 @@ func TestApprovalWaitsForTheTranslationsOfBothVariants(t *testing.T) {
 // locale: both channels of a person carry the same variant, a person is queued
 // once per channel, and the approval reports what was queued per variant.
 func TestApprovalSplitsThePeopleBetweenTheVariants(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -341,6 +350,7 @@ func TestApprovalSplitsThePeopleBetweenTheVariants(t *testing.T) {
 }
 
 func TestTheHashInGoMatchesTheDatabase(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	_ = svc
 	ctx := context.Background()
@@ -364,6 +374,7 @@ func TestTheHashInGoMatchesTheDatabase(t *testing.T) {
 
 // Removing Variant B turns the test off: everyone gets A.
 func TestRemovingVariantBSendsEveryoneVariantA(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -407,6 +418,7 @@ func TestRemovingVariantBSendsEveryoneVariantA(t *testing.T) {
 
 // A scheduled A/B campaign is split when it starts (the audience is decided then).
 func TestAScheduledABCampaignIsSplitWhenItStarts(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -446,6 +458,7 @@ func variantsQueued(t *testing.T, pool *pgxpool.Pool, id int64) map[string]int {
 }
 
 func TestUnknownVariantIsAnInputError(t *testing.T) {
+	t.Parallel()
 	var ie *campaign.InputError
 	if _, err := campaign.ParseVariant("C"); !errors.As(err, &ie) {
 		t.Fatalf("C: %v", err)

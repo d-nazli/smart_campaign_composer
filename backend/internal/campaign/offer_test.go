@@ -16,6 +16,7 @@ import (
 const reportedBrief = "son 30 günde adanada sepete ekleme yapmış ancak sipariş oluşturmamış kişilere yüzde 15 indirim kuponunu tanımla"
 
 func TestReportedBriefExcludesPeopleWhoBought(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	v, err := svc.Create(context.Background(), reportedBrief)
 	if err != nil {
@@ -53,6 +54,7 @@ func TestReportedBriefExcludesPeopleWhoBought(t *testing.T) {
 }
 
 func TestUnsupportedBriefIsDecidedByTheBackendAndExplained(t *testing.T) {
+	t.Parallel()
 	m := mock.NewScripted([]mock.Step{raw(`{"status":"ok","match":"all","conditions":[{"field":"city","op":"eq","value":"Adana"}],"explanation":"x","question":""}`)}, nil)
 	svc, _ := newService(t, m)
 	v, err := svc.Create(context.Background(), "Adana'daki 35 yaş üstü müşterilere %10 indirim")
@@ -97,6 +99,7 @@ func msgs(sms, subject, body string) string {
 }
 
 func TestMessagesThatForgetTheOfferAreRepaired(t *testing.T) {
+	t.Parallel()
 	forgot := msgs("{{first_name}}, sepetin seni bekliyor!", "Sepetin seni bekliyor", "Merhaba {{first_name}},\\n\\nSepetin hâlâ burada.")
 	good := msgs("{{first_name}}, %15 indirim seni bekliyor!", "{{first_name}}, %15 indirim", "Merhaba {{first_name}},\\n\\nSepetinde %15 indirim var.")
 	m := mock.NewScripted(nil, []mock.Step{raw(forgot), raw(good)})
@@ -124,6 +127,7 @@ func TestMessagesThatForgetTheOfferAreRepaired(t *testing.T) {
 }
 
 func TestMessagesWithAWrongDiscountAreRepaired(t *testing.T) {
+	t.Parallel()
 	wrong := msgs("{{first_name}}, %30 indirim seni bekliyor!", "{{first_name}}, %30 indirim", "Merhaba {{first_name}},\\n\\nSepetinde %30 indirim var.")
 	good := msgs("{{first_name}}, %15 indirim seni bekliyor!", "{{first_name}}, %15 indirim", "Merhaba {{first_name}},\\n\\nSepetinde %15 indirim var.")
 	svc, pool := newService(t, mock.NewScripted(nil, []mock.Step{raw(wrong), raw(good)}))
@@ -141,6 +145,7 @@ func TestMessagesWithAWrongDiscountAreRepaired(t *testing.T) {
 }
 
 func TestMessagesWithARepeatedWordAreRepaired(t *testing.T) {
+	t.Parallel()
 	repeated := msgs("{{first_name}}, özel fırsat fırsatından %15 indirim!", "{{first_name}}, %15 indirim", "Merhaba {{first_name}},\\n\\nSepetinde %15 indirim var.")
 	good := msgs("{{first_name}}, %15 indirim seni bekliyor!", "{{first_name}}, %15 indirim", "Merhaba {{first_name}},\\n\\nSepetinde %15 indirim var.")
 	m := mock.NewScripted(nil, []mock.Step{raw(repeated), raw(good)})
@@ -162,6 +167,7 @@ func TestMessagesWithARepeatedWordAreRepaired(t *testing.T) {
 // When the model keeps forgetting, the person gets the built-in template, and
 // that template states the offer too.
 func TestFallbackAfterForgettingTheOfferStillStatesIt(t *testing.T) {
+	t.Parallel()
 	forgot := msgs("{{first_name}}, sepetin seni bekliyor!", "Sepetin seni bekliyor", "Merhaba {{first_name}},\\n\\nSepetin hâlâ burada.")
 	svc, _ := newService(t, mock.NewScripted(nil, []mock.Step{raw(forgot)}))
 	id := offerCampaign(t, svc)
@@ -180,6 +186,7 @@ func TestFallbackAfterForgettingTheOfferStillStatesIt(t *testing.T) {
 
 // The default (smart) mock must produce messages that pass every check.
 func TestSmartMockMessagesFollowTheStoredOffer(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
 	var rec recorded
@@ -198,6 +205,7 @@ func TestSmartMockMessagesFollowTheStoredOffer(t *testing.T) {
 
 // A person may edit the text; the screen must then warn if the offer is gone.
 func TestEditedContentWithoutTheOfferGetsAWarningNotASilentPass(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
 	v, err := saveSource(context.Background(), svc, id, (content.Content{

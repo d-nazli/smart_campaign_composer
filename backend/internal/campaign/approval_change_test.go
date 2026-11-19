@@ -17,6 +17,7 @@ import (
 
 // A normal approval: what was shown is what was queued, so nothing to say.
 func TestANormalApprovalHasNoDifference(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()
@@ -38,6 +39,7 @@ func TestANormalApprovalHasNoDifference(t *testing.T) {
 // Consent withdrawn between the count on screen and the approval: fewer SMS
 // are queued, and the difference is exactly the rows that are missing.
 func TestConsentWithdrawnBeforeApprovalShowsTheRealDifference(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()
@@ -68,6 +70,7 @@ func TestConsentWithdrawnBeforeApprovalShowsTheRealDifference(t *testing.T) {
 // the per-variant, per-locale counts, the same in the approval answer, in the
 // campaign's progress and in the comparison with the screen.
 func TestQueuedIsEveryVariantAndLocaleTogether(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	ctx := context.Background()
@@ -115,6 +118,7 @@ func TestQueuedIsEveryVariantAndLocaleTogether(t *testing.T) {
 // A scheduled campaign queues nothing at approval (no 0 is reported) and keeps
 // what the screen showed then; its start queues the rows it is compared with.
 func TestAScheduledCampaignIsComparedWhenItStarts(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	at := inTwoHours()

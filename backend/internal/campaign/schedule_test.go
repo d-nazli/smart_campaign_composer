@@ -49,6 +49,7 @@ func inTwoHours() time.Time { return time.Now().Add(2 * time.Hour).Truncate(time
 // ---- approving for later -------------------------------------------------------
 
 func TestApprovingForLaterOnlyRecordsTheDecision(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()
@@ -98,6 +99,7 @@ func TestApprovingForLaterOnlyRecordsTheDecision(t *testing.T) {
 }
 
 func TestScheduleTimeMustBeInAReasonableWindow(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	ctx := context.Background()
@@ -151,6 +153,7 @@ func dated(t *testing.T, svc *campaign.Service, day time.Time) int64 {
 }
 
 func TestAScheduleAfterTheOffersLastDayIsRefused(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	lastDay := time.Now().In(trt).AddDate(0, 0, 5)
@@ -178,6 +181,7 @@ func TestAScheduleAfterTheOffersLastDayIsRefused(t *testing.T) {
 // An offer that ended while the campaign waited (a worker that was down for
 // days) is never announced.
 func TestAnOfferThatHasEndedIsNotSent(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	lastDay := time.Now().In(trt).AddDate(0, 0, 3)
@@ -204,6 +208,7 @@ func TestAnOfferThatHasEndedIsNotSent(t *testing.T) {
 // ---- starting -------------------------------------------------------------------
 
 func TestNothingStartsBeforeItsTimeAndEverythingAtIt(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	at := inTwoHours()
@@ -250,6 +255,7 @@ func TestNothingStartsBeforeItsTimeAndEverythingAtIt(t *testing.T) {
 // The audience is the one of the moment the campaign starts, not of the moment
 // it was approved: new people are in, people who opted out or bought are out.
 func TestTheAudienceIsDecidedWhenTheCampaignStarts(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	at := inTwoHours()
@@ -323,6 +329,7 @@ func TestTheAudienceIsDecidedWhenTheCampaignStarts(t *testing.T) {
 
 // What can never be sent is marked failed with a reason; nothing is queued.
 func TestACampaignThatCannotStartFailsWithAReason(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		break_ string
 		want   string
@@ -366,6 +373,7 @@ func TestACampaignThatCannotStartFailsWithAReason(t *testing.T) {
 // ---- once and only once -----------------------------------------------------------
 
 func TestManySchedulersStartEachCampaignExactlyOnce(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	at := inTwoHours()
@@ -420,6 +428,7 @@ func TestManySchedulersStartEachCampaignExactlyOnce(t *testing.T) {
 // ---- cancelling -------------------------------------------------------------------
 
 func TestCancellingAScheduledCampaignStopsItForGood(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	at := inTwoHours()
@@ -450,6 +459,7 @@ func TestCancellingAScheduledCampaignStopsItForGood(t *testing.T) {
 }
 
 func TestOnlyAScheduledCampaignCanBeCancelled(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	ctx := context.Background()
 	var se *campaign.StateError
@@ -475,6 +485,7 @@ func TestOnlyAScheduledCampaignCanBeCancelled(t *testing.T) {
 // had started and the cancel is refused. Never a cancelled campaign with
 // deliveries, and never a started one that was reported cancelled.
 func TestCancelAndStartNeverBothHappen(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	cancelledWins, startWins := 0, 0

@@ -34,6 +34,7 @@ func createBrief(t *testing.T, svc *campaign.Service, brief string) *campaign.Vi
 const termsOnly = "1000 tl üzeri alışverişe 100tl indirim kullandır son kullanım 31.12.2026"
 
 func TestTheReportedBriefAsksWhoAndKeepsTheOffer(t *testing.T) {
+	t.Parallel()
 	m := mock.NewScripted([]mock.Step{raw(`{"status":"ok","match":"all","conditions":[{"field":"total_spent","op":"gt","value":1000}],"explanation":"x","question":"","offer":{"kind":"none","value":0,"code":"","min_spend":0,"expires_at":""}}`)}, nil)
 	svc, pool := newService(t, m)
 	v := createBrief(t, svc, termsOnly)
@@ -68,6 +69,7 @@ func TestTheReportedBriefAsksWhoAndKeepsTheOffer(t *testing.T) {
 // The reported brief as written: the special day names no audience, so it goes
 // to everyone (user decision) and the terms still belong to the offer.
 func TestTheReportedMothersDayBriefGoesToEveryoneWithItsTerms(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	v := createBrief(t, svc, mothersDay)
 	s := v.Segment
@@ -82,6 +84,7 @@ func TestTheReportedMothersDayBriefGoesToEveryoneWithItsTerms(t *testing.T) {
 // After the person answers "send to all", the audience is every customer who
 // may be contacted: the rule says so explicitly, and consent still applies.
 func TestEveryoneMeansEveryCustomerWhoMayBeContacted(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	v := createBrief(t, svc, "herkese %10 indirim")
 	s := v.Segment
@@ -117,6 +120,7 @@ func TestEveryoneMeansEveryCustomerWhoMayBeContacted(t *testing.T) {
 }
 
 func TestSendingToAllAfterTheQuestionKeepsTheTerms(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	v := createBrief(t, svc, mothersDay+"\n\nTüm müşterilere gönder.")
 	if v.Segment.Status != segment.StatusOK || v.Segment.Conditions[0].Field != "all_customers" || !v.Segment.Offer.Equal(mothersDayOffer) {
@@ -145,6 +149,7 @@ func TestSendingToAllAfterTheQuestionKeepsTheTerms(t *testing.T) {
 // A model that leaves the last day or the minimum out is asked again, with the
 // terms spelled out; if it never gets it right, the template states them.
 func TestMessagesThatForgetTheTermsAreRepairedThenFallBackWithTheTerms(t *testing.T) {
+	t.Parallel()
 	forgot := msgs("{{first_name}}, 100 TL indirim seni bekliyor!", "100 TL indirim", "Merhaba {{first_name}},\\n\\n100 TL indirim seni bekliyor.")
 	good := msgs("{{first_name}}, 1000 TL ve üzeri alışverişte 100 TL indirim seni bekliyor! Son kullanım: 31.12.2026", "100 TL indirim fırsatı",
 		"Merhaba {{first_name}},\\n\\n1000 TL ve üzeri alışverişte 100 TL indirim var. Son kullanım: 31.12.2026")
@@ -182,6 +187,7 @@ func TestMessagesThatForgetTheTermsAreRepairedThenFallBackWithTheTerms(t *testin
 
 // Editing the text and deleting the date is the person's call, but it is warned about.
 func TestEditedTextThatLosesTheLastDayIsWarnedAbout(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	v := createBrief(t, svc, mothersDay+"\n\nTüm müşterilere gönder.")
 	got, err := saveSource(context.Background(), svc, v.ID, (contentOf("{{first_name}}, 1000 TL ve üzeri alışverişte 100 TL indirim!", "100 TL indirim", "Merhaba {{first_name}}, 1000 TL ve üzeri alışverişte 100 TL indirim var.")))

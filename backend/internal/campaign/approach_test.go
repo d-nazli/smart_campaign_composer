@@ -33,6 +33,7 @@ func containsProblem(retries [][]string, part string) bool {
 // Each variant takes an approach from the list, chosen for the brief, and B's
 // is not A's (the mock reads a cart brief as "merak" first).
 func TestEachVariantTakesItsOwnApproachFromTheList(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := abCampaign(t, svc)
 	v, err := svc.Get(context.Background(), id)
@@ -53,6 +54,7 @@ func TestEachVariantTakesItsOwnApproachFromTheList(t *testing.T) {
 
 // An approach outside the list is a broken answer: the model is told and asked again.
 func TestAnApproachOutsideTheListIsRejected(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.NewScripted(nil, []mock.Step{{Kind: mock.UnknownApproach}, {Kind: mock.Smart}}))
 	id := offerCampaign(t, svc)
 	var retries [][]string
@@ -69,6 +71,7 @@ func TestAnApproachOutsideTheListIsRejected(t *testing.T) {
 
 // A message without an approach is rejected like a missing field.
 func TestAMessageWithoutAnApproachIsRejected(t *testing.T) {
+	t.Parallel()
 	noApproach := `{"sms_body":"{{first_name}}, %15 indirim seni bekliyor!","email_subject":"%15 indirim","email_body":"Merhaba {{first_name}}, %15 indirim var."}`
 	svc, _ := newService(t, mock.NewScripted(nil, []mock.Step{raw(noApproach), {Kind: mock.Smart}}))
 	id := offerCampaign(t, svc)
@@ -83,6 +86,7 @@ func TestAMessageWithoutAnApproachIsRejected(t *testing.T) {
 
 // Variant B in Variant A's approach is rejected; the next answer takes another one.
 func TestVariantBInTheSameApproachAsAIsRejected(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.NewScripted(nil, []mock.Step{{Kind: mock.Smart}, {Kind: mock.SameApproach}, {Kind: mock.Smart}}))
 	id := offerCampaign(t, svc)
 	ctx := context.Background()
@@ -105,6 +109,7 @@ func TestVariantBInTheSameApproachAsAIsRejected(t *testing.T) {
 // A brief without a last day or a duration allows no urgency: neither the
 // approach nor a sentence that hurries the reader.
 func TestUrgencyWithoutADeadlineIsRejected(t *testing.T) {
+	t.Parallel()
 	urgent := msgs("{{first_name}}, %15 indirim seni bekliyor!", "%15 indirim", "Merhaba {{first_name}}, %15 indirim var.")
 	urgent = strings.Replace(urgent, `"approach":"fayda"`, `"approach":"aciliyet"`, 1)
 	hurried := msgs("{{first_name}}, son gün! %15 indirim seni bekliyor.", "%15 indirim", "Merhaba {{first_name}}, %15 indirim var. Acele et!")
@@ -125,6 +130,7 @@ func TestUrgencyWithoutADeadlineIsRejected(t *testing.T) {
 
 // With a last day in the brief urgency is honest, and the mock picks it.
 func TestADeadlineAllowsUrgency(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	v := createBrief(t, svc, "Tüm müşterilere 1000 TL üzeri alışverişe 100 TL indirim gönder, son kullanım 31.12.2099.")
 	if err := svc.GenerateMessages(context.Background(), v.ID, campaign.Events{}); err != nil {
@@ -138,6 +144,7 @@ func TestADeadlineAllowsUrgency(t *testing.T) {
 
 // The two variants promise the same: B with another discount is rejected.
 func TestVariantBMustPromiseWhatAPromises(t *testing.T) {
+	t.Parallel()
 	other := msgs("{{first_name}}, %20 indirim seni bekliyor!", "%20 indirim", "Merhaba {{first_name}}, %20 indirim var.")
 	other = strings.Replace(other, `"approach":"fayda"`, `"approach":"kisisel"`, 1)
 	svc, _ := newService(t, mock.NewScripted(nil, []mock.Step{{Kind: mock.Smart}, raw(other), {Kind: mock.Smart}}))

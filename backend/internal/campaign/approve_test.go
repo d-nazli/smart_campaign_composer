@@ -46,6 +46,7 @@ func campaignStatus(t *testing.T, pool *pgxpool.Pool, id int64) string {
 // What was shown on the screen as "reachable" is exactly what gets queued, and
 // nobody without consent or contact data is ever queued.
 func TestApproveQueuesExactlyTheReachableAudience(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	before, err := svc.Get(context.Background(), id)
@@ -90,6 +91,7 @@ func TestApproveQueuesExactlyTheReachableAudience(t *testing.T) {
 // other capitals and spaces): the campaign sends that address ONE message per
 // channel, and the reachable count on the screen already says so.
 func TestTwoRecordsWithTheSameAddressGetOneMessage(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 
@@ -156,6 +158,7 @@ func TestTwoRecordsWithTheSameAddressGetOneMessage(t *testing.T) {
 }
 
 func TestApprovingTwiceDoesNotQueueTwice(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	first, err := svc.Approve(context.Background(), id)
@@ -177,6 +180,7 @@ func TestApprovingTwiceDoesNotQueueTwice(t *testing.T) {
 }
 
 func TestConcurrentApprovalsQueueOnceAndExactlyOneWins(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 
@@ -215,6 +219,7 @@ func TestConcurrentApprovalsQueueOnceAndExactlyOneWins(t *testing.T) {
 }
 
 func TestApproveRefusesCampaignsThatAreNotReady(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 
@@ -245,6 +250,7 @@ func TestApproveRefusesCampaignsThatAreNotReady(t *testing.T) {
 // The text is re-validated at approval; the stored content could have been
 // damaged or the limits changed since it was saved.
 func TestApproveRejectsContentThatBreaksTheLimitsAndChangesNothing(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	long := make([]byte, 200)
@@ -269,6 +275,7 @@ func TestApproveRejectsContentThatBreaksTheLimitsAndChangesNothing(t *testing.T)
 
 // Warnings (D46) never block: the person has the last word, but sees them again.
 func TestApproveWithAnEditedMessageThatLostTheOfferStillWorksAndWarns(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := offerCampaign(t, svc)
 	// Sentences of the mock's bank, so that the mock can translate the edit (D108).
@@ -289,6 +296,7 @@ func TestApproveWithAnEditedMessageThatLostTheOfferStillWorksAndWarns(t *testing
 
 // What was approved is what is sent: the text and the audience are frozen.
 func TestAfterApprovalContentCannotChange(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := approvableCampaign(t, svc)
 	if _, err := svc.Approve(context.Background(), id); err != nil {

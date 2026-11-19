@@ -129,6 +129,8 @@ export interface Segment {
   note?: string
   /** How many reachable people each locale has, e.g. {"tr-TR": 120, "en-GB": 45}. */
   locales?: Record<LocaleCode, number>
+  /** Parts of the brief the rule leaves out or turns around; shown, never blocking. Set by the backend. */
+  warnings?: string[]
 }
 
 export type ContentSource = 'llm' | 'fallback' | 'edited' | 'translated'

@@ -9,6 +9,7 @@ import (
 )
 
 func TestListShowsEveryCampaignNewestFirstWithItsProgress(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 
@@ -69,6 +70,7 @@ func TestListShowsEveryCampaignNewestFirstWithItsProgress(t *testing.T) {
 }
 
 func TestListHonoursAndClampsItsLimit(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
@@ -83,6 +85,7 @@ func TestListHonoursAndClampsItsLimit(t *testing.T) {
 }
 
 func TestListOfNothingIsAnEmptyListNotNull(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	list, err := svc.List(context.Background(), 10)
 	if err != nil || list == nil || len(list) != 0 {
@@ -93,6 +96,7 @@ func TestListOfNothingIsAnEmptyListNotNull(t *testing.T) {
 // Per locale: how many messages go to each locale and how many were sent.
 // The numbers add up to the campaign's own totals and agree with the queue.
 func TestDeliveryProgressCountsEachLocale(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := approvableCampaign(t, svc)
@@ -140,6 +144,7 @@ func TestDeliveryProgressCountsEachLocale(t *testing.T) {
 
 // A card shows who the campaign is for (in words) and how many people each locale has.
 func TestListSummaryNamesTheAudience(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := offerCampaign(t, svc)
@@ -161,6 +166,7 @@ func TestListSummaryNamesTheAudience(t *testing.T) {
 
 // A scheduled campaign keeps its time in the list, also after it has started.
 func TestListKeepsTheScheduledTimeAfterTheStart(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	at := inTwoHours()
@@ -180,6 +186,7 @@ func TestListKeepsTheScheduledTimeAfterTheStart(t *testing.T) {
 
 // The model's short name is stored with the campaign and shown in the list.
 func TestTheCampaignNameIsStoredAndListed(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	ctx := context.Background()
 	v, err := svc.Create(ctx, exampleBrief)
@@ -195,6 +202,7 @@ func TestTheCampaignNameIsStoredAndListed(t *testing.T) {
 // The list shows each channel's speed, which the screen computes from the first
 // and last time a message was accepted. Nothing sent yet: no times.
 func TestDeliveryProgressBoundsTheSendingTimePerChannel(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 	id := approvableCampaign(t, svc)

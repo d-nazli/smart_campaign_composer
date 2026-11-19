@@ -37,8 +37,8 @@ func TestGroundedTheModelReadsTheBriefItself(t *testing.T) {
 			okRule(pct(10), c("days_since_last_cart_add", "lte", int64(30)), c("purchased_since_last_cart_add", "eq", false))},
 		{"wording the rule reader does not know", "Kuponunu kullanmamış müşterilere %10 indirim gönder",
 			okRule(pct(10), c("all_customers", "eq", true))},
-		{"a reading that differs from the rule reader's (no 'did not buy' condition)", "Son 30 günde sepete ürün ekleyip almayanlara %10 indirim",
-			okRule(pct(10), c("days_since_last_cart_add", "lte", int64(30)))},
+		// A rule without the brief's "did not buy" is no longer used silently: see
+		// TestGroundedAConditionStillMissingIsAWarningNotABlock (LLM-1, D111).
 		{"a VIP audience read as big spenders, numbers from the brief", "5000 TL üzeri harcayan VIP müşterilere %10 indirim",
 			okRule(pct(10), c("total_spent", "gt", 5000.0))},
 	}

@@ -30,6 +30,18 @@ func newService(t *testing.T, client llm.Client) (*campaign.Service, *pgxpool.Po
 	return campaign.NewService(pool, client, policy, slog.New(slog.NewTextHandler(io.Discard, nil))), pool
 }
 
+// newUnseededService is newService on a migrated database without the 5000
+// users, for tests that never look at an audience.
+func newUnseededService(t *testing.T, client llm.Client) (*campaign.Service, *pgxpool.Pool) {
+	t.Helper()
+	pool, _ := testdb.New(t)
+	policy, err := content.NewPolicy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return campaign.NewService(pool, client, policy, slog.New(slog.NewTextHandler(io.Discard, nil))), pool
+}
+
 func raw(s string) mock.Step { return mock.Step{Kind: mock.Raw, Raw: s} }
 
 const badSegment = `{"status":"ok","match":"all","conditions":[{"field":"password","op":"eq","value":"x"}],"explanation":"x","question":""}`
@@ -62,6 +74,7 @@ func asGenErr(t *testing.T, err error) *campaign.GenerationError {
 // ---- segment ---------------------------------------------------------------
 
 func TestCreateExampleBriefWithSmartMock(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	v, err := svc.Create(context.Background(), exampleBrief)
 	if err != nil {
@@ -89,6 +102,7 @@ func TestCreateExampleBriefWithSmartMock(t *testing.T) {
 }
 
 func TestCreateRepairsABrokenSegmentAndAuditsBothAttempts(t *testing.T) {
+	t.Parallel()
 	m := mock.NewScripted([]mock.Step{raw(badSegment), {Kind: mock.Smart}}, nil)
 	svc, pool := newService(t, m)
 	v, err := svc.Create(context.Background(), exampleBrief)
@@ -109,6 +123,7 @@ func TestCreateRepairsABrokenSegmentAndAuditsBothAttempts(t *testing.T) {
 }
 
 func TestCreateGivesUpAfterThreeBadAnswers(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.NewScripted([]mock.Step{raw(badSegment)}, nil))
 	_, err := svc.Create(context.Background(), exampleBrief)
 	ge := asGenErr(t, err)
@@ -129,6 +144,7 @@ func TestCreateGivesUpAfterThreeBadAnswers(t *testing.T) {
 }
 
 func TestCreateMapsLLMFailures(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		step mock.Step
@@ -150,6 +166,7 @@ func TestCreateMapsLLMFailures(t *testing.T) {
 }
 
 func TestCreateClarificationAndUnsupportedStayInDraft(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 
 	v, err := svc.Create(context.Background(), "Hoş geldin mesajı gönder")
@@ -177,7 +194,8 @@ func TestCreateClarificationAndUnsupportedStayInDraft(t *testing.T) {
 }
 
 func TestCreateRejectsBadBriefs(t *testing.T) {
-	svc, pool := newService(t, mock.New(0))
+	t.Parallel()
+	svc, pool := newUnseededService(t, mock.New(0))
 	for _, brief := range []string{"", "   ", "abc", strings.Repeat("a", 2001)} {
 		_, err := svc.Create(context.Background(), brief)
 		var ie *campaign.InputError
@@ -193,7 +211,8 @@ func TestCreateRejectsBadBriefs(t *testing.T) {
 }
 
 func TestGetUnknownCampaign(t *testing.T) {
-	svc, _ := newService(t, mock.New(0))
+	t.Parallel()
+	svc, _ := newUnseededService(t, mock.New(0))
 	if _, err := svc.Get(context.Background(), 999); !errors.Is(err, campaign.ErrNotFound) {
 		t.Fatalf("got %v", err)
 	}
@@ -262,6 +281,7 @@ func readyCampaign(t *testing.T, svc *campaign.Service) int64 {
 }
 
 func TestGenerateMessagesStreamsThenValidatesAndStores(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := readyCampaign(t, svc)
 
@@ -295,6 +315,7 @@ func TestGenerateMessagesStreamsThenValidatesAndStores(t *testing.T) {
 }
 
 func TestGenerateMessagesRepairsOverlongSMS(t *testing.T) {
+	t.Parallel()
 	m := mock.NewScripted(nil, []mock.Step{raw(tooLongSMS()), raw(goodMessages)})
 	svc, pool := newService(t, m)
 	id := readyCampaign(t, svc)
@@ -327,6 +348,7 @@ func TestGenerateMessagesRepairsOverlongSMS(t *testing.T) {
 }
 
 func TestGenerateMessagesFallsBackAfterThreeInvalidAnswers(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.NewScripted(nil, []mock.Step{raw(tooLongSMS())}))
 	id := readyCampaign(t, svc)
 
@@ -351,6 +373,7 @@ func TestGenerateMessagesFallsBackAfterThreeInvalidAnswers(t *testing.T) {
 }
 
 func TestGenerateMessagesFallbackReasons(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		step   mock.Step
@@ -375,6 +398,7 @@ func TestGenerateMessagesFallbackReasons(t *testing.T) {
 }
 
 func TestBadCredentialsAreNotHiddenBehindTheFallback(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.NewScripted(nil, []mock.Step{{Kind: mock.Error, Err: &llm.AuthError{Err: errors.New("401")}}}))
 	id := readyCampaign(t, svc)
 	var rec recorded
@@ -390,6 +414,7 @@ func TestBadCredentialsAreNotHiddenBehindTheFallback(t *testing.T) {
 }
 
 func TestClientDisconnectStoresNothing(t *testing.T) {
+	t.Parallel()
 	svc, pool := newService(t, mock.New(0))
 	id := readyCampaign(t, svc)
 
@@ -412,6 +437,7 @@ func TestClientDisconnectStoresNothing(t *testing.T) {
 }
 
 func TestRegeneratingReplacesTheContent(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := readyCampaign(t, svc)
 	for i := 0; i < 2; i++ {
@@ -428,6 +454,7 @@ func TestRegeneratingReplacesTheContent(t *testing.T) {
 // ---- manual edits ----------------------------------------------------------
 
 func TestSaveContentAppliesTheSameRulesAsModelOutput(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	id := readyCampaign(t, svc)
 	ctx := context.Background()
@@ -478,6 +505,7 @@ func TestSaveContentAppliesTheSameRulesAsModelOutput(t *testing.T) {
 }
 
 func TestSaveContentNeedsASegmentFirst(t *testing.T) {
+	t.Parallel()
 	svc, _ := newService(t, mock.New(0))
 	v, err := svc.Create(context.Background(), "Hoş geldin mesajı gönder") // needs clarification -> draft
 	if err != nil {
