@@ -803,3 +803,71 @@ func getField(t *testing.T, srv *httptest.Server, id int64, field string) string
 	s, _ := v.Content[field].(string)
 	return s
 }
+
+// The answer to the audience question goes to the same campaign (200, same id,
+// segment_ready); a campaign that waits for no answer is a 409; a draft can be
+// deleted (204) and an unknown one is a 404.
+func TestClarifyAndDeleteOverHTTP(t *testing.T) {
+	srv := newServer(t, mock.New(0))
+	resp, body := do(t, "POST", srv.URL+"/api/campaigns", map[string]string{"brief": "%10 indirim gönder"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	var created struct {
+		ID      int64
+		Segment struct{ Status string }
+	}
+	_ = json.Unmarshal(body, &created)
+	if created.Segment.Status != "needs_clarification" {
+		t.Fatalf("%s", body)
+	}
+	count := func() int {
+		_, b := do(t, "GET", srv.URL+"/api/campaigns", nil)
+		var l struct{ Campaigns []json.RawMessage }
+		_ = json.Unmarshal(b, &l)
+		return len(l.Campaigns)
+	}
+	before := count()
+
+	url := fmt.Sprintf("%s/api/campaigns/%d", srv.URL, created.ID)
+	resp, body = do(t, "POST", url+"/clarify", map[string]string{"answer": "Tüm müşterilere gönder."})
+	if resp.StatusCode != 200 {
+		t.Fatalf("clarify: %d %s", resp.StatusCode, body)
+	}
+	var v struct {
+		ID      int64
+		Status  string
+		Segment struct {
+			Status         string
+			Clarifications []struct{ Question, Answer string }
+		}
+	}
+	_ = json.Unmarshal(body, &v)
+	if v.ID != created.ID || v.Status != "segment_ready" || v.Segment.Status != "ok" || len(v.Segment.Clarifications) != 1 || v.Segment.Clarifications[0].Answer != "Tüm müşterilere gönder." {
+		t.Fatalf("%s", body)
+	}
+	if count() != before {
+		t.Fatal("an answer must not add a campaign")
+	}
+
+	resp, body = do(t, "POST", url+"/clarify", map[string]string{"answer": "evet"})
+	if resp.StatusCode != 409 || !strings.Contains(string(body), "invalid_state") {
+		t.Fatalf("a second answer: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := do(t, "POST", url+"/clarify", map[string]string{"answer": ""}); resp.StatusCode != 400 {
+		t.Fatalf("an empty answer: %d", resp.StatusCode)
+	}
+	if resp, _ := do(t, "POST", srv.URL+"/api/campaigns/999999/clarify", map[string]string{"answer": "evet"}); resp.StatusCode != 404 {
+		t.Fatalf("unknown: %d", resp.StatusCode)
+	}
+
+	if resp, body := do(t, "DELETE", url, nil); resp.StatusCode != 204 {
+		t.Fatalf("delete: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := do(t, "GET", url, nil); resp.StatusCode != 404 {
+		t.Fatalf("gone: %d", resp.StatusCode)
+	}
+	if count() != before-1 {
+		t.Fatal("the list must lose it")
+	}
+}

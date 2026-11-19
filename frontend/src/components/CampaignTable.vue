@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Clock, XCircle } from 'lucide-vue-next'
+import { Clock, Trash2, XCircle } from 'lucide-vue-next'
 import type { CampaignSummary, LocaleInfo } from '../types'
 import { briefTitle, localeLine, progressTitle, rowProgress, sentenceCase, statusBadge } from '../utils/dashboard'
 import { FALLBACK_LOCALES } from '../utils/locales'
@@ -12,10 +12,12 @@ import ProgressBar from './ui/ProgressBar.vue'
 
 // Every campaign is one row. The title is the brief, cut to one line (the tooltip has all of it);
 // a row opens the wizard where the campaign stands. A scheduled campaign says when in its
-// status ("Zamanlandı · 24 Kas 14:00") and can be cancelled from its row.
+// status ("Zamanlandı · 24 Kas 14:00") and can be cancelled from its row. A campaign that was never
+// approved (a draft, one waiting for an answer) can be deleted from its row.
 // Below 1024px the rows are laid out as cards (CSS only: the same elements).
 const props = defineProps<{ campaigns: CampaignSummary[]; locales?: LocaleInfo[] }>()
-const emit = defineEmits<{ cancel: [CampaignSummary] }>()
+const emit = defineEmits<{ cancel: [CampaignSummary]; remove: [CampaignSummary] }>()
+const deletable = (c: CampaignSummary) => c.status === 'draft' || c.status === 'segment_ready' || c.status === 'content_ready'
 
 const TITLE_MAX = 64
 const now = ref(new Date())
@@ -94,6 +96,7 @@ const day = (iso: string) => formatWhen(iso)
           </td>
           <td class="act">
             <Button v-if="c.status === 'scheduled'" variant="ghost" size="sm" :icon="XCircle" class="icon-only" title="Gönderimi iptal et" :aria-label="`#${c.id} zamanlı gönderimi iptal et`" data-testid="cancel" @click="emit('cancel', c)" />
+            <Button v-if="deletable(c)" variant="ghost" size="sm" :icon="Trash2" class="icon-only" title="Kampanyayı sil" :aria-label="`#${c.id} kampanyayı sil`" data-testid="delete" @click="emit('remove', c)" />
           </td>
         </tr>
       </tbody>

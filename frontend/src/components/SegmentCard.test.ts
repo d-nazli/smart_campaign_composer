@@ -99,3 +99,61 @@ describe('describeCondition: gender', () => {
     expect(describeCondition({ field: 'gender', op: 'eq', value: 'male' })).toBe('Cinsiyet: erkek')
   })
 })
+
+describe('SegmentCard: answering the question', () => {
+  const asking: Segment = {
+    status: 'needs_clarification',
+    conditions: [],
+    explanation: '',
+    question: 'Bu kampanya kime gönderilsin? Tüm müşterilere mi?',
+    suggestion: 'all_customers',
+  }
+
+  it('sends a typed answer, trimmed, and only a non-empty one', async () => {
+    const w = mount(SegmentCard, { props: { segment: asking } })
+    const send = w.get('[data-testid="send-answer"]')
+    expect(send.attributes('disabled')).toBeDefined()
+    await w.get('[data-testid="answer"]').setValue("  Ankara'daki müşterilere  ")
+    expect(send.attributes('disabled')).toBeUndefined()
+    await w.get('form').trigger('submit')
+    expect(w.emitted('answer')).toEqual([["Ankara'daki müşterilere"]])
+  })
+
+  it('keeps the one-click answer next to the answer box', async () => {
+    const w = mount(SegmentCard, { props: { segment: asking } })
+    await w.get('[data-testid="send-to-all"]').trigger('click')
+    expect(w.emitted('send-to-all')).toHaveLength(1)
+  })
+
+  it('does not send while busy', async () => {
+    const w = mount(SegmentCard, { props: { segment: asking, busy: true } })
+    await w.get('[data-testid="answer"]').setValue('evet')
+    await w.get('form').trigger('submit')
+    expect(w.emitted('answer')).toBeUndefined()
+  })
+
+  it('lists the earlier questions and answers above a new question, and with the audience', () => {
+    const clarifications = [{ question: 'Kime gönderilsin?', answer: 'bilmiyorum', answered_at: '2026-11-19T10:00:00Z' }]
+    const again = mount(SegmentCard, { props: { segment: { ...asking, question: 'Hangi şehir?', clarifications } } })
+    expect(again.get('[data-testid="clarifications"]').findAll('p').map((p) => p.text())).toEqual(['Soru: Kime gönderilsin?', 'Cevap: bilmiyorum'])
+    expect(again.get('[data-testid="question"]').text()).toBe('Hangi şehir?')
+
+    const ok: Segment = {
+      status: 'ok',
+      match: 'all',
+      conditions: [{ field: 'city', op: 'eq', value: 'Ankara' }],
+      explanation: "Ankara'daki müşteriler",
+      audience,
+      clarifications: [{ question: 'Kime gönderilsin?', answer: "Ankara'dakilere", answered_at: '2026-11-19T10:00:00Z' }],
+    }
+    const done = mount(SegmentCard, { props: { segment: ok } })
+    const shown = done.get('[data-testid="clarifications"]')
+    expect(shown.get('h3').text()).toBe('Soru ve cevaplar')
+    expect(shown.findAll('p').map((p) => p.text())).toEqual(['Soru: Kime gönderilsin?', "Cevap: Ankara'dakilere"])
+  })
+
+  it('shows no history when nothing was asked', () => {
+    const w = mount(SegmentCard, { props: { segment: asking } })
+    expect(w.find('[data-testid="clarifications"]').exists()).toBe(false)
+  })
+})

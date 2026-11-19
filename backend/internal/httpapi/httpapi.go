@@ -46,6 +46,8 @@ func New(svc *campaign.Service, info Info, ready func(context.Context) error, me
 	mux.HandleFunc("DELETE /api/campaigns/{id}/variants/{variant}", a.deleteVariant)
 	mux.HandleFunc("POST /api/campaigns/{id}/approve", a.approve)
 	mux.HandleFunc("POST /api/campaigns/{id}/cancel", a.cancel)
+	mux.HandleFunc("POST /api/campaigns/{id}/clarify", a.clarify)
+	mux.HandleFunc("DELETE /api/campaigns/{id}", a.deleteCampaign)
 	if metricsHandler != nil {
 		mux.Handle("GET /metrics", metricsHandler)
 	}
@@ -256,6 +258,40 @@ func (a *api) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// clarify answers the audience question of a campaign that waits for one; the
+// audience is resolved again on the same campaign (409 if it waits for none).
+func (a *api) clarify(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Answer string `json:"answer"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	v, err := a.svc.Clarify(r.Context(), id, body.Answer)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// deleteCampaign removes a campaign that was never approved (409 otherwise).
+func (a *api) deleteCampaign(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := a.svc.Delete(r.Context(), id); err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *api) streamMessages(w http.ResponseWriter, r *http.Request) {

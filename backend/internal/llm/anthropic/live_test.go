@@ -112,15 +112,22 @@ const mothersDay = "anneler gününe özel 1000 tl üzeri alışverişe 100tl in
 func liveConds(r segment.Rule) string {
 	var parts []string
 	for _, c := range r.Conditions {
-		parts = append(parts, fmt.Sprintf("%s %s %v", c.Field, c.Op, c.Value))
+		v := c.Value
+		if list, ok := v.([]string); ok {
+			list = append([]string(nil), list...)
+			sort.Strings(list)
+			v = list
+		}
+		parts = append(parts, fmt.Sprintf("%s %s %v", c.Field, c.Op, v))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, " | ")
 }
 
-// The whole pipeline (code reads the brief, the model answers, code verifies the
-// answer) with the real model. Briefs that the code decides alone never reach the
-// model; the others prove the prompt: terms go to the offer, never to the audience.
+// The production pipeline of Claude mode (D113): Claude reads the brief, code
+// checks the answer technically. These cases prove the prompt: terms go to the
+// offer, never to the audience; a special day alone means everyone, with the
+// model's note; nobody named means the fixed "who?" question.
 func TestLiveBriefsWithTermsAndEveryone(t *testing.T) {
 	c := liveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -132,28 +139,22 @@ func TestLiveBriefsWithTermsAndEveryone(t *testing.T) {
 		conds       string // exact, sorted
 		want        offer.Offer
 		suggestion  string
+		note        bool // the model must explain that everyone was chosen
 	}{
-		{"the reported brief asks who, with the offer understood", mothersDay,
-			segment.StatusNeedsClarification, "", offer.Offer{Kind: offer.KindAmount, Value: 100, MinSpend: 1000, ExpiresAt: "2026-12-31"}, segment.SuggestAllCustomers},
-		{"the reported brief after 'send to all'", mothersDay + "\n\nTüm müşterilere gönder.",
-			segment.StatusOK, "all_customers eq true", offer.Offer{Kind: offer.KindAmount, Value: 100, MinSpend: 1000, ExpiresAt: "2026-12-31"}, ""},
+		{"a special day without an audience means everyone", mothersDay,
+			segment.StatusOK, "all_customers eq true", offer.Offer{Kind: offer.KindAmount, Value: 100, MinSpend: 1000, ExpiresAt: "2026-12-31"}, "", true},
 		{"herkese %10 indirim", "herkese %10 indirim",
-			segment.StatusOK, "all_customers eq true", offer.Offer{Kind: offer.KindPercent, Value: 10}, ""},
+			segment.StatusOK, "all_customers eq true", offer.Offer{Kind: offer.KindPercent, Value: 10}, "", false},
 		{"tüm müşterilere, with a minimum and a last day", "Tüm müşterilere 1000 TL üzeri alışverişe %10 indirim, son kullanım 31.12.2026",
-			segment.StatusOK, "all_customers eq true", offer.Offer{Kind: offer.KindPercent, Value: 10, MinSpend: 1000, ExpiresAt: "2026-12-31"}, ""},
+			segment.StatusOK, "all_customers eq true", offer.Offer{Kind: offer.KindPercent, Value: 10, MinSpend: 1000, ExpiresAt: "2026-12-31"}, "", false},
 		{"a minimum next to a real audience", "Son 30 günde sepeti terk edenlere 500 TL ve üzeri alışverişe ücretsiz kargo",
-			segment.StatusOK, "days_since_last_cart_add lte 30 | purchased_since_last_cart_add eq false", offer.Offer{Kind: offer.KindFreeShipping, MinSpend: 500}, ""},
+			segment.StatusOK, "days_since_last_cart_add lte 30 | purchased_since_last_cart_add eq false", offer.Offer{Kind: offer.KindFreeShipping, MinSpend: 500}, "", false},
 		{"nobody named", "%10 indirim gönder",
-			segment.StatusNeedsClarification, "", offer.Offer{Kind: offer.KindPercent, Value: 10}, segment.SuggestAllCustomers},
+			segment.StatusNeedsClarification, "", offer.Offer{Kind: offer.KindNone}, segment.SuggestAllCustomers, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rule, err := brief.ResolveSegment(ctx, c, tt.brief, llm.Hooks{OnRetry: func(n int, p []string) { t.Logf("retry %d: %v", n, p) }})
-			if err != nil {
-				t.Fatal(err)
-			}
-			b, _ := json.Marshal(rule)
-			t.Logf("rule: %s", b)
+			rule := liveResolve(ctx, t, c, tt.brief)
 			if rule.Status != tt.status || rule.Suggestion != tt.suggestion {
 				t.Fatalf("status %q suggestion %q, want %q / %q", rule.Status, rule.Suggestion, tt.status, tt.suggestion)
 			}
@@ -161,11 +162,105 @@ func TestLiveBriefsWithTermsAndEveryone(t *testing.T) {
 				if rule.Question != brief.WhoQuestion {
 					t.Errorf("question %q", rule.Question)
 				}
-			} else if got := liveConds(rule); got != tt.conds {
+				return
+			}
+			if got := liveConds(rule); got != tt.conds {
 				t.Errorf("conditions %q, want %q", got, tt.conds)
 			}
 			if !rule.Offer.Equal(tt.want) {
 				t.Errorf("offer %+v, want %+v", rule.Offer, tt.want)
+			}
+			if tt.note && rule.Note == "" {
+				t.Errorf("the model should say why everyone was chosen")
+			}
+		})
+	}
+}
+
+func liveResolve(ctx context.Context, t *testing.T, c *Client, text string) segment.Rule {
+	t.Helper()
+	rule, err := brief.ResolveSegmentWith(ctx, c, text, llm.Hooks{OnRetry: func(n int, p []string) { t.Logf("retry %d: %v", n, p) }}, brief.ModelDriven)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(rule)
+	t.Logf("rule: %s", b)
+	return rule
+}
+
+// Turkish, English and complex briefs that say everything needed: Claude
+// alone turns them into exactly these conditions and this offer.
+func TestLiveModelDrivenClearBriefs(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tests := []struct {
+		name, brief, conds string
+		want               offer.Offer
+		alt                string // an equivalent way to write conds ("gte 1" for "gt 0")
+	}{
+		{"Turkish: the case's example", liveBrief,
+			"city eq İstanbul | days_since_last_cart_add lte 30 | purchased_since_last_cart_add eq false", offer.Offer{Kind: offer.KindPercent, Value: 30}, ""},
+		{"English: abandoners in a city", "Send a 15% discount to customers in Izmir who added something to their cart in the last 7 days but didn't buy it.",
+			"city eq İzmir | days_since_last_cart_add lte 7 | purchased_since_last_cart_add eq false", offer.Offer{Kind: offer.KindPercent, Value: 15}, ""},
+		{"English: lapsed buyers, a city excluded", "Win back everyone who hasn't ordered in the last 90 days, except customers in Ankara. Offer free shipping.",
+			"city neq Ankara | days_since_last_order_or_never gt 90", offer.Offer{Kind: offer.KindFreeShipping}, ""},
+		{"complex: tier, cities, gender, spending", "İzmir ve Ankara'da yaşayan, toplam harcaması 5000 TL'den fazla olan kadın müşterilere her 1000 TL'lik alışverişe 100 TL indirim, toplamda en fazla 300 TL. Son kullanım 31.12.2026.",
+			"city in [Ankara İzmir] | gender eq female | total_spent gt 5000", offer.Offer{Kind: offer.KindAmount, Value: 100, StepSpend: 1000, MaxDiscount: 300, ExpiresAt: "2026-12-31"}, ""},
+		{"complex: two weeks, never ordered excluded", "Son 2 haftada sepete ürün ekleyip satın almayan ve daha önce en az bir sipariş vermiş müşterilere %20 indirim + ücretsiz kargo",
+			"days_since_last_cart_add lte 14 | order_count gt 0 | purchased_since_last_cart_add eq false",
+			offer.Offer{Kind: offer.KindPercent, Value: 20, Extras: []offer.Part{{Kind: offer.KindFreeShipping}}},
+			"days_since_last_cart_add lte 14 | order_count gte 1 | purchased_since_last_cart_add eq false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rule := liveResolve(ctx, t, c, tt.brief)
+			if rule.Status != segment.StatusOK {
+				t.Fatalf("status %q: %s %s", rule.Status, rule.Question, rule.Explanation)
+			}
+			if got := liveConds(rule); got != tt.conds && (tt.alt == "" || got != tt.alt) {
+				t.Errorf("conditions %q, want %q", got, tt.conds)
+			}
+			if !rule.Offer.Equal(tt.want) {
+				t.Errorf("offer %+v, want %+v", rule.Offer, tt.want)
+			}
+			if strings.TrimSpace(rule.Explanation) == "" {
+				t.Error("the explanation is the summary the marketer reads")
+			}
+		})
+	}
+}
+
+// Briefs Claude cannot turn into a rule without guessing: it asks (or says
+// what it cannot serve) instead of inventing a condition. No code reads these
+// briefs; the answer is Claude's alone.
+func TestLiveModelDrivenAmbiguousBriefsAreAskedAbout(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	tests := []struct {
+		name, brief string
+		statuses    []string
+	}{
+		{"a label without a threshold", "VIP müşterilere %10 indirim gönder", []string{segment.StatusNeedsClarification}},
+		{"English: a vague time window", "Send 10% off to people who recently added items to their cart", []string{segment.StatusNeedsClarification}},
+		{"an amount whose purpose is unclear", "İstanbul'daki müşterilere 2000 TL 250 TL indirim", []string{segment.StatusNeedsClarification}},
+		{"two different discounts", "Sepeti terk edenlere %15 ya da %20 indirim", []string{segment.StatusNeedsClarification}},
+		{"data the database does not have", "35 yaş üstü ve son 30 günde telefon kategorisine bakan müşterilere %10 indirim",
+			[]string{segment.StatusUnsupported, segment.StatusNeedsClarification}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rule := liveResolve(ctx, t, c, tt.brief)
+			ok := false
+			for _, s := range tt.statuses {
+				ok = ok || rule.Status == s
+			}
+			if !ok || len(rule.Conditions) != 0 {
+				t.Fatalf("want one of %v without conditions, got %q %v", tt.statuses, rule.Status, liveConds(rule))
+			}
+			if rule.Status == segment.StatusNeedsClarification && strings.TrimSpace(rule.Question) == "" {
+				t.Error("a clarification needs a question")
 			}
 		})
 	}

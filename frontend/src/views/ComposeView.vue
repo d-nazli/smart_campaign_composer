@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '../api/info'
-import { approveCampaign, cancelCampaign, createCampaign, deleteVariant, getCampaign, saveContent, translateCampaign } from '../api/campaigns'
+import { approveCampaign, cancelCampaign, clarifyCampaign, createCampaign, deleteVariant, getCampaign, saveContent, translateCampaign } from '../api/campaigns'
 import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
 import { failedLocales, initialState, retryNotes } from '../composables/streamState'
@@ -28,7 +28,7 @@ import { checkSchedule, formatWhen, fromLocalInput, toLocalInput, untilText } fr
 import { ArrowLeft, Clock, FileText, Plus, RefreshCw, Sparkles, XCircle } from 'lucide-vue-next'
 import { briefTitle, statusLabel } from '../utils/dashboard'
 import { attemptLabel } from '../utils/preview'
-import { withAllCustomers } from '../utils/sendToAll'
+import { SEND_TO_ALL_SENTENCE } from '../utils/sendToAll'
 import { conflictMessage, isFrozen } from '../utils/editing'
 import { currentStep, type StepKey } from '../utils/steps'
 import { barAction, direction, nextStep, prevStep, reachableSteps } from '../utils/wizard'
@@ -666,12 +666,32 @@ async function submitBrief() {
   }
 }
 
-// The answer to "Bu kampanya kime gönderilsin? Tüm müşterilere mi?": the sentence is
-// added to the brief and the campaign is built again from it.
-async function sendToAll() {
-  brief.value = withAllCustomers(brief.value)
-  await submitBrief()
+// An answer to the audience question goes to the SAME campaign: the backend resolves the
+// audience again from the brief and the answers (POST /clarify). No new campaign is created;
+// the brief stays as written. "Tüm müşterilere gönder" is the one-click answer.
+const answerError = ref<string | null>(null)
+async function answerQuestion(text: string) {
+  const c = campaign.value
+  if (!c || creating.value) return
+  creating.value = true
+  answerError.value = null
+  try {
+    adopt(await clarifyCampaign(c.id, text))
+  } catch (e) {
+    const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
+    answerError.value = err.message
+    if (err.status === 409) {
+      try {
+        adopt(await getCampaign(c.id)) // answered meanwhile (another tab): show where it stands
+      } catch {
+        /* keep what is on screen */
+      }
+    }
+  } finally {
+    creating.value = false
+  }
 }
+const sendToAll = () => answerQuestion(SEND_TO_ALL_SENTENCE)
 
 // Writes a variant with the model: A ("Mesajları üret", "Yeniden üret"), or B ("+" and B's menu),
 // which the model writes with A's text in view so that it says the same offer differently.
@@ -820,7 +840,16 @@ onMounted(async () => {
 
           <!-- 2 · Kitle -->
           <template v-else-if="view === 'audience'">
-            <SegmentCard v-if="campaign?.segment" :segment="campaign.segment" :locales="allLocales" :busy="creating || frozen" @send-to-all="sendToAll" />
+            <SegmentCard
+              v-if="campaign?.segment"
+              :key="`${campaign.id}:${campaign.segment.clarifications?.length ?? 0}`"
+              :segment="campaign.segment"
+              :locales="allLocales"
+              :busy="creating || frozen"
+              @send-to-all="sendToAll"
+              @answer="answerQuestion"
+            />
+            <p v-if="answerError" class="notice error" role="alert" data-testid="answer-error">{{ answerError }}</p>
             <Card v-else title="Kitle" role="status">
               <p class="muted">Kitle çıkarılıyor…</p>
             </Card>

@@ -20,14 +20,30 @@ const (
 	// Strict: the rule reader in this package understands the brief; the model
 	// must agree with it. Used with the mock LLM, which IS the rule reader.
 	Strict Mode = iota
-	// Grounded: the real model understands the brief; code only checks what can
-	// be checked objectively (D87).
-	Grounded
+	// ModelDriven: the real model (Claude) understands the brief and turns it
+	// into conditions on its own. Code validates only what is technical: the
+	// schema, the field/operator/type whitelist, ranges, the business
+	// constraints of a rule and of its offer (segment.Parse), and the campaign
+	// name. It never reads the brief to second-guess the model (D113).
+	ModelDriven
 )
 
 // ResolveSegment is ResolveSegmentWith in Strict mode.
 func ResolveSegment(ctx context.Context, client llm.Client, text string, hooks llm.Hooks) (segment.Rule, error) {
 	return ResolveSegmentWith(ctx, client, text, hooks, Strict)
+}
+
+// WithAnswers is the brief followed by the person's answers, each in its own
+// paragraph: the text the rule reader (Strict) and the message step read. The
+// questions are left out: they are the model's words, not the person's.
+func WithAnswers(text string, clarifications []llm.Clarification) string {
+	out := strings.TrimSpace(text)
+	for _, c := range clarifications {
+		if a := strings.TrimSpace(c.Answer); a != "" {
+			out += "\n\n" + a
+		}
+	}
+	return out
 }
 
 // ResolveSegmentWith turns a brief into a segment rule that is safe to use.
@@ -44,21 +60,28 @@ func ResolveSegment(ctx context.Context, client llm.Client, text string, hooks l
 //     naming what could not be applied. A different audience is never
 //     returned silently.
 //
-// Grounded (real Claude, D87): the brief goes to the model as it is, and the
-// model decides what it means, including ok / needs_clarification /
-// unsupported. Its answer must pass the objective checks only: the schema and
-// whitelist (segment.Parse, which also checks the offer with Offer.Validate)
-// and Ground (every city, number, amount, code and date is in the brief).
-// Failures go back as repair feedback; if they persist, the person is asked.
-func ResolveSegmentWith(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, mode Mode) (segment.Rule, error) {
-	if mode == Grounded {
-		return resolveGrounded(ctx, client, text, hooks)
+// ModelDriven (real Claude, D113): the brief goes to the model as it is. The
+// model alone reads it and decides ok / needs_clarification / unsupported;
+// when it cannot tell what the brief means it asks instead of guessing (the
+// system prompt says so). Its answer passes only the technical checks of
+// segment.Parse and the name check. Technical problems go back as repair
+// feedback; if they persist the call fails with the attempts (the screen shows
+// them). There is no keyword, regex or suffix check of the brief against the
+// rule, and no second model call.
+//
+// clarifications are the questions asked before and the person's answers.
+// ModelDriven gives them to the model next to the brief; Strict reads the
+// brief with the answers appended (WithAnswers), as one text.
+func ResolveSegmentWith(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, mode Mode, clarifications ...llm.Clarification) (segment.Rule, error) {
+	if mode == ModelDriven {
+		return resolveModelDriven(ctx, client, llm.SegmentRequest{Brief: text, Clarifications: clarifications}, hooks)
 	}
+	text = WithAnswers(text, clarifications)
 	in := Analyze(text)
 	if rule, blocked := in.Blocked(); blocked {
 		return rule, nil
 	}
-	rule, problems, err := ask(ctx, client, text, hooks, func(r segment.Rule) []string { return Verify(in, r) })
+	rule, problems, err := ask(ctx, client, llm.SegmentRequest{Brief: text}, hooks, func(r segment.Rule) []string { return Verify(in, r) })
 	if problems != nil {
 		return unresolved(problems), nil
 	}
@@ -72,72 +95,41 @@ func ResolveSegmentWith(ctx context.Context, client llm.Client, text string, hoo
 	return rule, err
 }
 
-func resolveGrounded(ctx context.Context, client llm.Client, text string, hooks llm.Hooks) (segment.Rule, error) {
-	// lastUnused belongs to the latest rule that parsed. When the loop gives up
-	// on check problems, the latest attempt parsed, so it is that attempt's.
-	var lastUnused []UnusedValue
-	// What the rule reader is certain about must not fall out of the rule or turn
-	// around (LLM-1, D111). The model hears about it once, and never on its last
-	// attempt (a gap must not use up the attempts and block the rule); what is
-	// still missing after that becomes a warning on the audience step.
-	in := Analyze(text)
-	var lastGaps []Gap
-	gapsSent := false
-	attempt := 0
-	onAttempt := hooks.OnAttempt
-	hooks.OnAttempt = func(n, max int) {
-		attempt = n
-		if onAttempt != nil {
-			onAttempt(n, max)
-		}
-	}
-	rule, problems, err := ask(ctx, client, text, hooks, func(r segment.Rule) []string {
-		lastUnused = UnusedValues(text, r)
-		problems := append(Ground(text, r), unusedFeedback(lastUnused)...)
-		lastGaps = Gaps(in, r)
-		if len(lastGaps) > 0 && !gapsSent && attempt < MaxAttempts {
-			gapsSent = true
-			for _, g := range lastGaps {
-				problems = append(problems, g.Feedback)
-			}
-		}
-		return problems
-	})
-	if problems != nil {
-		if len(lastUnused) > 0 {
-			// The model never placed an amount of the brief: ask the person, with the choices.
-			return segment.Rule{Status: segment.StatusNeedsClarification, Conditions: []segment.Condition{},
-				Question: unusedQuestion(lastUnused), Offer: offer.Offer{Kind: offer.KindNone}}, nil
-		}
-		return unresolved(problems), nil
-	}
+func resolveModelDriven(ctx context.Context, client llm.Client, req llm.SegmentRequest, hooks llm.Hooks) (segment.Rule, error) {
+	rule, _, err := ask(ctx, client, req, hooks, nil)
 	if err != nil {
 		return rule, err
 	}
-	rule.Note, rule.Suggestion, rule.Warnings = "", "", nil
-	for _, g := range lastGaps { // the gaps of the rule that was accepted
-		rule.Warnings = append(rule.Warnings, g.Warning())
-	}
-	switch {
-	case rule.Status == segment.StatusOK && len(rule.Conditions) == 1 && rule.Conditions[0].Field == "all_customers" && !SaysEveryone(text):
-		// The model chose everyone although the brief does not say so (for example
-		// for a special day): the audience step says the audience was not given.
-		rule.Note = AudienceDefaultedNote
-	case rule.Status == segment.StatusNeedsClarification && strings.TrimSpace(rule.Question) == WhoQuestion:
-		rule.Suggestion = segment.SuggestAllCustomers
+	// Warnings were written by the removed brief checks; a model never writes them.
+	rule.Suggestion, rule.Warnings = "", nil
+	switch rule.Status {
+	case segment.StatusOK:
+		// The note is the model's own: an assumption it made, for example that the
+		// audience is everyone because the brief names none.
+	case segment.StatusNeedsClarification:
+		rule.Note = ""
+		// The prompt fixes this one question word for word; the screen then offers
+		// its one-click answer. This reads the model's answer, not the brief.
+		if strings.TrimSpace(rule.Question) == WhoQuestion {
+			rule.Suggestion = segment.SuggestAllCustomers
+		}
+	default:
+		rule.Note = ""
 	}
 	return rule, nil
 }
 
-// ask runs the ask-parse-check-repair loop. check returns the problems of a
-// rule that parsed; they are sent back to the model. When the model never
-// passes check, problems is the latest attempt's list (and err is nil).
-func ask(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, check func(segment.Rule) []string) (segment.Rule, []string, error) {
+// ask runs the ask-parse-check-repair loop. check (nil: none) returns the
+// problems of a rule that parsed; they are sent back to the model. When the
+// model never passes check, problems is the latest attempt's list (and err is
+// nil).
+func ask(ctx context.Context, client llm.Client, req llm.SegmentRequest, hooks llm.Hooks, check func(segment.Rule) []string) (segment.Rule, []string, error) {
 	var lastCoverage []string // check problems of the latest attempt (nil if it failed for another reason)
 	rule, err := llm.Repair(ctx, MaxAttempts,
 		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
 			lastCoverage = nil
-			return client.Segment(ctx, llm.SegmentRequest{Brief: text, Previous: prev})
+			req.Previous = prev
+			return client.Segment(ctx, req)
 		},
 		func(raw string) (segment.Rule, []string) {
 			lastCoverage = nil
@@ -152,6 +144,9 @@ func ask(ctx context.Context, client llm.Client, text string, hooks llm.Hooks, c
 			// The model must name the campaign (a stored rule may have no name).
 			if problems := segment.NameProblems(r.Name); len(problems) > 0 {
 				return r, problems
+			}
+			if check == nil {
+				return r, nil
 			}
 			if problems := check(r); len(problems) > 0 {
 				lastCoverage = problems

@@ -44,10 +44,12 @@ type rawRule struct {
 	Explanation string         `json:"explanation"`
 	Question    string         `json:"question"`
 	Offer       *offer.Offer   `json:"offer"`
-	// Note is not in the model's schema; it is accepted here because a stored
-	// rule (which code may have given a note) is parsed again at approval.
+	// Note is the model's own remark on an "ok" rule (an assumption it made,
+	// D113); in the mock's strict flow code writes it. A stored rule is parsed
+	// again at approval, so it is accepted here in both cases.
 	Note string `json:"note"`
-	// Warnings, like Note, are written by code and accepted from a stored rule.
+	// Warnings are only accepted from a rule stored before D113 (no new rule
+	// gets them).
 	Warnings []string `json:"warnings"`
 }
 
@@ -84,11 +86,12 @@ type Rule struct {
 	// the model.
 	Suggestion string `json:"suggestion,omitempty"`
 	// Note is a sentence the audience step shows next to an "ok" rule, for
-	// example why everyone was chosen. Set by code, never by the model.
+	// example why everyone was chosen. Strict (mock) mode: written by code from
+	// the brief. ModelDriven (Claude) mode: written by the model (D113).
 	Note string `json:"note,omitempty"`
 	// Warnings are shown on the audience step next to an "ok" rule without
-	// blocking it, for example a part of the brief the rule does not contain.
-	// Set by code, never by the model.
+	// blocking it. Kept for rules stored before D113, which removed the code
+	// checks that wrote them; no new rule gets them.
 	Warnings []string `json:"warnings,omitempty"`
 }
 

@@ -41,5 +41,6 @@ export async function requestJSON<T>(url: string, init?: RequestInit): Promise<T
   if (!res.ok) {
     throw await toApiError(res)
   }
+  if (res.status === 204) return undefined as T // no body (DELETE)
   return (await res.json()) as T
 }

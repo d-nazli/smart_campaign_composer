@@ -70,6 +70,16 @@ describe('CampaignTable', () => {
     expect(when).toMatch(/^\d{1,2} Ara \d{2}:\d{2}$/)
   })
 
+  it('lets a campaign that was never approved be deleted from its row (one waiting for an answer too)', async () => {
+    const waiting: CampaignSummary = { id: 5, brief: 'kış ürünleri', status: 'draft', segment_status: 'needs_clarification', created_at: '2026-11-16T10:00:00Z' }
+    const w = make([waiting, draft, sending, scheduled, failed])
+    const buttons = w.findAll('[data-testid="delete"]')
+    expect(buttons).toHaveLength(2) // the draft waiting for an answer and the segment_ready one
+    expect(buttons[0].attributes('aria-label')).toBe('#5 kampanyayı sil')
+    await buttons[0].trigger('click')
+    expect(w.emitted('remove')?.[0]?.[0]).toMatchObject({ id: 5 })
+  })
+
   it('lets a scheduled campaign be cancelled from its row, and only that one', async () => {
     const w = make([draft, sending, scheduled, failed])
     const buttons = w.findAll('[data-testid="cancel"]')

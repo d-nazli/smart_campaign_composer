@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	briefs "smartcampaign/internal/brief"
@@ -59,7 +60,7 @@ type Service struct {
 	policy content.Policy
 	log    *slog.Logger
 	// segmentMode says who understands the brief: the rule reader (Strict, the
-	// default and the mock's mode) or the real model (Grounded, D87).
+	// default and the mock's mode) or the real model (ModelDriven, D113).
 	segmentMode briefs.Mode
 }
 
@@ -89,14 +90,18 @@ type SegmentView struct {
 	// Suggestion is a one-click answer to Question (segment.SuggestAllCustomers).
 	Suggestion string `json:"suggestion,omitempty"`
 	// Note is a sentence shown with an ok audience, for example why everyone was
-	// chosen ("Kitle belirtilmediği için tüm müşteriler seçildi.").
+	// chosen ("Kitle belirtilmediği için tüm müşteriler seçildi."). Written by
+	// the rule reader (mock) or by the model itself (Claude, D113).
 	Note string `json:"note,omitempty"`
-	// Warnings are shown with an ok audience without blocking it, for example a
-	// part of the brief the rule does not contain (D111).
+	// Warnings are shown with an ok audience without blocking it. No new rule
+	// gets them since D113; rules stored before that may still carry them.
 	Warnings []string `json:"warnings,omitempty"`
 	// Locales is how many reachable people each locale has (for example
 	// {"tr-TR": 120, "en-GB": 45}); it is recounted when the audience is built.
 	Locales map[string]int `json:"locales,omitempty"`
+	// Clarifications are the model's questions about the brief and the
+	// person's answers, oldest first (absent when nothing was asked).
+	Clarifications []Clarification `json:"clarifications,omitempty"`
 }
 
 type ContentView struct {
@@ -203,51 +208,60 @@ func (s *Service) Create(ctx context.Context, brief string) (*View, error) {
 	if err != nil {
 		return nil, s.generationError(err, "Kitle kuralı üretilemedi")
 	}
+	if err := s.storeRule(ctx, s.pool, id, rule); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
 
+// storeRule writes the result of the segment step on the campaign. An "ok" rule
+// is compiled and its audience counted (status segment_ready); any other answer
+// keeps the campaign a draft with the question or the reason.
+func (s *Service) storeRule(ctx context.Context, db interface {
+	segment.Querier
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, id int64, rule segment.Rule) error {
+	ruleJSON, err := json.Marshal(rule)
+	if err != nil {
+		return err
+	}
 	if rule.Status != segment.StatusOK {
 		// The rule is stored too: a clarification can carry a one-click suggestion and
 		// the offer that WAS understood, which the screen shows next to the question.
-		ruleJSON, err := json.Marshal(rule)
-		if err != nil {
-			return nil, err
-		}
-		_, err = s.pool.Exec(ctx, `UPDATE campaigns SET segment_status=$2, explanation=$3, question=$4, segment_rule=$5, name=$6, updated_at=now() WHERE id=$1`,
+		_, err = db.Exec(ctx, `UPDATE campaigns SET status='draft', segment_status=$2, explanation=$3, question=$4, segment_rule=$5, name=$6,
+		       matched=NULL, sms_reachable=NULL, email_reachable=NULL, both_reachable=NULL, locale_counts=NULL, updated_at=now() WHERE id=$1`,
 			id, rule.Status, rule.Explanation, rule.Question, ruleJSON, rule.Name)
 		if err != nil {
-			return nil, fmt.Errorf("store segment status: %w", err)
+			return fmt.Errorf("store segment status: %w", err)
 		}
-		return s.Get(ctx, id)
+		return nil
 	}
 
 	compiled, err := segment.Compile(rule, time.Now())
 	if err != nil {
-		return nil, fmt.Errorf("compile validated rule: %w", err) // a bug, not a user error
+		return fmt.Errorf("compile validated rule: %w", err) // a bug, not a user error
 	}
-	aud, err := segment.CountAudience(ctx, s.pool, compiled)
+	aud, err := segment.CountAudience(ctx, db, compiled)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	counts, err := segment.CountByLocale(ctx, s.pool, compiled)
+	counts, err := segment.CountByLocale(ctx, db, compiled)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	countsJSON, err := json.Marshal(counts)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	ruleJSON, err := json.Marshal(rule)
-	if err != nil {
-		return nil, err
-	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = db.Exec(ctx, `
 		UPDATE campaigns SET status='segment_ready', segment_status='ok', segment_rule=$2, explanation=$3, question='',
 		       matched=$4, sms_reachable=$5, email_reachable=$6, both_reachable=$7, locale_counts=$8, name=$9, updated_at=now()
 		WHERE id=$1`,
 		id, ruleJSON, rule.Explanation, aud.Matched, aud.SMSReachable, aud.EmailReachable, aud.BothReachable, countsJSON, rule.Name)
 	if err != nil {
-		return nil, fmt.Errorf("store segment: %w", err)
+		return fmt.Errorf("store segment: %w", err)
 	}
-	return s.Get(ctx, id)
+	return nil
 }
 
 // ---- read -----------------------------------------------------------------
@@ -272,6 +286,7 @@ type campaignRow struct {
 	scheduledAt    *time.Time
 	scheduleError  string
 	createdAt      time.Time
+	clarifications []Clarification
 }
 
 func (s *Service) loadRow(ctx context.Context, q interface {
@@ -281,11 +296,11 @@ func (s *Service) loadRow(ctx context.Context, q interface {
 	err := q.QueryRow(ctx, `
 		SELECT id, brief, name, status, segment_status, segment_rule, explanation, question,
 		       matched, sms_reachable, email_reachable, both_reachable, locale_counts, variant_counts, scheduled_at, schedule_error, created_at,
-		       approved_sms, approved_email
+		       approved_sms, approved_email, clarifications
 		FROM campaigns WHERE id=$1`, id).
 		Scan(&r.id, &r.brief, &r.name, &r.status, &r.segmentStatus, &r.segmentRule, &r.explanation, &r.question,
 			&r.matched, &r.smsReachable, &r.emailReachable, &r.bothReachable, &r.localeCounts, &r.variantCounts, &r.scheduledAt, &r.scheduleError, &r.createdAt,
-			&r.approvedSMS, &r.approvedEmail)
+			&r.approvedSMS, &r.approvedEmail, &r.clarifications)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -294,6 +309,10 @@ func (s *Service) loadRow(ctx context.Context, q interface {
 	}
 	return &r, nil
 }
+
+// messageBrief is the brief the message step reads: the brief with the
+// person's answers to the audience questions.
+func (r *campaignRow) messageBrief() string { return briefs.WithAnswers(r.brief, llmClarifications(r.clarifications)) }
 
 // Get returns the campaign with its segment and content.
 func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
@@ -314,6 +333,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*View, error) {
 			sv.Match, sv.Conditions, sv.Offer, sv.Suggestion, sv.Note = stored.Match, stored.Conditions, stored.Offer.Normalize(), stored.Suggestion, stored.Note
 			sv.Warnings = stored.Warnings
 		}
+		sv.Clarifications = r.clarifications
 		if r.matched != nil {
 			sv.Audience = &segment.Audience{Matched: *r.matched, SMSReachable: *r.smsReachable,
 				EmailReachable: *r.emailReachable, BothReachable: *r.bothReachable}

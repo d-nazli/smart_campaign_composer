@@ -41,12 +41,14 @@ make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan 
 - `ANTHROPIC_API_KEY` boş → **mock LLM** (varsayılan; anahtar gerekmez). Anahtarı `.env`'ye yazıp
   `docker compose up -d api` ile yeniden başlatırsanız kod değişikliği olmadan **gerçek Claude** kullanılır
   (`CLAUDE_MODEL`, varsayılan `claude-sonnet-5-5`). Aktif mod açılış logunda ve arayüzün sağ üstündeki rozette görünür.
-- **Brief'i kim anlıyor?** Gerçek Claude modunda brief'i Claude yorumlar ve kitleyi çıkarır. Kod yalnız nesnel kontrol
-  yapar: şema/beyaz liste ve SQL güvenliği, teklifin mantıklı olması ve Claude'un yazdığı şehir, sayı, tutar, kod ve
-  tarihin brief'te gerçekten geçmesi (uydurma onarıma gönderilir, sürerse sorulur). Ters yönde de: brief'teki her TL
-  tutarı ve yüzde kuralda ya da teklifte bir yere oturmalı; oturmazsa Claude'a geri gönderilir, sürerse "1000 TL ne için:
-  minimum sepet mi, üst sınır mı…?" diye sorulur (tarihler ve özel gün ifadeleri sayılmaz, D89). Mock modunda brief'i kural okuyucusu
-  anlar (`brief.Analyze`): tanımadığı ya da belirsiz bulduğu ifadeyi sorar (DECISIONS.md D87).
+- **Brief'i kim anlıyor?** Gerçek Claude modunda (`brief.ModelDriven`) brief'in tamamını Claude yorumlar ve segment
+  koşullarına çevirir; anlayamadığını uydurmaz, `needs_clarification` ile sorar ya da `unsupported` der. Kod brief'i
+  okumaz, Claude'un kuralını brief'le karşılaştırmaz; yalnız teknik doğrulama yapar: JSON şeması, alan/operatör beyaz
+  listesi, değer tipi ve aralığı, iş kuralları (koşul sayısı, `all_customers` tek başına, teklifin kendi içinde tutarlı
+  olması, kampanya adı) ve parametreli SQL. Teknik hata Claude'a onarım için geri gider (3 deneme). Geçerli kural SQL'e
+  derlenir, kitle tam sayılır ve özet + koşullar + kişi sayısı onaya sunulur; onaydan önce hiçbir gönderim kuyruğa
+  girmez (DECISIONS.md D113). Mock modunda brief'i kural okuyucusu anlar (`brief.Analyze`, `brief.Strict`): tanımadığı
+  ya da belirsiz bulduğu ifadeyi sorar (D87).
 - `make test` **her zaman mock** ile çalışır; `.env`'de anahtar olsa bile okunmaz, internet gerekmez.
 - Veritabanı testleri `TEST_DATABASE_URL` ister (compose verir). Host'ta düz `go test` bu yüzden hata verir; yalnız
   veritabanı gerektirmeyen testler için `SKIP_DB_TESTS=1 go test ./...`.
@@ -166,6 +168,16 @@ söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
   bankalarından adaylar üretip brief'e göre farklı bir noktadan başlar ve backend kontrollerinden geçen ilk adayı seçer:
   aynı brief hep aynı metni, farklı brief farklı metni alır; 160/80 sınırı ve teklifin her parçası korunur.
 
+## Kitle sorusu ve cevap
+
+- Model kitleyi brief'ten çıkaramazsa soru sorar (`needs_clarification`; listede "Soru bekliyor"). Cevap kitle kartındaki
+  kutudan ya da "Tüm müşterilere gönder" düğmesinden **aynı kampanyaya** gider (`POST /api/campaigns/{id}/clarify`,
+  `{"answer": "..."}`): kitle brief + tüm cevaplarla yeniden çözülür, kampanya `segment_ready` olur ya da model yeniden
+  sorar. Yeni kampanya açılmaz, brief yazıldığı gibi kalır; soru ve cevaplar kampanyada saklanır ve kitle kartında
+  "Soru: … / Cevap: …" olarak görünür. Yalnız soru bekleyen kampanyaya cevap verilebilir (aksi 409); en fazla 5 cevap.
+- Baştan başlamak isteyen yeni brief yazar; eski kampanya listede kalır. Onaylanmamış her kampanya listeden **silinebilir**
+  (`DELETE /api/campaigns/{id}`, onaydan sonra 409). Ayrıntı: DECISIONS.md D114.
+
 ## Zamanlanmış gönderim (bonus)
 
 - Onay ekranında **Hemen** ya da **İleri bir zamanda** seçilir (en az 1 dakika, en fazla 30 gün sonrası). Hemen gönderimde
@@ -225,20 +237,16 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
   `yıl-ay-gün` ve "31 Aralık 2026" yazımları tanınır, yılsız tarih sorulur. Kodun tanımadığı bir kitle sıfatı ("VIP
   müşteriler") "kime gönderilsin?" sorusu alır. Ayrıntı: DECISIONS.md D62–D65.
 
-- **Yazım hatası "satın almama" koşulunu düşürebilir.** Brief'teki kitle ifadeleri (ör. "sipariş oluşturmamış") bilinen
-  kalıplarla okunur. Kalıp tanındığında gerçek Claude modunda da kural buna karşı denetlenir (D111): "alışveriş
-  yapmayan" kuraldan düşerse ya da ters çevrilirse Claude'a bir kez geri bildirim gider; yine eksikse kural kullanılır
-  ama kitle kartında "Brief'te … var, kuralda yok. Kitle beklediğinden geniş olabilir." uyarısı çıkar. Sözlükte olmayan
-  bir yazım ("oluşturmmaış") ise tanınmaz, uyarı da çıkmaz. Kampanyayı onaylamadan önce kitle kartındaki koşulları
-  kontrol edin. Açık iş olarak PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
+- **Mock modunda yazım hatası "satın almama" koşulunu düşürebilir.** Mock'un kural okuyucusu kitle ifadelerini (ör.
+  "sipariş oluşturmamış") bilinen kalıplarla okur; sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz. Açık iş olarak
+  PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
 - Mock modunda desteklenmeyen kısıtlar (yaş, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen
   hafta") sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
   Sözlükte hiç olmayan bir kısıt ise mock'ta fark edilmeyebilir.
-- **Gerçek Claude modunda kitle yorumu Claude'a aittir** (D87). Kod Claude'un brief'te olmayan bir şehir, sayı, tutar,
-  kod ya da tarih uydurmasını yakalar. Kodun emin okuduğu şehir, satın alma durumu ve gün sayısının (yönüyle) kuraldan
-  düşmesini ya da ters çevrilmesini de yakalar ve uyarı gösterir (D111); bunların dışındaki bir yanlış anlamayı yakalamaz,
-  Claude'un eklediği fazladan koşula da karışmaz. Onaydan önce kitle kartındaki koşul rozetlerini ve kişi sayısını
-  kontrol edin.
+- **Gerçek Claude modunda kitle yorumu yalnız Claude'a aittir** (D113). Kod Claude'un yanlış anlamasını, atladığı ya da
+  ters çevirdiği bir koşulu veya brief'te olmayan bir değeri anlamsal olarak yakalamaz; bu kontroller bilerek kaldırıldı
+  (regex/sözlük kontrolü dilin zenginliğinin gerisinde kalıyordu; yerine ikinci bir NLP katmanı ya da ikinci LLM çağrısı
+  eklenmedi). Güvence insan onayıdır: kitle kartındaki özet, koşul rozetleri ve kişi sayısı onaydan önce kontrol edilmeli.
 
 ## Seed verisi hakkında notlar
 

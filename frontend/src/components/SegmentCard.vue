@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { AlertCircle, HelpCircle, Mail, MessageSquare } from 'lucide-vue-next'
 import type { LocaleInfo, Segment } from '../types'
 import { funnel } from '../utils/funnel'
@@ -16,8 +16,18 @@ import StatTile from './ui/StatTile.vue'
 // The audience step. A usable rule: the rule, the reach per channel, the offer and the
 // locales on the left; the estimated audience as one figure with a bar in the right rail.
 // A question from the model: the AI surface with a one-click answer when there is one.
+// An answer to the question goes back to the same campaign (the parent sends it); the
+// questions asked so far and their answers are listed with the audience and the question.
 const props = defineProps<{ segment: Segment; busy?: boolean; locales?: LocaleInfo[] }>()
-const emit = defineEmits<{ (e: 'send-to-all'): void }>()
+const emit = defineEmits<{ (e: 'send-to-all'): void; (e: 'answer', text: string): void }>()
+const answer = ref('')
+const ANSWER_MAX = 500
+const canAnswer = computed(() => !props.busy && answer.value.trim().length > 0)
+function sendAnswer() {
+  if (!canAnswer.value) return
+  emit('answer', answer.value.trim())
+}
+const history = computed(() => props.segment.clarifications ?? [])
 
 const chips = computed(() => props.segment.conditions.map(describeCondition))
 const joiner = computed(() => (props.segment.match === 'any' ? 'veya' : 've'))
@@ -36,6 +46,16 @@ const unreachableText = computed(() => (f.value && f.value.unreachable > 0 ? `${
         <p class="explanation">{{ sentenceCase(segment.explanation) }}</p>
         <p v-if="segment.note" class="notice info" role="note" data-testid="audience-note">{{ segment.note }}</p>
         <p v-for="w in segment.warnings ?? []" :key="w" class="notice warn" role="note" data-testid="audience-warning">{{ w }}</p>
+
+        <section v-if="history.length" data-testid="clarifications">
+          <h3 class="label">Soru ve cevaplar</h3>
+          <ol class="qa">
+            <li v-for="(c, i) in history" :key="i" class="qa__item">
+              <p><span class="qa__k">Soru:</span> {{ c.question }}</p>
+              <p><span class="qa__k">Cevap:</span> {{ c.answer }}</p>
+            </li>
+          </ol>
+        </section>
 
         <section v-if="chips.length">
           <h3 class="label">Kural</h3>
@@ -114,12 +134,32 @@ const unreachableText = computed(() => (f.value && f.value.unreachable > 0 ? `${
 
   <section v-else-if="segment.status === 'needs_clarification'" id="step-audience" class="ask" role="status">
     <p class="ask__title"><HelpCircle :size="18" aria-hidden="true" />Biraz daha bilgi lazım</p>
-    <p class="ask__text">{{ segment.question }}</p>
+    <ol v-if="history.length" class="qa" data-testid="clarifications">
+      <li v-for="(c, i) in history" :key="i" class="qa__item">
+        <p><span class="qa__k">Soru:</span> {{ c.question }}</p>
+        <p><span class="qa__k">Cevap:</span> {{ c.answer }}</p>
+      </li>
+    </ol>
+    <p class="ask__text" data-testid="question">{{ segment.question }}</p>
     <p v-if="hasOffer" class="understood" data-testid="offer"><span class="chip ai">Anladığım teklif</span> {{ offerText }}</p>
     <div v-if="segment.suggestion === 'all_customers'" class="ask__option">
       <strong>Tüm müşteriler</strong>
       <Button variant="primary" :disabled="busy" data-testid="send-to-all" @click="emit('send-to-all')">Tüm müşterilere gönder</Button>
     </div>
+    <form class="ask__answer" @submit.prevent="sendAnswer">
+      <label for="answer" class="label">Cevabınız</label>
+      <textarea
+        id="answer"
+        v-model="answer"
+        rows="2"
+        :maxlength="ANSWER_MAX"
+        :disabled="busy"
+        placeholder="Soruyu kendi cümlelerinizle cevaplayın…"
+        data-testid="answer"
+        @keydown.ctrl.enter="sendAnswer"
+      />
+      <Button type="submit" :variant="segment.suggestion === 'all_customers' ? 'secondary' : 'primary'" :disabled="!canAnswer" data-testid="send-answer">Cevapla</Button>
+    </form>
   </section>
 
   <Card v-else-if="segment.status === 'unsupported'" id="step-audience" title="Kitle">
@@ -279,6 +319,44 @@ dd {
 .ask__option > :last-child {
   margin-left: auto;
 }
+.ask__answer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--s-2) var(--s-3);
+}
+.ask__answer .label {
+  grid-column: 1 / -1;
+}
+.ask__answer textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+.qa {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.qa__item {
+  padding: var(--s-2) var(--s-3);
+  border-left: 3px solid var(--ai-chip-bg);
+}
+.qa__item p {
+  margin: 0;
+}
+.qa__k {
+  color: var(--muted);
+  font-weight: 600;
+}
 .bad {
   padding-left: var(--s-4);
   border-left: 3px solid var(--error);
@@ -311,6 +389,9 @@ dd {
   .ask__option > :last-child {
     width: 100%;
     margin-left: 0;
+  }
+  .ask__answer {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

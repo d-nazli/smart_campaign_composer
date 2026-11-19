@@ -125,12 +125,21 @@ export interface Segment {
   offer?: Offer
   /** A one-click answer to `question`: "all_customers" offers the "send to all" button. */
   suggestion?: 'all_customers'
-  /** A sentence shown with an ok audience, e.g. why everyone was chosen. Set by the backend, never by the model. */
+  /** A sentence shown with an ok audience, e.g. why everyone was chosen (the rule reader's or the model's). */
   note?: string
   /** How many reachable people each locale has, e.g. {"tr-TR": 120, "en-GB": 45}. */
   locales?: Record<LocaleCode, number>
-  /** Parts of the brief the rule leaves out or turns around; shown, never blocking. Set by the backend. */
+  /** Warnings stored with older rules (no new rule gets them); shown, never blocking. */
   warnings?: string[]
+  /** The model's questions about the brief and the person's answers, oldest first. */
+  clarifications?: Clarification[]
+}
+
+/** One audience question the model asked and the answer the person gave. */
+export interface Clarification {
+  question: string
+  answer: string
+  answered_at: string
 }
 
 export type ContentSource = 'llm' | 'fallback' | 'edited' | 'translated'

@@ -62,12 +62,13 @@ func main() {
 	defer pool.Close()
 
 	svc := campaign.NewService(pool, client, policy, log)
-	// The real model understands the brief itself and code checks it objectively
-	// (D87); the mock is the rule reader, so it keeps the strict flow.
+	// The real model reads the brief and writes the conditions itself; code only
+	// validates them technically (D113). The mock is the rule reader, so it keeps
+	// the strict flow.
 	if cfg.Mode == "claude" {
-		svc.UseSegmentMode(brief.Grounded)
+		svc.UseSegmentMode(brief.ModelDriven)
 	}
-	log.Info("segment mode", "grounded", cfg.Mode == "claude")
+	log.Info("segment mode", "model_driven", cfg.Mode == "claude")
 	handler := httpapi.New(svc, httpapi.Info{LLMMode: cfg.Mode, Model: cfg.Model, WorkerHealthURL: os.Getenv("WORKER_HEALTH_URL")}, pool.Ping, metrics.New(pool).Handler(), log)
 
 	srv := &http.Server{

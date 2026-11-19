@@ -42,8 +42,18 @@ type Attempt struct {
 
 type SegmentRequest struct {
 	Brief string
+	// Clarifications are the model's earlier questions about this brief and the
+	// person's answers, oldest first (empty for a new brief).
+	Clarifications []Clarification
 	// Previous holds the last rejected attempt (empty on the first try).
 	Previous []Attempt
+}
+
+// Clarification is one question the model asked about a brief and the answer
+// the person gave.
+type Clarification struct {
+	Question string
+	Answer   string
 }
 
 type MessageRequest struct {

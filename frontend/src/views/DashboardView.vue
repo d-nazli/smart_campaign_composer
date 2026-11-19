@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Inbox, Plus } from 'lucide-vue-next'
 import type { AppInfo } from '../api/info'
-import { cancelCampaign, listCampaigns } from '../api/campaigns'
+import { cancelCampaign, deleteCampaign, listCampaigns } from '../api/campaigns'
 import type { CampaignSummary } from '../types'
 import { healthWord, type HealthItem } from '../utils/health'
 import { briefTitle } from '../utils/dashboard'
@@ -73,6 +73,33 @@ onBeforeUnmount(() => {
   if (timer !== null) window.clearInterval(timer)
 })
 
+// Deleting a campaign that was never approved asks first, like cancelling.
+const toDelete = ref<CampaignSummary | null>(null)
+const deleting = ref(false)
+const deleteError = ref<string | null>(null)
+const askDelete = computed({
+  get: () => toDelete.value !== null,
+  set: (open: boolean) => {
+    if (!open) toDelete.value = null
+  },
+})
+async function confirmDelete() {
+  const c = toDelete.value
+  if (!c || deleting.value) return
+  deleting.value = true
+  deleteError.value = null
+  try {
+    await deleteCampaign(c.id)
+  } catch (e) {
+    deleteError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    deleting.value = false
+    toDelete.value = null
+  }
+  await refresh()
+}
+const deleteText = computed(() => (toDelete.value ? `“${briefTitle(toDelete.value.name || toDelete.value.brief, 60)}” ve metinleri silinir. Bu geri alınamaz.` : ''))
+
 const newCampaign = () => (window.location.hash = '#/')
 </script>
 
@@ -88,6 +115,7 @@ const newCampaign = () => (window.location.hash = '#/')
 
     <p v-if="error" class="notice error" role="alert">Liste güncellenemedi ({{ error }}). Gösterilen bilgi eski olabilir.</p>
     <p v-if="cancelError" class="notice error" role="alert" data-testid="cancel-error">Gönderim iptal edilemedi: {{ cancelError }}</p>
+    <p v-if="deleteError" class="notice error" role="alert" data-testid="delete-error">Kampanya silinemedi: {{ deleteError }}</p>
 
     <p v-if="campaigns === null && !error" class="muted">Yükleniyor…</p>
     <div v-else-if="campaigns && campaigns.length === 0" class="empty" data-testid="empty">
@@ -96,12 +124,19 @@ const newCampaign = () => (window.location.hash = '#/')
       <Button variant="cta" :icon="Plus" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
-    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :locales="info?.locales" @cancel="toCancel = $event" />
+    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :locales="info?.locales" @cancel="toCancel = $event" @remove="toDelete = $event" />
 
     <Modal v-model="askCancel" title="Zamanlanmış gönderim iptal edilsin mi?" :description="cancelText">
       <template #footer>
         <Button variant="ghost" :disabled="cancelling" @click="toCancel = null">Vazgeç</Button>
         <Button variant="danger" :loading="cancelling" data-testid="confirm-cancel" @click="confirmCancel">Gönderimi iptal et</Button>
+      </template>
+    </Modal>
+
+    <Modal v-model="askDelete" title="Kampanya silinsin mi?" :description="deleteText">
+      <template #footer>
+        <Button variant="ghost" :disabled="deleting" @click="toDelete = null">Vazgeç</Button>
+        <Button variant="danger" :loading="deleting" data-testid="confirm-delete" @click="confirmDelete">Sil</Button>
       </template>
     </Modal>
   </section>

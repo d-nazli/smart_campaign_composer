@@ -17,6 +17,11 @@
 // The lexicon is deliberately limited to what the data model can express. It
 // is a safety net, not a language model: words it does not know are caught by
 // the model's own "unsupported" judgement and by the unknown-negation check.
+//
+// All of this is the mock LLM's flow (Strict). With the real model
+// (ModelDriven, D113) the segment step does not read the brief with code at
+// all: Claude interprets it and only the technical checks of segment.Parse
+// apply (see resolve.go).
 package brief
 
 import (

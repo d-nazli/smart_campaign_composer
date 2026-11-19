@@ -10,6 +10,7 @@ import type { Campaign, StoredContent } from '../types'
 
 const api = {
   createCampaign: vi.fn(),
+  clarifyCampaign: vi.fn(),
   getCampaign: vi.fn(),
   saveContent: vi.fn(),
   translateCampaign: vi.fn(),
@@ -17,6 +18,7 @@ const api = {
 }
 vi.mock('../api/campaigns', () => ({
   createCampaign: (...a: unknown[]) => api.createCampaign(...a),
+  clarifyCampaign: (...a: unknown[]) => api.clarifyCampaign(...a),
   getCampaign: (...a: unknown[]) => api.getCampaign(...a),
   saveContent: (...a: unknown[]) => api.saveContent(...a),
   translateCampaign: (...a: unknown[]) => api.translateCampaign(...a),
@@ -196,6 +198,92 @@ describe('the campaign wizard, from the brief to sending', () => {
     // 5 · Sending
     expect(step()).toBe('Gönderim')
     expect(w.text()).toContain('SMS · gönderilen')
+  })
+
+  it('a question is answered on the same campaign: no new campaign, the history is shown', async () => {
+    const QUESTION = 'Bu kampanya kime gönderilsin? Tüm müşterilere mi?'
+    const asking: Campaign = {
+      id: 9,
+      brief: 'Kış ürünlerinde 200 TL indirim',
+      name: 'Kış ürünleri · 200 TL',
+      status: 'draft',
+      source_locale: 'tr-TR',
+      locales: ['tr-TR'],
+      segment: { status: 'needs_clarification', conditions: [], explanation: '', question: QUESTION, suggestion: 'all_customers' },
+      created_at: '',
+    }
+    const qa = (answer: string) => [{ question: QUESTION, answer, answered_at: '2026-11-19T10:00:00Z' }]
+    const askedAgain: Campaign = { ...asking, segment: { ...asking.segment!, question: 'Hangi şehirdeki müşteriler?', suggestion: undefined, clarifications: qa('bilmiyorum') } }
+    const answered: Campaign = {
+      ...segmentReady,
+      id: 9,
+      brief: asking.brief,
+      segment: {
+        ...segmentReady.segment!,
+        explanation: "Ankara'daki müşteriler",
+        clarifications: [...qa('bilmiyorum'), { question: 'Hangi şehirdeki müşteriler?', answer: "Ankara'dakilere", answered_at: '2026-11-19T10:01:00Z' }],
+      },
+    }
+
+    w = mount(ComposeView, { props: { info }, attachTo: document.body })
+    await flushPromises()
+    api.createCampaign.mockResolvedValue(asking)
+    await w.get('#brief').setValue(asking.brief)
+    await primary().trigger('click')
+    await flushPromises()
+    expect(step()).toBe('Kitle')
+    expect(q('question').text()).toBe(QUESTION)
+
+    // A typed answer that is not enough: the same campaign asks again, with the history.
+    api.clarifyCampaign.mockResolvedValue(askedAgain)
+    await w.get('[data-testid="answer"]').setValue('bilmiyorum')
+    await w.get('[data-testid="send-answer"]').trigger('click')
+    await flushPromises()
+    expect(api.clarifyCampaign).toHaveBeenLastCalledWith(9, 'bilmiyorum')
+    expect(q('question').text()).toBe('Hangi şehirdeki müşteriler?')
+    expect(q('clarifications').findAll('p').map((p) => p.text())).toEqual([`Soru: ${QUESTION}`, 'Cevap: bilmiyorum'])
+    expect((w.get('[data-testid="answer"]').element as HTMLTextAreaElement).value).toBe('') // a fresh box for the new question
+
+    // The second answer resolves the audience on campaign 9.
+    api.clarifyCampaign.mockResolvedValue(answered)
+    await w.get('[data-testid="answer"]').setValue("Ankara'dakilere")
+    await w.get('[data-testid="send-answer"]').trigger('click')
+    await flushPromises()
+    expect(api.clarifyCampaign).toHaveBeenLastCalledWith(9, "Ankara'dakilere")
+    expect(api.createCampaign).toHaveBeenCalledTimes(1) // the bug: an answer used to create a second campaign
+    expect(window.location.search).toBe('?c=9')
+    expect(w.get('#step-audience').text()).toContain("Ankara'daki müşteriler")
+    expect(q('clarifications').text()).toContain("Cevap: Ankara'dakilere")
+    expect(primary().text()).toBe('Mesajları üret')
+  })
+
+  it('"Tüm müşterilere gönder" answers the same campaign; a 409 shows where it stands', async () => {
+    const asking: Campaign = {
+      id: 10,
+      brief: '%10 indirim gönder',
+      status: 'draft',
+      source_locale: 'tr-TR',
+      locales: ['tr-TR'],
+      segment: { status: 'needs_clarification', conditions: [], explanation: '', question: 'Bu kampanya kime gönderilsin? Tüm müşterilere mi?', suggestion: 'all_customers' },
+      created_at: '',
+    }
+    w = mount(ComposeView, { props: { info }, attachTo: document.body })
+    await flushPromises()
+    api.createCampaign.mockResolvedValue(asking)
+    await w.get('#brief').setValue(asking.brief)
+    await primary().trigger('click')
+    await flushPromises()
+
+    const { ApiError } = await import('../api/http')
+    api.clarifyCampaign.mockRejectedValue(new ApiError(409, 'invalid_state', 'yalnızca soru bekleyen kampanyaya cevap verilebilir'))
+    api.getCampaign.mockResolvedValue({ ...segmentReady, id: 10 })
+    await w.get('[data-testid="send-to-all"]').trigger('click')
+    await flushPromises()
+    expect(api.clarifyCampaign).toHaveBeenCalledWith(10, 'Tüm müşterilere gönder.')
+    expect(api.createCampaign).toHaveBeenCalledTimes(1)
+    expect(q('answer-error').text()).toContain('yalnızca soru bekleyen')
+    expect(api.getCampaign).toHaveBeenCalledWith(10)
+    expect(w.get('#step-audience').text()).toContain('Son 30 günde sepete ekleyip almayanlar')
   })
 })
 

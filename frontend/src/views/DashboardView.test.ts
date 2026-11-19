@@ -5,7 +5,12 @@ import type { CampaignSummary } from '../types'
 
 const list = vi.fn()
 const cancel = vi.fn()
-vi.mock('../api/campaigns', () => ({ listCampaigns: (...a: unknown[]) => list(...a), cancelCampaign: (...a: unknown[]) => cancel(...a) }))
+const remove = vi.fn()
+vi.mock('../api/campaigns', () => ({
+  listCampaigns: (...a: unknown[]) => list(...a),
+  cancelCampaign: (...a: unknown[]) => cancel(...a),
+  deleteCampaign: (...a: unknown[]) => remove(...a),
+}))
 vi.mock('../api/system', () => ({ fetchSystem: () => Promise.resolve({ api: 'ok', database: 'ok', worker: 'ok' }) }))
 
 import DashboardView from './DashboardView.vue'
@@ -29,6 +34,8 @@ const byTestId = (id: string) => document.body.querySelector(`[data-testid="${id
 beforeEach(() => {
   list.mockReset()
   cancel.mockReset()
+  remove.mockReset()
+  remove.mockResolvedValue(undefined)
   list.mockResolvedValue([scheduled, sending])
   cancel.mockResolvedValue({})
 })
@@ -78,6 +85,35 @@ describe('DashboardView', () => {
     }
     const doneCell = v.findAll('td.progress').find((c) => c.text().includes('848'))!
     expect(doneCell.text().replace(/\s+/g, ' ')).toBe('848 / 855 · 7 başarısız')
+  })
+
+  it('deletes a campaign left waiting for an answer, after asking, and refreshes the list', async () => {
+    const waiting: CampaignSummary = { id: 11, brief: 'kış ürünleri', name: 'Ankara kış ürünleri · 200 TL', status: 'draft', segment_status: 'needs_clarification', created_at: '2026-11-16T10:00:00Z' }
+    list.mockResolvedValue([waiting, scheduled])
+    const v = await mountIt()
+    await v.get('[data-testid="delete"]').trigger('click')
+    await flushPromises()
+    expect(dialog()?.textContent).toContain('Kampanya silinsin mi?')
+    expect(dialog()?.textContent).toContain('Ankara kış ürünleri · 200 TL')
+    expect(remove).not.toHaveBeenCalled()
+    list.mockResolvedValue([scheduled])
+    byTestId('confirm-delete')!.click()
+    await flushPromises()
+    expect(remove).toHaveBeenCalledWith(11)
+    expect(v.findAll('tbody tr')).toHaveLength(1)
+    expect(dialog()).toBeNull()
+  })
+
+  it('says so when the server refuses the deletion', async () => {
+    const waiting: CampaignSummary = { id: 12, brief: 'x', status: 'draft', segment_status: 'needs_clarification', created_at: '2026-11-16T10:00:00Z' }
+    list.mockResolvedValue([waiting])
+    remove.mockRejectedValue(new Error('kampanya "approved" durumunda; yalnızca onaylanmamış kampanya silinebilir'))
+    const v = await mountIt()
+    await v.get('[data-testid="delete"]').trigger('click')
+    await flushPromises()
+    byTestId('confirm-delete')!.click()
+    await flushPromises()
+    expect(v.get('[data-testid="delete-error"]').text()).toContain('Kampanya silinemedi')
   })
 
   it('shows an empty state with a way to start when there are no campaigns', async () => {

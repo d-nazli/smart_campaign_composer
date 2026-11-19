@@ -49,7 +49,7 @@ func (c *Client) Segment(ctx context.Context, req llm.SegmentRequest) (llm.Outpu
 		llm.SegmentSystemPrompt(),
 		segment.JSONSchema(),
 		sdk.OutputConfigEffortLow, // extraction: little reasoning needed
-		conversation(llm.SegmentUserPrompt(req.Brief), req.Previous),
+		conversation(llm.SegmentUserPrompt(req.Brief, req.Clarifications...), req.Previous),
 	)
 	msg, err := c.api.Messages.New(ctx, params)
 	if err != nil {

@@ -32,6 +32,19 @@ export function approveCampaign(id: number, scheduledAt?: string): Promise<Appro
   return requestJSON<ApproveResult>(`/api/campaigns/${id}/approve`, init)
 }
 
+/**
+ * Answers the audience question of a campaign that waits for one: the audience is resolved
+ * again on the SAME campaign (no new campaign). Refused (409) when it waits for no answer.
+ */
+export function clarifyCampaign(id: number, answer: string): Promise<Campaign> {
+  return requestJSON<Campaign>(`/api/campaigns/${id}/clarify`, { method: 'POST', body: JSON.stringify({ answer }) })
+}
+
+/** Deletes a campaign that was never approved. Refused (409) once it is approved. */
+export function deleteCampaign(id: number): Promise<void> {
+  return requestJSON<void>(`/api/campaigns/${id}`, { method: 'DELETE' })
+}
+
 /** Cancels a scheduled campaign that has not started. Refused (409) once it has started. */
 export function cancelCampaign(id: number): Promise<Campaign> {
   return requestJSON<Campaign>(`/api/campaigns/${id}/cancel`, { method: 'POST' })

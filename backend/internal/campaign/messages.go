@@ -230,7 +230,7 @@ func (s *Service) GenerateVariant(ctx context.Context, id int64, variant string,
 	// What the text is checked against: whether the brief allows time pressure
 	// or a stock claim, and the other variant (B always has A; A has B when B
 	// was written first and A is written again).
-	chk := genCheck{locale: src, deadline: briefs.HasDeadline(row.brief, promised.ExpiresAt), stock: briefs.MentionsStock(row.brief)}
+	chk := genCheck{locale: src, deadline: briefs.HasDeadline(row.messageBrief(), promised.ExpiresAt), stock: briefs.MentionsStock(row.messageBrief())}
 	if other, ok := stored[otherVariant(variant)][src.Code]; ok {
 		chk.other, chk.otherApproach = &other.Content, other.Approach
 	} else if variant == VariantB {
@@ -366,8 +366,8 @@ func (s *Service) generateSource(ctx context.Context, id int64, row *campaignRow
 		func(ctx context.Context, prev []llm.Attempt, _ int) (llm.Output, error) {
 			scanner = llm.NewFieldStream(content.FieldSMSBody, content.FieldEmailSubject, content.FieldEmailBody)
 			return s.llm.Messages(ctx, llm.MessageRequest{
-				Brief: row.brief, Explanation: row.explanation, Offer: promised, Policy: s.policy, Previous: prev,
-				Locale: src, Theme: briefs.ThemeOf(row.brief, src.Lang()), Variant: variant,
+				Brief: row.messageBrief(), Explanation: row.explanation, Offer: promised, Policy: s.policy, Previous: prev,
+				Locale: src, Theme: briefs.ThemeOf(row.messageBrief(), src.Lang()), Variant: variant,
 				Avoid: chk.other, AvoidApproach: chk.otherApproach, Deadline: chk.deadline,
 			}, deltas(scanner, src.Code, ev))
 		},
@@ -467,7 +467,7 @@ func (s *Service) translateOne(ctx context.Context, id int64, row *campaignRow, 
 			scanner = llm.NewFieldStream(content.FieldSMSBody, content.FieldEmailSubject, content.FieldEmailBody)
 			return s.llm.Translate(ctx, llm.TranslateRequest{
 				Source: src, SourceLocale: srcLocale, Target: target, Policy: s.policy, Previous: prev,
-				Brief: row.brief, Offer: promised, Theme: briefs.ThemeOf(row.brief, srcLocale.Lang()), Variant: variant,
+				Brief: row.messageBrief(), Offer: promised, Theme: briefs.ThemeOf(row.messageBrief(), srcLocale.Lang()), Variant: variant,
 			}, deltas(scanner, target.Code, ev))
 		},
 		func(raw string) (content.Content, []string) {

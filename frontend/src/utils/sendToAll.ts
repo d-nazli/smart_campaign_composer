@@ -1,12 +1,5 @@
 /**
- * The sentence that answers "Bu kampanya kime gönderilsin? Tüm müşterilere mi?".
- * It is added to the brief (so the brief stays the one source of truth, and the
- * backend reads it like any other brief), not sent as a hidden flag.
+ * The one-click answer to "Bu kampanya kime gönderilsin? Tüm müşterilere mi?". It is sent to
+ * the campaign as the person's answer (POST /clarify), like a typed one; the brief stays as written.
  */
 export const SEND_TO_ALL_SENTENCE = 'Tüm müşterilere gönder.'
-
-export function withAllCustomers(brief: string): string {
-  const b = brief.trimEnd()
-  if (b.endsWith(SEND_TO_ALL_SENTENCE)) return b
-  return `${b}\n\n${SEND_TO_ALL_SENTENCE}`
-}
