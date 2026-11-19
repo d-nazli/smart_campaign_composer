@@ -67,12 +67,14 @@ const two = (n: number) => String(n).padStart(2, '0')
 /** "16.11.2026 14:30" */
 export const displayValue = (d: Date): string => `${two(d.getDate())}.${two(d.getMonth() + 1)}.${d.getFullYear()} ${two(d.getHours())}:${two(d.getMinutes())}`
 
-/** Minutes offered in the time column: every five, plus the current one when it is not on the grid. */
-export function minuteChoices(current: number | null): number[] {
-  const list = Array.from({ length: 12 }, (_, i) => i * 5)
-  if (current !== null && !list.includes(current)) list.push(current)
-  return list.sort((a, b) => a - b)
-}
+/** "19 Kasım 2026, 15:00": the chosen moment written out, inside the picker. */
+export const longValue = (d: Date): string => `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${two(d.getHours())}:${two(d.getMinutes())}`
+
+/** Hours offered in the time column: 00–23. */
+export const HOURS: readonly number[] = Array.from({ length: 24 }, (_, i) => i)
+
+/** Minutes offered in the time column: every minute, 00–59. */
+export const MINUTES: readonly number[] = Array.from({ length: 60 }, (_, i) => i)
 
 /** The month before/after (year and month, month 0-11). */
 export function shiftMonth(year: number, month: number, by: number): { year: number; month: number } {

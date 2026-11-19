@@ -3,7 +3,9 @@ import {
   clampDate,
   dayDisabled,
   displayValue,
-  minuteChoices,
+  HOURS,
+  longValue,
+  MINUTES,
   momentDisabled,
   monthGrid,
   monthLabel,
@@ -111,13 +113,18 @@ describe('choosing', () => {
   })
 })
 
-describe('minuteChoices', () => {
-  it('offers every five minutes', () => {
-    expect(minuteChoices(null)).toEqual([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55])
+describe('time choices', () => {
+  it('offers every hour and every minute', () => {
+    expect(HOURS).toHaveLength(24)
+    expect([HOURS[0], HOURS[23]]).toEqual([0, 23])
+    expect(MINUTES).toHaveLength(60)
+    expect(MINUTES).toEqual(Array.from({ length: 60 }, (_, i) => i))
   })
-  it('adds the current minute when it is not on that grid, in order', () => {
-    expect(minuteChoices(7)).toContain(7)
-    expect(minuteChoices(7).indexOf(7)).toBe(2)
-    expect(minuteChoices(10)).toHaveLength(12)
+})
+
+describe('longValue', () => {
+  it('writes the day and the month name, then the time', () => {
+    expect(longValue(d(2026, 11, 19, 15, 0))).toBe('19 Kasım 2026, 15:00')
+    expect(longValue(d(2027, 1, 5, 9, 7))).toBe('5 Ocak 2027, 09:07')
   })
 })

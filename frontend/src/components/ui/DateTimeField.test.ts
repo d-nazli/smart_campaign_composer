@@ -107,22 +107,65 @@ describe('DateTimeField calendar', () => {
   })
 })
 
+const hourOptions = (w: VueWrapper) => w.get('[role="listbox"][aria-label="Saat"]').findAll('[role="option"]')
+const minuteOptions = (w: VueWrapper) => w.get('[role="listbox"][aria-label="Dakika"]').findAll('[role="option"]')
+
 describe('DateTimeField time', () => {
-  it('chooses an hour and a minute', async () => {
+  it('chooses an hour and any minute, 00 to 59', async () => {
     const w = make()
     await openIt(w)
-    const hours = w.get('[role="listbox"][aria-label="Saat"]').findAll('[role="option"]')
-    const minutes = w.get('[role="listbox"][aria-label="Dakika"]').findAll('[role="option"]')
-    expect(hours).toHaveLength(24)
-    await hours[15].trigger('click')
-    await minutes[3].trigger('click') // 15
-    expect(w.emitted('update:modelValue')).toEqual([['2026-11-18T15:00'], ['2026-11-18T10:15']])
+    expect(hourOptions(w)).toHaveLength(24)
+    expect(minuteOptions(w).map((m) => m.text())).toEqual(Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')))
+    await hourOptions(w)[15].trigger('click')
+    await minuteOptions(w)[7].trigger('click')
+    await minuteOptions(w)[59].trigger('click')
+    expect(w.emitted('update:modelValue')).toEqual([['2026-11-18T15:00'], ['2026-11-18T10:07'], ['2026-11-18T10:59']])
   })
 
-  it('marks the current hour and minute', async () => {
-    const w = make({ modelValue: '2026-11-18T10:35' })
+  it('heads the columns "Saat" and "Dakika"', async () => {
+    const w = make()
     await openIt(w)
-    expect(w.findAll('.ui-dt__cell.is-on').map((c) => c.text())).toEqual(['10', '35'])
+    const heads = w.findAll('.ui-dt__head')
+    expect(heads.map((h) => h.text())).toEqual(['Saat', 'Dakika'])
+    const lists = w.findAll('[role="listbox"]')
+    expect(lists.map((l) => w.get(`#${l.attributes('aria-labelledby')}`).text())).toEqual(['Saat', 'Dakika'])
+  })
+
+  it('writes the chosen moment out in the picker', async () => {
+    const w = make({ modelValue: '2026-11-19T15:00' })
+    await openIt(w)
+    expect(w.get('[data-testid="dt-chosen"]').text()).toBe('Seçilen: 19 Kasım 2026, 15:00')
+    expect(w.get('[data-testid="dt-chosen"]').attributes('aria-live')).toBe('polite')
+    await w.setProps({ modelValue: '2026-11-19T15:07' })
+    expect(w.get('[data-testid="dt-chosen"]').text()).toBe('Seçilen: 19 Kasım 2026, 15:07')
+  })
+
+  it('says when nothing is chosen yet', async () => {
+    const w = make({ modelValue: '' })
+    await openIt(w)
+    expect(w.get('[data-testid="dt-chosen"]').text()).toBe('Henüz zaman seçilmedi')
+  })
+
+  it('marks the current hour and minute, also off the five-minute grid', async () => {
+    const w = make({ modelValue: '2026-11-18T10:37' })
+    await openIt(w)
+    expect(w.findAll('.ui-dt__cell.is-on').map((c) => c.text())).toEqual(['10', '37'])
+  })
+
+  it('turns off every minute before the earliest moment, one by one', async () => {
+    // The earliest moment is now + 1 minute: 09:31; 09:30 is already the past.
+    const w = make({ modelValue: '2026-11-16T09:45', min: '2026-11-16T09:31' })
+    await openIt(w)
+    const off = minuteOptions(w).filter((m) => m.attributes('disabled') !== undefined).map((m) => m.text())
+    expect(off).toEqual(Array.from({ length: 31 }, (_, i) => String(i).padStart(2, '0'))) // 00 to 30
+    expect(minuteOptions(w)[31].attributes('disabled')).toBeUndefined()
+  })
+
+  it('turns off the minutes after the latest moment on the last day', async () => {
+    const w = make({ modelValue: '2026-11-20T23:00', max: '2026-11-20T23:42' })
+    await openIt(w)
+    expect(minuteOptions(w)[42].attributes('disabled')).toBeUndefined()
+    expect(minuteOptions(w)[43].attributes('disabled')).toBeDefined()
   })
 
   it('turns off the hours before the earliest moment on the first day', async () => {
@@ -133,6 +176,44 @@ describe('DateTimeField time', () => {
     expect(hours[9].attributes('disabled')).toBeUndefined() // 09:30 to 09:59 is still possible
     const minutes = w.get('[role="listbox"][aria-label="Dakika"]').findAll('[role="option"]')
     expect(minutes[0].attributes('disabled')).toBeUndefined() // 10:00 is fine
+  })
+})
+
+describe('DateTimeField keyboard', () => {
+  const focused = () => document.activeElement?.textContent?.trim()
+
+  it('makes each time column one Tab stop, on the chosen option', async () => {
+    const w = make({ modelValue: '2026-11-18T10:37' })
+    await openIt(w)
+    expect(hourOptions(w).filter((o) => o.attributes('tabindex') === '0').map((o) => o.text())).toEqual(['10'])
+    expect(minuteOptions(w).filter((o) => o.attributes('tabindex') === '0').map((o) => o.text())).toEqual(['37'])
+  })
+
+  it('puts the Tab stop on the first minute that can be chosen when the chosen one cannot', async () => {
+    const w = make({ modelValue: '', min: '2026-11-16T09:31' })
+    await openIt(w)
+    // Nothing chosen: the column shows 09:xx on the first day, so 09:31 is the first possible minute.
+    expect(minuteOptions(w).filter((o) => o.attributes('tabindex') === '0').map((o) => o.text())).toEqual(['31'])
+  })
+
+  it('moves with the arrow keys, Home and End, skipping what cannot be chosen, and chooses with Enter', async () => {
+    const w = make({ modelValue: '2026-11-16T09:45', min: '2026-11-16T09:31' })
+    await openIt(w)
+    const list = w.get('[role="listbox"][aria-label="Dakika"]')
+    ;(minuteOptions(w)[45].element as HTMLElement).focus()
+    await list.trigger('keydown', { key: 'ArrowDown' })
+    expect(focused()).toBe('46')
+    await list.trigger('keydown', { key: 'ArrowUp' })
+    await list.trigger('keydown', { key: 'ArrowUp' })
+    expect(focused()).toBe('44')
+    await list.trigger('keydown', { key: 'Home' })
+    expect(focused()).toBe('31') // 00–30 are in the past
+    await list.trigger('keydown', { key: 'ArrowUp' })
+    expect(focused()).toBe('31')
+    await list.trigger('keydown', { key: 'End' })
+    expect(focused()).toBe('59')
+    ;(document.activeElement as HTMLElement).click()
+    expect(w.emitted('update:modelValue')).toEqual([['2026-11-16T09:59']])
   })
 })
 

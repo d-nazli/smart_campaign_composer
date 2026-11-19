@@ -2,11 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { CalendarClock, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import {
+  HOURS,
+  MINUTES,
   WEEKDAYS,
   dayDisabled,
   displayValue,
   endOfDay,
-  minuteChoices,
+  longValue,
   momentDisabled,
   monthGrid,
   monthLabel,
@@ -67,9 +69,11 @@ const canNext = computed(() => {
   return !max.value || startOfDay(new Date(after.year, after.month, 1)).getTime() <= max.value.getTime()
 })
 
-const hours = Array.from({ length: 24 }, (_, i) => i)
-const minutes = computed(() => minuteChoices(value.value ? value.value.getMinutes() : null))
 const two = (n: number) => String(n).padStart(2, '0')
+// Ids that tie each time column to its heading.
+const uid = Math.random().toString(36).slice(2, 8)
+const hourHead = `ui-dt-h-${uid}`
+const minuteHead = `ui-dt-m-${uid}`
 
 function pickDay(day: Date) {
   if (dayDisabled(day, min.value, max.value)) return
@@ -93,6 +97,43 @@ const minuteOff = (m: number) => {
   const day = value.value ?? anchor()
   const h = value.value ? value.value.getHours() : 9
   return momentDisabled(new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m), min.value, max.value)
+}
+
+// Each time column is one Tab stop (the chosen option, or the first one that can be
+// chosen); the arrow keys, Home and End move inside it, Enter or Space chooses.
+function tabStop(list: readonly number[], chosen: number | null, off: (n: number) => boolean): number {
+  if (chosen !== null && !off(chosen)) return chosen
+  return list.find((n) => !off(n)) ?? list[0]
+}
+const hourStop = computed(() => tabStop(HOURS, value.value ? value.value.getHours() : null, hourOff))
+const minuteStop = computed(() => tabStop(MINUTES, value.value ? value.value.getMinutes() : null, minuteOff))
+
+function moveInColumn(e: KeyboardEvent) {
+  const col = e.currentTarget as HTMLElement
+  const options = Array.from(col.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)'))
+  if (options.length === 0) return
+  const at = options.indexOf(document.activeElement as HTMLButtonElement)
+  let next: number
+  switch (e.key) {
+    case 'ArrowDown':
+    case 'ArrowRight':
+      next = Math.min(at + 1, options.length - 1)
+      break
+    case 'ArrowUp':
+    case 'ArrowLeft':
+      next = Math.max(at - 1, 0)
+      break
+    case 'Home':
+      next = 0
+      break
+    case 'End':
+      next = options.length - 1
+      break
+    default:
+      return
+  }
+  e.preventDefault()
+  options[next].focus()
 }
 
 function shift(by: number) {
@@ -139,6 +180,7 @@ watch(open, (o) => {
 onBeforeUnmount(() => document.removeEventListener('mousedown', onOutside))
 
 const shown = computed(() => (value.value ? displayValue(value.value) : ''))
+const written = computed(() => (value.value ? longValue(value.value) : ''))
 </script>
 
 <template>
@@ -184,38 +226,51 @@ const shown = computed(() => (value.value ? displayValue(value.value) : ''))
         </div>
       </div>
 
-      <div class="ui-dt__time" role="group" aria-label="Saat">
-        <div class="ui-dt__col" role="listbox" aria-label="Saat">
-          <button
-            v-for="h in hours"
-            :key="h"
-            type="button"
-            role="option"
-            class="ui-dt__cell num"
-            :class="{ 'is-on': value !== null && value.getHours() === h }"
-            :aria-selected="value !== null && value.getHours() === h"
-            :disabled="hourOff(h)"
-            @click="pickHour(h)"
-          >
-            {{ two(h) }}
-          </button>
+      <div class="ui-dt__time" role="group" aria-label="Saat ve dakika">
+        <div class="ui-dt__colwrap">
+          <span :id="hourHead" class="ui-dt__head">Saat</span>
+          <div class="ui-dt__col" role="listbox" aria-label="Saat" :aria-labelledby="hourHead" @keydown="moveInColumn">
+            <button
+              v-for="h in HOURS"
+              :key="h"
+              type="button"
+              role="option"
+              class="ui-dt__cell num"
+              :class="{ 'is-on': value !== null && value.getHours() === h }"
+              :aria-selected="value !== null && value.getHours() === h"
+              :tabindex="h === hourStop ? 0 : -1"
+              :disabled="hourOff(h)"
+              @click="pickHour(h)"
+            >
+              {{ two(h) }}
+            </button>
+          </div>
         </div>
-        <div class="ui-dt__col" role="listbox" aria-label="Dakika">
-          <button
-            v-for="m in minutes"
-            :key="m"
-            type="button"
-            role="option"
-            class="ui-dt__cell num"
-            :class="{ 'is-on': value !== null && value.getMinutes() === m }"
-            :aria-selected="value !== null && value.getMinutes() === m"
-            :disabled="minuteOff(m)"
-            @click="pickMinute(m)"
-          >
-            {{ two(m) }}
-          </button>
+        <div class="ui-dt__colwrap">
+          <span :id="minuteHead" class="ui-dt__head">Dakika</span>
+          <div class="ui-dt__col" role="listbox" aria-label="Dakika" :aria-labelledby="minuteHead" @keydown="moveInColumn">
+            <button
+              v-for="m in MINUTES"
+              :key="m"
+              type="button"
+              role="option"
+              class="ui-dt__cell num"
+              :class="{ 'is-on': value !== null && value.getMinutes() === m }"
+              :aria-selected="value !== null && value.getMinutes() === m"
+              :tabindex="m === minuteStop ? 0 : -1"
+              :disabled="minuteOff(m)"
+              @click="pickMinute(m)"
+            >
+              {{ two(m) }}
+            </button>
+          </div>
         </div>
       </div>
+
+      <p class="ui-dt__chosen" aria-live="polite" data-testid="dt-chosen">
+        <template v-if="written">Seçilen: <strong class="num">{{ written }}</strong></template>
+        <template v-else>Henüz zaman seçilmedi</template>
+      </p>
 
       <div class="ui-dt__foot">
         <div class="ui-dt__shortcuts">
@@ -336,9 +391,31 @@ const shown = computed(() => (value.value ? displayValue(value.value) : ''))
 .ui-dt__time {
   display: flex;
   gap: var(--s-2);
-  max-height: 258px;
+}
+.ui-dt__colwrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-height: 0;
+  min-width: 0;
+}
+.ui-dt__head {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+}
+.ui-dt__chosen {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.ui-dt__chosen strong {
+  color: var(--fg);
 }
 .ui-dt__col {
+  max-height: 258px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -395,8 +472,8 @@ const shown = computed(() => (value.value ? displayValue(value.value) : ''))
   .ui-dt__cal {
     width: 100%;
   }
-  .ui-dt__time {
-    max-height: 120px;
+  .ui-dt__head {
+    text-align: left;
   }
   .ui-dt__time .ui-dt__col {
     flex-direction: row;
