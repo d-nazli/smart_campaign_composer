@@ -123,7 +123,7 @@ func TestAnAnswerToACampaignThatWaitsForNoneIsAConflict(t *testing.T) {
 	if _, err := svc.Clarify(ctx, ready.ID, "evet"); !errors.As(err, &state) {
 		t.Fatalf("segment_ready: want a StateError, got %v", err)
 	}
-	unsupported, err := svc.Create(ctx, "35 yaş üstü müşterilere %10 indirim")
+	unsupported, err := svc.Create(ctx, "telefon kategorisine bakan müşterilere %10 indirim")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestEditingTheBriefResolvesTheSameCampaign(t *testing.T) {
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 
-	unsupported, err := svc.Create(ctx, "35 yaş üstü müşterilere %15 indirim")
+	unsupported, err := svc.Create(ctx, "telefon kategorisine bakan müşterilere %15 indirim")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,7 +5,7 @@ import type { LocaleInfo, Segment } from '../types'
 import { funnel } from '../utils/funnel'
 import { describeOffer } from '../utils/formatOffer'
 import { sentenceCase } from '../utils/dashboard'
-import { describeCondition } from '../utils/formatRule'
+import { describeConditions } from '../utils/formatRule'
 import { FALLBACK_LOCALES, localeSummary } from '../utils/locales'
 import Badge from './ui/Badge.vue'
 import Button from './ui/Button.vue'
@@ -29,7 +29,7 @@ function sendAnswer() {
 }
 const history = computed(() => props.segment.clarifications ?? [])
 
-const chips = computed(() => props.segment.conditions.map(describeCondition))
+const chips = computed(() => describeConditions(props.segment.conditions, props.segment.match))
 const joiner = computed(() => (props.segment.match === 'any' ? 'veya' : 've'))
 const offerText = computed(() => describeOffer(props.segment.offer))
 const f = computed(() => (props.segment.audience ? funnel(props.segment.audience) : null))

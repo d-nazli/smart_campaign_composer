@@ -141,7 +141,7 @@ func TestModelDrivenTechnicalProblemsAreRepaired(t *testing.T) {
 // Output that stays invalid is an error with every attempt, never a rule and
 // never a question made up by code.
 func TestModelDrivenOutputThatStaysInvalidIsAnError(t *testing.T) {
-	m := mock.NewScripted([]mock.Step{rawJSON(`{"status":"ok","conditions":[{"field":"age","op":"gt","value":30}]}`)}, nil)
+	m := mock.NewScripted([]mock.Step{rawJSON(`{"status":"ok","match":"all","conditions":[{"field":"age","op":"gt","value":300}],"explanation":"x","question":""}`)}, nil)
 	rule, err := brief.ResolveSegmentWith(context.Background(), m, "30 yaş üstü müşterilere %10 indirim", llm.Hooks{}, brief.ModelDriven)
 	ex, ok := llm.IsExhausted(err)
 	if !ok || len(ex.Attempts) != brief.MaxAttempts || len(m.Calls()) != brief.MaxAttempts {
@@ -174,10 +174,42 @@ func TestModelDrivenTheModelAsksOrRefuses(t *testing.T) {
 		t.Fatalf("an English question is passed on: %+v", rule)
 	}
 
-	no := segment.Rule{Status: segment.StatusUnsupported, Conditions: []segment.Condition{}, Explanation: "Yaş verisi yok.", Offer: none}
-	rule, _ = modelDriven(t, "35 yaş üstü müşterilere %10 indirim", rawRule(t, no))
-	if rule.Status != segment.StatusUnsupported || rule.Explanation != "Yaş verisi yok." {
+	no := segment.Rule{Status: segment.StatusUnsupported, Conditions: []segment.Condition{}, Explanation: "Doğum günü verisi yok.", Offer: none}
+	rule, _ = modelDriven(t, "Doğum günü bu hafta olanlara %10 indirim", rawRule(t, no))
+	if rule.Status != segment.StatusUnsupported || rule.Explanation != "Doğum günü verisi yok." {
 		t.Fatalf("%+v", rule)
+	}
+
+	const young = "\"Gençler\" hangi yaş aralığı olsun? Örneğin 18-25 yaş arası."
+	vagueAge := segment.Rule{Status: segment.StatusNeedsClarification, Conditions: []segment.Condition{}, Question: young, Offer: none}
+	rule, _ = modelDriven(t, "gençlere özel indirim", rawRule(t, vagueAge))
+	if rule.Status != segment.StatusNeedsClarification || rule.Question != young || rule.Suggestion != "" {
+		t.Fatalf("a question about an age group reaches the person unchanged: %+v", rule)
+	}
+}
+
+// An explicit age range from the model passes the technical checks as it is;
+// an age outside 13..100 or bounds that leave no age are sent back.
+func TestModelDrivenAgeConditions(t *testing.T) {
+	ok := okRule(none, c("age", "gte", int64(18)), c("age", "lte", int64(25)), c("city", "eq", "İstanbul"))
+	rule, m := modelDriven(t, "18-25 yaş arası İstanbul'daki kullanıcılar", rawRule(t, ok))
+	if got := strings.Join(conds(rule), " | "); rule.Status != segment.StatusOK || got != "age gte 18 | age lte 25 | city eq İstanbul" || len(m.Calls()) != 1 {
+		t.Fatalf("rule %s %v (calls %d)", rule.Status, got, len(m.Calls()))
+	}
+
+	for name, bad := range map[string]segment.Rule{
+		"below the range": okRule(none, c("age", "gte", int64(5))),
+		"no age left":     okRule(none, c("age", "gte", int64(40)), c("age", "lt", int64(30))),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rule, m := modelDriven(t, "18-25 yaş arası İstanbul'daki kullanıcılar", rawRule(t, bad), rawRule(t, ok))
+			if rule.Status != segment.StatusOK || len(m.Calls()) != 2 {
+				t.Fatalf("want a repaired rule after one retry, got %+v (calls %d)", rule, len(m.Calls()))
+			}
+			if fb := feedback(t, m); !strings.Contains(fb, "yas") {
+				t.Errorf("the feedback should be about the age: %s", fb)
+			}
+		})
 	}
 }
 

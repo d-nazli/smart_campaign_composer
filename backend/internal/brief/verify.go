@@ -35,6 +35,7 @@ func Verify(in Intent, r segment.Rule) []string {
 
 	in.verifyEveryone(r, bad)
 	in.verifyGender(r, bad)
+	in.verifyAge(r, bad)
 	in.verifySpend(r, bad)
 	if r.Match == segment.MatchAny && !containsAny(in.folded, " veya ", " ya da ") {
 		bad("Brief \"veya\" demiyor ama match \"any\"; koşulların hepsi birlikte geçerli olmalı, match \"all\" kullan.")

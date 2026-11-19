@@ -3,6 +3,8 @@ package seed
 import (
 	"math/rand/v2"
 	"time"
+
+	"smartcampaign/internal/segment"
 )
 
 // profileStream selects the random stream of the profile fields, separate from
@@ -31,6 +33,16 @@ const (
 	noBirthDatePercent = 3 // did not state a birth date
 	minAge, maxAge     = 18, 75
 )
+
+// Age bands (whole years, both ends included) and their share of the people
+// with a birth date. Shaped like an online shop's customers: most of them
+// between 25 and 44, fewer young adults, and fewer and fewer after 45. The
+// remainder of the rounding goes to the largest band.
+var ageBands = []struct {
+	lo, hi, percent int
+}{
+	{18, 24, 16}, {25, 34, 28}, {35, 44, 24}, {45, 54, 16}, {55, 64, 10}, {65, maxAge, 6},
+}
 
 // assignProfileFields gives every user a locale, and most of them a gender
 // and a birth date. Each field is dealt from a shuffled list with exact counts
@@ -62,22 +74,44 @@ func assignProfileFields(users []User, r *rand.Rand, now time.Time) {
 	}
 	r.Shuffle(n, func(i, j int) { genders[i], genders[j] = genders[j], genders[i] })
 
-	// Birth dates: uniformly over the days between "maxAge years ago" and
-	// "minAge years ago". The missing ones are chosen independently of the gender.
+	// Birth dates: each person gets an age band from a shuffled list with exact
+	// counts, then a day uniformly inside it. Ages are counted the way the age
+	// condition counts them (segment.YearsBefore). The missing ones are chosen
+	// independently of the gender.
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	oldest, youngest := today.AddDate(-maxAge, 0, 0), today.AddDate(-minAge, 0, 0)
-	days := int64(youngest.Sub(oldest) / (24 * time.Hour))
 	missing := make([]bool, n)
 	for _, idx := range r.Perm(n)[:pct(n, noBirthDatePercent)] {
 		missing[idx] = true
 	}
+	dated := n - pct(n, noBirthDatePercent)
+	bands := make([]int, 0, dated)
+	largest := 0
+	for i, b := range ageBands {
+		if b.percent > ageBands[largest].percent {
+			largest = i
+		}
+		for k := 0; k < pct(dated, b.percent); k++ {
+			bands = append(bands, i)
+		}
+	}
+	for len(bands) < dated {
+		bands = append(bands, largest)
+	}
+	r.Shuffle(dated, func(i, j int) { bands[i], bands[j] = bands[j], bands[i] })
 
+	next := 0
 	for i := range users {
 		users[i].Locale = locales[i]
 		users[i].Gender = genders[i]
-		if !missing[i] {
-			d := oldest.AddDate(0, 0, int(r.Int64N(days+1)))
-			users[i].BirthDate = &d
+		if missing[i] {
+			continue
 		}
+		b := ageBands[bands[next]]
+		next++
+		youngest := segment.YearsBefore(today, b.lo)                  // turned lo today
+		oldest := segment.YearsBefore(today, b.hi+1).AddDate(0, 0, 1) // turns hi+1 tomorrow
+		days := int64(youngest.Sub(oldest) / (24 * time.Hour))
+		d := oldest.AddDate(0, 0, int(r.Int64N(days+1)))
+		users[i].BirthDate = &d
 	}
 }

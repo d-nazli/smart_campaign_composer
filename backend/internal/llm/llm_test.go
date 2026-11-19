@@ -52,7 +52,10 @@ func TestSmartMockSegmentVariants(t *testing.T) {
 		{"Ankara ve İzmir'deki müşterilere duyuru", segment.StatusOK, "city"},
 		{"Hiç alışveriş yapmamış müşterilere hoş geldin indirimi", segment.StatusOK, "order_count"},
 		{"Son 14 günde sipariş veren müşterilere teşekkür", segment.StatusOK, "days_since_last_order"},
-		{"35 yaşındaki kadınlara kampanya", segment.StatusUnsupported, ""},
+		{"35 yaşındaki kadınlara kampanya", segment.StatusOK, "age"},
+		{"18-25 yaş arası İstanbul'daki kullanıcılar", segment.StatusOK, "age"},
+		{"gençlere özel indirim", segment.StatusNeedsClarification, ""},
+		{"Telefon kategorisine bakan müşterilere kampanya", segment.StatusUnsupported, ""},
 		{"Herkese merhaba de", segment.StatusOK, "all_customers"},
 		{"Hoş geldin mesajı gönder", segment.StatusNeedsClarification, ""},
 	}

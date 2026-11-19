@@ -186,6 +186,9 @@ func validate(rr rawRule) (Rule, error) {
 				out.Conditions = append(out.Conditions, c)
 			}
 		}
+		if lo, hi, ok := ageBounds(out); ok && lo > hi {
+			bad("yaş koşulları birbirini dışlıyor (en az %d, en çok %d): bu kurala hiçbir yaş uymaz", lo, hi)
+		}
 		if len(out.Conditions) > 1 {
 			for _, c := range out.Conditions {
 				if c.Field == "all_customers" {
@@ -267,12 +270,15 @@ func decodeValue(f fieldDef, op string, raw json.RawMessage) (any, error) {
 		}
 		return canonicalCity(s)
 
-	case kindInt:
+	case kindInt, kindAge:
 		n, err := strconv.ParseInt(string(bytes.TrimSpace(raw)), 10, 64)
 		if err != nil {
 			return nil, errors.New("tam sayı olmalı")
 		}
 		if float64(n) < f.Min || float64(n) > f.Max {
+			if f.kind == kindAge {
+				return nil, fmt.Errorf("yaş %v ile %v arasında olmalı", f.Min, f.Max)
+			}
 			return nil, fmt.Errorf("%v ile %v arasında olmalı", f.Min, f.Max)
 		}
 		return n, nil
@@ -304,6 +310,35 @@ func decodeValue(f fieldDef, op string, raw json.RawMessage) (any, error) {
 		return nil, errors.New("true veya false olmalı")
 	}
 	return nil, errors.New("desteklenmeyen alan tipi")
+}
+
+// ageBounds is the narrowest whole-year range the age conditions of an "all"
+// rule leave open (ok is false when there are none, or the match is "any").
+func ageBounds(r Rule) (lo, hi int64, ok bool) {
+	if r.Match != MatchAll {
+		return 0, 0, false
+	}
+	lo, hi = 0, math.MaxInt32
+	for _, c := range r.Conditions {
+		if c.Field != "age" {
+			continue
+		}
+		ok = true
+		n := c.Value.(int64)
+		switch c.Op {
+		case OpGte:
+			lo = max(lo, n)
+		case OpGt:
+			lo = max(lo, n+1)
+		case OpLte:
+			hi = min(hi, n)
+		case OpLt:
+			hi = min(hi, n-1)
+		case OpEq:
+			lo, hi = max(lo, n), min(hi, n)
+		}
+	}
+	return lo, hi, ok
 }
 
 func canonicalCity(s string) (string, error) {

@@ -179,9 +179,41 @@ var table = []row{
 	{name: "offer: impossible percentage", brief: "Sepeti terk edenlere %150 indirim ver", status: segment.StatusNeedsClarification, say: "150"},
 	{name: "offer: 'kod' without a code", brief: "Sepeti terk edenlere indirim kodu gönder", status: segment.StatusNeedsClarification, say: "kod"},
 
+	// ---- age: numbers become conditions, an age group without numbers is asked
+	{name: "age: range", brief: "18-25 yaş arası İstanbul'daki kullanıcılar", status: segment.StatusOK,
+		want: []string{"age gte 18", "age lte 25", "city eq İstanbul"}, offer: none},
+	{name: "age: range with an en dash", brief: "35–44 yaş arası sepeti terk eden müşterilere %10 indirim", status: segment.StatusOK,
+		want: []string{"age gte 35", "age lte 44", abandoned}, offer: pct(10)},
+	{name: "age: 'ile ... arasındaki'", brief: "25 ile 34 yaş arasındaki kadın müşterilere %15 indirim", status: segment.StatusOK,
+		want: []string{"age gte 25", "age lte 34", "gender eq female"}, offer: pct(15)},
+	{name: "age: 'yaşlarındaki'", brief: "18-24 yaşlarındaki müşterilere ücretsiz kargo", status: segment.StatusOK,
+		want: []string{"age gte 18", "age lte 24"}, offer: freeShipping},
+	{name: "age: 'yaş üstü' includes the age", brief: "35 yaş üstü sepeti terk eden müşterilere %10 indirim", status: segment.StatusOK,
+		want: []string{"age gte 35", abandoned}, offer: pct(10)},
+	{name: "age: 've üzeri'", brief: "65 yaş ve üzeri müşterilere ücretsiz kargo", status: segment.StatusOK,
+		want: []string{"age gte 65"}, offer: freeShipping},
+	{name: "age: 'yaşından büyük' excludes it", brief: "40 yaşından büyük müşterilere %5 indirim", status: segment.StatusOK,
+		want: []string{"age gt 40"}, offer: pct(5)},
+	{name: "age: 'yaş altı' with a city", brief: "30 yaş altı Ankara'daki müşterilere %10 indirim", status: segment.StatusOK,
+		want: []string{"age lt 30", "city eq Ankara"}, offer: pct(10)},
+	{name: "age: 've altı'", brief: "30 yaş ve altı müşterilere %10 indirim", status: segment.StatusOK,
+		want: []string{"age lte 30"}, offer: pct(10)},
+	{name: "age: 'yaşındaki'", brief: "30 yaşındaki müşterilere kampanya", status: segment.StatusOK,
+		want: []string{"age eq 30"}, offer: none},
+	{name: "age: the numbers win over the vague word", brief: "Gençlere özel: 18-25 yaş arası müşterilere %10 indirim", status: segment.StatusOK,
+		want: []string{"age gte 18", "age lte 25"}, offer: pct(10)},
+	{name: "age: 'yaşayan' is not an age", brief: "İzmir'de yaşayan müşterilere %10 indirim", status: segment.StatusOK,
+		want: []string{"city eq İzmir"}, offer: pct(10)},
+	{name: "age: Gençlik ve Spor Bayramı is a special day", brief: "Gençlik ve Spor Bayramı'na özel %19 indirim", status: segment.StatusOK,
+		want: []string{everyone}, offer: pct(19)},
+	{name: "age: 'gençlere' is asked", brief: "gençlere özel indirim", status: segment.StatusNeedsClarification, say: "gençlere"},
+	{name: "age: 'yaşlı' is asked", brief: "Yaşlı müşterilere ücretsiz kargo", status: segment.StatusNeedsClarification, say: "yaş aralığı"},
+	{name: "age: 'orta yaşlı' is asked", brief: "Orta yaşlı İzmir'deki müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "orta yaşlı"},
+	{name: "age: 'yaş' without numbers is asked", brief: "Belirli bir yaştaki müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "18-25 yaş arası"},
+	{name: "age: below the allowed range", brief: "10 yaş altı müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "13"},
+	{name: "age: two age conditions", brief: "18-25 yaş arası ve 65 yaş üstü müşterilere %10 indirim", status: segment.StatusNeedsClarification, say: "birden fazla yaş"},
+
 	// ---- things we cannot do: must be said out loud ----------------------
-	{name: "unsupported: age", brief: "35 yaş üstü sepeti terk eden müşterilere %10 indirim", status: segment.StatusUnsupported, say: "yaş"},
-	{name: "unsupported: age, other wording", brief: "30 yaşındaki müşterilere kampanya", status: segment.StatusUnsupported, say: "yaş"},
 	{name: "unsupported: product category", brief: "Ayakkabı kategorisinde sepete ürün ekleyenlere %10 indirim", status: segment.StatusUnsupported, say: "kategori"},
 	{name: "unsupported: product, no word 'category'", brief: "Sepetine telefon ekleyip almayanlara %10 indirim", status: segment.StatusUnsupported, say: "telefon"},
 	{name: "unsupported: birthday", brief: "Doğum günü bu hafta olanlara %10 indirim", status: segment.StatusUnsupported, say: "doğum"},
@@ -502,7 +534,8 @@ func TestUnfixableCoverageProblemBecomesAClarificationQuestion(t *testing.T) {
 // model is not asked, so it cannot "helpfully" ignore the part it cannot do.
 func TestUnsupportedAndAmbiguousBriefsNeverReachTheModel(t *testing.T) {
 	for _, b := range []string{
-		"35 yaş üstü sepeti terk eden müşterilere %10 indirim",
+		"Gençlere özel, sepeti terk eden müşterilere %10 indirim",
+		"Doğum günü bu hafta olanlara %10 indirim",
 		"Bu ay sepete ürün ekleyip almayanlara %10 indirim",
 	} {
 		m := mock.NewScripted([]mock.Step{rawRule(t, okRule(none, c("city", "eq", "Adana")))}, nil)

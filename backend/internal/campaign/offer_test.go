@@ -57,11 +57,11 @@ func TestUnsupportedBriefIsDecidedByTheBackendAndExplained(t *testing.T) {
 	t.Parallel()
 	m := mock.NewScripted([]mock.Step{raw(`{"status":"ok","match":"all","conditions":[{"field":"city","op":"eq","value":"Adana"}],"explanation":"x","question":""}`)}, nil)
 	svc, _ := newService(t, m)
-	v, err := svc.Create(context.Background(), "Adana'daki 35 yaş üstü müşterilere %10 indirim")
+	v, err := svc.Create(context.Background(), "Adana'daki telefon kategorisine bakan müşterilere %10 indirim")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Status != campaign.StatusDraft || v.Segment.Status != segment.StatusUnsupported || !strings.Contains(v.Segment.Explanation, "yaş") || v.Segment.Audience != nil {
+	if v.Status != campaign.StatusDraft || v.Segment.Status != segment.StatusUnsupported || !strings.Contains(v.Segment.Explanation, "telefon") || v.Segment.Audience != nil {
 		t.Fatalf("view: %+v %+v", v, v.Segment)
 	}
 	if n := len(m.Calls()); n != 0 {

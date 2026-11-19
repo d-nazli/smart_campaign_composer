@@ -876,7 +876,7 @@ func TestClarifyAndDeleteOverHTTP(t *testing.T) {
 // campaign); an approved one answers 409.
 func TestPutBriefOverHTTP(t *testing.T) {
 	srv := newServer(t, mock.New(0))
-	resp, body := do(t, "POST", srv.URL+"/api/campaigns", map[string]string{"brief": "35 yaş üstü müşterilere %15 indirim"})
+	resp, body := do(t, "POST", srv.URL+"/api/campaigns", map[string]string{"brief": "telefon kategorisine bakan müşterilere %15 indirim"})
 	if resp.StatusCode != 201 {
 		t.Fatalf("create: %d %s", resp.StatusCode, body)
 	}

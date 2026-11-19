@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Segment } from '../types'
-import { describeCondition, describeSegment } from './formatRule'
+import { describeCondition, describeConditions, describeSegment } from './formatRule'
 
 describe('describeCondition', () => {
   it('describes the example brief', () => {
@@ -45,5 +45,31 @@ describe('describeCondition', () => {
 describe('describeCondition: everyone', () => {
   it('says plainly that the audience is everybody who may be contacted', () => {
     expect(describeCondition({ field: 'all_customers', op: 'eq', value: true })).toBe('Tüm müşteriler (iletişim izni olanlar)')
+  })
+})
+
+describe('describeConditions: age', () => {
+  const age = (op: string, value: number) => ({ field: 'age', op, value })
+  const city = { field: 'city', op: 'eq', value: 'İstanbul' }
+
+  it('shows the two ends of a range as one badge, where the first age condition was', () => {
+    expect(describeConditions([age('gte', 18), city, age('lte', 25)], 'all')).toEqual(['Yaş 18–25', 'Şehir: İstanbul'])
+    expect(describeConditions([city, age('lte', 25), age('gte', 18)], 'all')).toEqual(['Şehir: İstanbul', 'Yaş 18–25'])
+  })
+
+  it('counts whole years: gt 17 and lt 26 are 18–25', () => {
+    expect(describeConditions([age('gt', 17), age('lt', 26)], 'all')).toEqual(['Yaş 18–25'])
+  })
+
+  it('keeps one-sided and "any" conditions as they are', () => {
+    expect(describeConditions([age('gte', 65)], 'all')).toEqual(['Yaş 65+'])
+    expect(describeConditions([age('lt', 30)], 'all')).toEqual(['Yaş < 30'])
+    expect(describeConditions([age('eq', 30)], 'all')).toEqual(['Yaş 30'])
+    expect(describeConditions([age('lt', 20), age('gt', 60)], 'any')).toEqual(['Yaş < 20', 'Yaş > 60'])
+  })
+
+  it('is used by describeSegment', () => {
+    const s: Segment = { status: 'ok', match: 'all', explanation: '', conditions: [age('gte', 18), age('lte', 25)] }
+    expect(describeSegment(s).lines).toEqual(['Yaş 18–25'])
   })
 })

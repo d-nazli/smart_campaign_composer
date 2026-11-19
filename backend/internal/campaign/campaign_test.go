@@ -177,7 +177,7 @@ func TestCreateClarificationAndUnsupportedStayInDraft(t *testing.T) {
 		t.Fatalf("clarification: %+v %+v", v, v.Segment)
 	}
 
-	v, err = svc.Create(context.Background(), "35 yaşındaki kadınlara kampanya")
+	v, err = svc.Create(context.Background(), "Telefon kategorisine bakan kadınlara kampanya")
 	if err != nil {
 		t.Fatal(err)
 	}

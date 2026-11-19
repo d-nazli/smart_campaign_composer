@@ -100,6 +100,25 @@ describe('describeCondition: gender', () => {
   })
 })
 
+describe('SegmentCard: age', () => {
+  it('shows an age range as one badge', () => {
+    const segment: Segment = {
+      status: 'ok',
+      match: 'all',
+      conditions: [
+        { field: 'age', op: 'gte', value: 18 },
+        { field: 'age', op: 'lte', value: 25 },
+        { field: 'city', op: 'eq', value: 'İstanbul' },
+      ],
+      explanation: "18–25 yaş arası, İstanbul'daki müşteriler",
+      audience,
+      offer: { kind: 'none', value: 0, code: '' },
+    }
+    const chips = mount(SegmentCard, { props: { segment } }).findAll('.chip').map((c) => c.text())
+    expect(chips).toEqual(['Yaş 18–25', 'Şehir: İstanbul'])
+  })
+})
+
 describe('SegmentCard: answering the question', () => {
   const asking: Segment = {
     status: 'needs_clarification',

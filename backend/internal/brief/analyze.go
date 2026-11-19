@@ -71,10 +71,15 @@ type Intent struct {
 	// brief names both ("kadın ve erkek müşterilere"), which is everyone.
 	Gender, GenderPhrase string
 	BothGenders          bool
-	HasSpend             bool   // an explicit total-spending audience (toplam harcaması N TL'den fazla)
-	SpendOp              string // gt, gte or lt
-	SpendValue           float64
-	Blockers             []Blocker
+	// Ages are the age conditions the brief gives with numbers (one, or two for
+	// a range); AgePhrase is how it wrote them and AgeWords how the explanation
+	// says them (age.go).
+	Ages                []segment.Condition
+	AgePhrase, AgeWords string
+	HasSpend            bool   // an explicit total-spending audience (toplam harcaması N TL'den fazla)
+	SpendOp             string // gt, gte or lt
+	SpendValue          float64
+	Blockers            []Blocker
 
 	folded   string   // the folded brief, for checks that need to look at it again
 	consumed [][2]int // spans (byte offsets in folded) already explained as part of an offer term
@@ -184,7 +189,6 @@ var unsupportedLexicon = []struct {
 	label string
 	re    *regexp.Regexp
 }{
-	{"yaş", regexp.MustCompile(`\b(?:yas|yasi|yasli\w*|yasinda\w*|yaslar\w*|genc\w*)\b`)},
 	{"ürün kategorisi / marka", regexp.MustCompile(`\b(?:kategori\w*|urun\s+grub\w*|marka\w*|ayakkabi\w*|canta\w*|elbise\w*|pantolon\w*|gomlek\w*|tisort\w*|ceket\w*|kazak\w*|giyim\w*|telefon\w*|bilgisayar\w*|laptop\w*|televizyon\w*|kulaklik\w*|parfum\w*|makyaj\w*|kozmetik\w*|mobilya\w*|oyuncak\w*|kitap\w*|elektronik\w*|aksesuar\w*|samsung\w*|apple|nike|adidas)\b`)},
 	{"doğum günü", regexp.MustCompile(`\bdogum\w*`)},
 	{"üyelik / kayıt tarihi", regexp.MustCompile(`\b(?:uyelik\w*|uye\s+ol\w*|kayit\s+(?:ol\w*|tarih\w*))\b`)},
@@ -243,6 +247,7 @@ func Analyze(text string) Intent {
 	in.Occasion, spans = findOccasions(d.foldString)
 	d.mask(spans)
 	d.mask(in.analyzeGender(d, d.foldString))
+	d.mask(in.analyzeAge(d, d.foldString))
 	in.folded = d.foldString
 	f := d.foldString
 	work := append([]rune(nil), d.fold...) // known phrases are blanked out of this copy
@@ -728,7 +733,7 @@ func (in *Intent) analyzeDates(d *doc, f string, blank func(a, b int)) string {
 // customer who may be contacted); saying nothing is a question, never an empty
 // rule that would select everyone by accident.
 func (in *Intent) analyzeAudience(f string) {
-	if in.HasSpend || len(in.Included)+len(in.Excluded) > 0 || in.Cart || in.NotPurchased || in.Purchased || in.HasWindow || in.Gender != "" {
+	if in.HasSpend || len(in.Included)+len(in.Excluded) > 0 || in.Cart || in.NotPurchased || in.Purchased || in.HasWindow || in.Gender != "" || len(in.Ages) > 0 {
 		return
 	}
 	if spendWordRe.MatchString(f) {
@@ -969,7 +974,7 @@ func (in Intent) Blocked() (segment.Rule, bool) {
 		}
 	}
 	if status == segment.StatusUnsupported {
-		rule.Explanation = clip(strings.Join(msgs, " ")+" Kitleyi şehir, sepete ekleme zamanı ve sipariş geçmişiyle tanımlayın.", segment.MaxExplanation)
+		rule.Explanation = clip(strings.Join(msgs, " ")+" Kitleyi şehir, yaş, cinsiyet, sepete ekleme zamanı ve sipariş geçmişiyle tanımlayın.", segment.MaxExplanation)
 	} else {
 		rule.Question = clip(strings.Join(msgs, " "), segment.MaxQuestion)
 	}
@@ -1003,6 +1008,10 @@ func (in Intent) Rule() segment.Rule {
 	if in.Gender != "" {
 		add("gender", segment.OpEq, in.Gender)
 		parts = append(parts, genderWords(in.Gender))
+	}
+	if len(in.Ages) > 0 {
+		conds = append(conds, in.Ages...)
+		parts = append(parts, in.AgeWords+" müşteriler")
 	}
 	if in.HasSpend {
 		add("total_spent", in.SpendOp, in.SpendValue)

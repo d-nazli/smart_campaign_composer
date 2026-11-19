@@ -144,10 +144,15 @@ sabit, **kazanan seçimi yok**, açılma/tıklama ölçümü yok (bu proje yaln�
   `"variant": "B"`, `DELETE /api/campaigns/{id}/variants/B`. `GET` yanıtında `variants`, `variant_b`, `variant_counts`;
   gönderim ilerlemesinde `delivery.variants`.
 
-## Brief'te özel gün, cinsiyet, birleşik ve kademeli teklif
+## Brief'te özel gün, cinsiyet, yaş, birleşik ve kademeli teklif
 
 Aşağıdaki kurallar mock modunda kural okuyucusunun kurallarıdır. Gerçek Claude modunda aynı kurallar Claude'a prompt'ta
 söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
+
+**Desteklenen kitle alanları** (`segment/fields.go`, tek liste; prompt ve JSON şeması buradan üretilir): şehir
+(`city`), yaş (`age`), cinsiyet (`gender`), tüm müşteriler (`all_customers`), son sepete eklemeden / son siparişten
+bu yana gün (`days_since_last_cart_add`, `days_since_last_order`, `days_since_last_order_or_never`), sipariş sayısı
+(`order_count`), toplam harcama (`total_spent`), son sepetten sonra satın aldı mı (`purchased_since_last_cart_add`).
 
 - **Özel gün kitleyi kısıtlamaz.** "Kadınlar Günü'ne özel %20 indirim" mesajın konusunu ve tonunu belirler; kitle
   yazılmadıysa **herkes** seçilir ve kitle adımında "Kitle belirtilmediği için tüm müşteriler seçildi." yazar (soru
@@ -156,6 +161,12 @@ söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
 - **Cinsiyet yalnız açıkça istenirse** filtrelenir: "kadın müşterilere özel", "kadınlara", "erkek müşterilerimize",
   "cinsiyeti erkek olan". "Kadın ve erkek müşterilere" herkestir; "kadın koleksiyonu" gibi kitleyi anlatmayan bir kelime
   hiçbir şeyi değiştirmez. Cinsiyetini belirtmemiş kişiler cinsiyet koşuluna girmez.
+- **Yaş** (`age`: tam sayı, 13–100, `eq/gte/lte/gt/lt`) doğum tarihinden, bugünün tarihine (UTC) göre tam yıl olarak
+  hesaplanır; SQL'de `birth_date` bu tarihten hesaplanan bir sınır tarihle (bind parametresi) karşılaştırılır. Doğum
+  tarihi boş olan kişi yaş koşuluna girmez. Sayıyla yazılan yaş doğrudan kurala döner: "18-25 yaş arası" → `age gte 18`
+  ve `age lte 25` (iki uç dahil), "65 yaş üstü" / "65 yaş ve üzeri" → `gte 65`, "65 yaşından büyük" → `gt 65`, "30 yaş
+  altı" → `lt 30`, "30 yaşındaki" → `eq 30`. Sayısız yaş grubu ("gençlere", "yaşlı", "orta yaşlı") tahmin edilmez: hangi
+  yaş aralığı olduğu sorulur. Kitle kartında aralık tek rozettir: "Yaş 18–25".
 - **Birleşik teklif:** farklı türden en fazla 3 teklif birlikte verilir ("%20 indirim + ücretsiz kargo", "%10 indirim, 50
   TL hediye çeki ve ücretsiz kargo"); her parça SMS'te ve e-postada geçmek zorundadır. Aynı türden iki değer ("%20 ya da
   %30") ya da seçenek olarak yazılmış teklifler ("%20 indirim ya da ücretsiz kargo") sorulur.
@@ -245,7 +256,7 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
 - **Mock modunda yazım hatası "satın almama" koşulunu düşürebilir.** Mock'un kural okuyucusu kitle ifadelerini (ör.
   "sipariş oluşturmamış") bilinen kalıplarla okur; sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz. Açık iş olarak
   PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
-- Mock modunda desteklenmeyen kısıtlar (yaş, ürün kategorisi, doğum günü) ve takvime bağlı süreler ("bu ay", "geçen
+- Mock modunda desteklenmeyen kısıtlar (ürün kategorisi, doğum günü, üyelik tarihi, e-posta etkileşimi) ve takvime bağlı süreler ("bu ay", "geçen
   hafta") sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
   Sözlükte hiç olmayan bir kısıt ise mock'ta fark edilmeyebilir.
 - **Gerçek Claude modunda kitle yorumu yalnız Claude'a aittir** (D113). Kod Claude'un yanlış anlamasını, atladığı ya da
@@ -265,7 +276,9 @@ yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız
 - Seed kodunu veya `SEED`/`SEED_USERS` değerini değiştirirseniz de `make clean` gerekir (seed yalnız
   boş veritabanına yazar).
 - Her kullanıcının ayrıca **locale**'i (12 locale; tr-TR %40, diğerleri %4–8), **cinsiyeti** ve **doğum tarihi** vardır
-  (bir kısmı boş bırakılır). Bu alanlar ayrı bir rastgele akıştan gelir; "kohort tam 300" garantisi değişmedi. Eski bir
+  (bir kısmı boş bırakılır). Yaşlar 18–75 arası, bir e-ticaret müşteri kitlesi gibi dağılır: doğum tarihi olanların
+  %16'sı 18–24, %28'i 25–34, %24'ü 35–44, %16'sı 45–54, %10'u 55–64, %6'sı 65–75 (tam sayılarla; bant içinde gün
+  rastgele). Bu alanlar ayrı bir rastgele akıştan gelir; "kohort tam 300" garantisi değişmedi. Eski bir
   veritabanında migration `tr/en/de`'yi `tr-TR/en-GB/de-DE`'ye taşır; 12 locale'lik dağılım için `make clean`.
 - Bilerek eklenen kenar durumlar: izinli ama telefonu/emaili boş kullanıcılar, hiç izni olmayanlar,
   çok uzun isimler, bozuk telefon/email (mock provider kalıcı 400 döner).

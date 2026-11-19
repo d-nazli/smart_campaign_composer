@@ -211,6 +211,8 @@ func TestLiveModelDrivenClearBriefs(t *testing.T) {
 			"days_since_last_cart_add lte 14 | order_count gt 0 | purchased_since_last_cart_add eq false",
 			offer.Offer{Kind: offer.KindPercent, Value: 20, Extras: []offer.Part{{Kind: offer.KindFreeShipping}}},
 			"days_since_last_cart_add lte 14 | order_count gte 1 | purchased_since_last_cart_add eq false"},
+		{"age: an explicit range in a city", "18-25 yaş arası İstanbul'daki kullanıcılar",
+			"age gte 18 | age lte 25 | city eq İstanbul", offer.Offer{Kind: offer.KindNone}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -248,6 +250,7 @@ func TestLiveModelDrivenAmbiguousBriefsAreAskedAbout(t *testing.T) {
 		{"two different discounts", "Sepeti terk edenlere %15 ya da %20 indirim", []string{segment.StatusNeedsClarification}},
 		{"data the database does not have", "35 yaş üstü ve son 30 günde telefon kategorisine bakan müşterilere %10 indirim",
 			[]string{segment.StatusUnsupported, segment.StatusNeedsClarification}},
+		{"age: a vague age group is asked about", "gençlere özel indirim", []string{segment.StatusNeedsClarification}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -261,6 +264,9 @@ func TestLiveModelDrivenAmbiguousBriefsAreAskedAbout(t *testing.T) {
 			}
 			if rule.Status == segment.StatusNeedsClarification && strings.TrimSpace(rule.Question) == "" {
 				t.Error("a clarification needs a question")
+			}
+			if strings.HasPrefix(tt.name, "age:") && !strings.Contains(strings.ToLower(rule.Question), "yaş") {
+				t.Errorf("the question must ask about the age range: %q", rule.Question)
 			}
 		})
 	}

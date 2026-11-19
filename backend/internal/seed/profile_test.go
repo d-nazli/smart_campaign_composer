@@ -1,6 +1,8 @@
 package seed
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -42,10 +44,17 @@ func TestGenderSplit(t *testing.T) {
 	}
 }
 
+// ageOn is the age in whole years on day, counted like PostgreSQL's age().
+func ageOn(birth, day time.Time) int {
+	a := day.Year() - birth.Year()
+	if day.Month() < birth.Month() || (day.Month() == birth.Month() && day.Day() < birth.Day()) {
+		a--
+	}
+	return a
+}
+
 func TestBirthDatesAreAdultsAndMostlyPresent(t *testing.T) {
 	ds := mustGenerate(t, 42, testNow, DefaultUsers)
-	today := time.Date(testNow.Year(), testNow.Month(), testNow.Day(), 0, 0, 0, 0, time.UTC)
-	oldest, youngest := today.AddDate(-maxAge, 0, 0), today.AddDate(-minAge, 0, 0)
 
 	missing := 0
 	var minD, maxD time.Time
@@ -55,8 +64,8 @@ func TestBirthDatesAreAdultsAndMostlyPresent(t *testing.T) {
 			continue
 		}
 		d := *u.BirthDate
-		if d.Before(oldest) || d.After(youngest) {
-			t.Fatalf("birth date %s outside [%s, %s]", d.Format(time.DateOnly), oldest.Format(time.DateOnly), youngest.Format(time.DateOnly))
+		if a := ageOn(d, testNow); a < minAge || a > maxAge {
+			t.Fatalf("birth date %s is age %d, outside %d..%d", d.Format(time.DateOnly), a, minAge, maxAge)
 		}
 		if d != d.Truncate(24*time.Hour) {
 			t.Fatalf("birth date %s is not a plain date", d)
@@ -74,6 +83,35 @@ func TestBirthDatesAreAdultsAndMostlyPresent(t *testing.T) {
 	// "Mixed": the dates really spread over the range instead of clustering.
 	if span := maxD.Sub(minD); span < 50*365*24*time.Hour {
 		t.Fatalf("birth dates only span %s", span)
+	}
+}
+
+// The ages follow the bands exactly (4850 people with a birth date), and
+// every age from 18 to 75 occurs.
+func TestAgeBandsAreExact(t *testing.T) {
+	ds := mustGenerate(t, 42, testNow, DefaultUsers)
+	want := map[string]int{"18-24": 776, "25-34": 1358, "35-44": 1164, "45-54": 776, "55-64": 485, "65-75": 291}
+	got := map[string]int{}
+	seen := map[int]bool{}
+	for _, u := range ds.Users {
+		if u.BirthDate == nil {
+			continue
+		}
+		a := ageOn(*u.BirthDate, testNow)
+		seen[a] = true
+		for _, b := range ageBands {
+			if a >= b.lo && a <= b.hi {
+				got[fmt.Sprintf("%d-%d", b.lo, b.hi)]++
+			}
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("age bands = %v, want %v", got, want)
+	}
+	for a := minAge; a <= maxAge; a++ {
+		if !seen[a] {
+			t.Errorf("nobody is %d", a)
+		}
 	}
 }
 

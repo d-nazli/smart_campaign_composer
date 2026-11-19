@@ -20,6 +20,7 @@ const (
 	kindNumber
 	kindBool
 	kindGender // "female" or "male"
+	kindAge    // whole years, from users.birth_date
 )
 
 // Genders a gender condition may name (users.gender also allows "other" and
@@ -112,6 +113,50 @@ func daysSinceOrNever(col string) func(op string, v any, now time.Time, a *args)
 	}
 }
 
+// Age limits. A rule outside them is rejected (Parse).
+const (
+	MinAge = 13
+	MaxAge = 100
+)
+
+// YearsBefore is the calendar date n years before day (time of day dropped).
+// A 29 February that does not exist that year becomes 28 February, as in
+// PostgreSQL's date - interval: someone born on 29 February 2008 turns 18 on
+// 1 March 2026, not on 28 February.
+func YearsBefore(day time.Time, n int) time.Time {
+	y, m, d := day.Date()
+	y -= n
+	if last := time.Date(y, m+1, 0, 0, 0, 0, 0, time.UTC).Day(); d > last {
+		d = last
+	}
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+// ageSQL compiles "age in whole years <op> N" without computing an age per row:
+// "at least N years old" is "born on or before the date N years ago", so every
+// comparison is birth_date against one date computed from now and passed as a
+// bind parameter (like the day counts above). Today is now's calendar date in
+// UTC, the same clock as every other field. People without a birth date (NULL)
+// never match.
+func ageSQL(op string, v any, now time.Time, a *args) (string, error) {
+	n := int(v.(int64))
+	today := now.UTC()
+	atLeast := func(years int) time.Time { return YearsBefore(today, years) } // born on or before: age >= years
+	switch op {
+	case OpGte:
+		return "birth_date <= " + a.add(atLeast(n)) + "::date", nil
+	case OpGt: // age >= n+1
+		return "birth_date <= " + a.add(atLeast(n+1)) + "::date", nil
+	case OpLte: // not yet n+1
+		return "birth_date > " + a.add(atLeast(n+1)) + "::date", nil
+	case OpLt: // not yet n
+		return "birth_date > " + a.add(atLeast(n)) + "::date", nil
+	case OpEq:
+		return fmt.Sprintf("(birth_date <= %s::date AND birth_date > %s::date)", a.add(atLeast(n)), a.add(atLeast(n+1))), nil
+	}
+	return "", fmt.Errorf("operator %q not supported", op)
+}
+
 func numeric(col string) func(op string, v any, now time.Time, a *args) (string, error) {
 	return func(op string, v any, _ time.Time, a *args) (string, error) {
 		sym, ok := sqlCmp[op]
@@ -164,6 +209,12 @@ var fields = []fieldDef{
 			}
 			return "gender = " + a.add(v), nil
 		},
+	},
+	{
+		FieldInfo: FieldInfo{Name: "age", Type: "integer", Ops: cmpOps, Min: MinAge, Max: MaxAge,
+			Description: "Customer's age in whole years, from their stated birth date. Customers without a birth date never match. Use it only for an EXPLICIT age or age range: \"18-25 yaş arası\" = gte 18 AND lte 25 (both ends included); \"65 yaş üstü\" / \"65 yaş ve üzeri\" = gte 65; \"65 yaşından büyük\" = gt 65; \"30 yaş altı\" / \"30 yaşından küçük\" = lt 30; \"30 yaş ve altı\" = lte 30; \"30 yaşındaki\" = eq 30. A vague age word with no numbers (\"genç\", \"gençler\", \"yaşlı\", \"orta yaşlı\", \"young people\", \"seniors\") is NOT an age range: return needs_clarification and ask which age range it means, quoting the word (\"'Gençler' hangi yaş aralığı olsun? Örneğin 18-25 yaş arası.\"). Never pick a range for it yourself."},
+		kind: kindAge,
+		sql:  ageSQL,
 	},
 	{
 		FieldInfo: FieldInfo{Name: "days_since_last_cart_add", Type: "integer", Ops: dayOps, Min: 0, Max: 3650,

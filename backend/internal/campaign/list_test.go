@@ -13,7 +13,7 @@ func TestListShowsEveryCampaignNewestFirstWithItsProgress(t *testing.T) {
 	svc, pool := newService(t, mock.New(0))
 	ctx := context.Background()
 
-	unsupported, err := svc.Create(ctx, "Adana'daki 35 yaş üstü müşterilere %10 indirim")
+	unsupported, err := svc.Create(ctx, "Adana'daki telefon kategorisine bakan müşterilere %10 indirim")
 	if err != nil {
 		t.Fatal(err)
 	}

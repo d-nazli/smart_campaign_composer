@@ -238,7 +238,7 @@ func TestApproveRefusesCampaignsThatAreNotReady(t *testing.T) {
 	}
 
 	// A brief that was never understood has no audience at all.
-	unsupported, err := svc.Create(ctx, "Adana'daki 35 yaş üstü müşterilere %10 indirim")
+	unsupported, err := svc.Create(ctx, "Adana'daki telefon kategorisine bakan müşterilere %10 indirim")
 	if err != nil {
 		t.Fatal(err)
 	}
