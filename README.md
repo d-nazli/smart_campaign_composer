@@ -1,6 +1,6 @@
 # Smart Campaign Composer
 
-[![CI](https://github.com/d-nazli/insider/actions/workflows/ci.yml/badge.svg)](https://github.com/d-nazli/insider/actions/workflows/ci.yml)
+[![CI](https://github.com/d-nazli/smart_campaign_composer/actions/workflows/ci.yml/badge.svg)](https://github.com/d-nazli/smart_campaign_composer/actions/workflows/ci.yml)
 
 Pazarlamacının doğal dille yazdığı kampanya brief'ini Claude ile bir hedef kitle kuralına ve SMS/e-posta
 metinlerine çeviren sistem. Kural backend'de doğrulanıp parametreli SQL'e derlenir, metinler ekrana stream

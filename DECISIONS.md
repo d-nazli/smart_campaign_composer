@@ -41,8 +41,9 @@ denemede düzeltir; refusal'ı ya da yanlış key'i tekrar denemek işe yaramaz.
 teknik doğrulama yapar (şema, beyaz liste, tip/aralık, iş kuralları). Anlamsal güvence insan onayıdır: kitle özeti,
 koşul rozetleri ve kişi sayısı onaydan önce gösterilir, onaysız hiçbir şey kuyruğa girmez. Mock modunda ise brief'i
 koddaki kural okuyucusu çözer ve modelin cevabının brief'teki her parçayı içerdiği kontrol edilir.
-**Neden:** Regex/sözlük tabanlı anlamsal kontroller dilin çeşitliliğinin gerisinde kalıyor ve doğru kuralları
-reddediyordu; ikinci bir LLM çağrısı maliyet ekler ama güvence vermez. Yanlış yorumun bedeli onay adımında yakalanır.
+**Neden:** Yanlış yorumun zararı, mesaj
+gönderilince ortaya çıkar. Onay ekranı kuralın sonucunu (kim, hangi koşulla, kaç kişi) herkesin anlayacağı
+biçimde gösterdiği için bu hata gönderimden önce yakalanır.
 
 **Karar:** LLM'e müşteri verisi gitmez: modele yalnız brief ve pazarlamacının soru cevapları gönderilir. Ad, telefon,
 e-posta gibi kişisel veriler hiçbir prompt'a girmez; kişiselleştirme gönderim anında `{{first_name}}` gibi
@@ -151,11 +152,51 @@ istemci elle yazıldı. Stream yalnız önizlemedir, doğrulamayı atlatamaz.
 
 ## Mock provider
 
-**Karar:** Varsayılan olarak bilerek "gürültülü": 50–150 ms gecikme, %5 5xx, %3 rastgele 429 (`Retry-After` 1–3 sn),
-%1 zaman aşımı (10 sn sonra 504), %2 "kabul edip 5xx dönme", ayrıca kanal başına gerçek 100 msg/sn limiti. Geçersiz
-alıcıya kalıcı 4xx döner. Hepsi `PROVIDER_*` ile ayarlanır, testlerde oranlar yalnız 0 ya da 1'dir.
-**Neden:** Retry, backoff, 429 ve idempotency mantığının demoda ve testte gerçekten çalıştığı görülebilmeli; testler
-rastgeleliğe bağlı olmamalı.
+CASE: "Gerçek bir servisi taklit eden basit bir servis; retry ve rate limit mantığını gerçekten test edebilmek için
+zaman zaman hata, gecikme ve 429 döndürmeli."
+
+**Karar (sözleşme):** Ayrı bir Go servisi (`mock-provider`, :8090): `POST /v1/sms/send`, `POST /v1/email/send`
+(`{to, subject, body}`), zorunlu `Idempotency-Key` header'ı ve `GET /healthz`. Her istek sırayla dört adımdan geçer:
+doğrulama → gerçek rate limit → idempotency → kaos.
+**Neden:** Worker, gerçek bir sağlayıcıya konuşur gibi HTTP üzerinden konuşur; mock'u değiştirmek worker'ı değiştirmez.
+Sıra her cevabın anlamını gerçekçi tutar: bozuk istek limit harcamaz, tekrar eden key kaosa hiç girmez.
+
+**Karar (gerçek rate limit):** Kanal başına 100 istek / 1 sn (`PROVIDER_RATE_LIMIT_PER_SEC`). Token bucket değil, katı
+bir kayan pencere: herhangi bir 1 saniyelik pencerede 100'den fazla istek kabul edilmez, aşan istek 429 ve
+`Retry-After` (en eski isteğin pencereden çıkmasına kalan süre) alır. Görülen en yüksek pencere sayısı tutulur.
+**Neden:** Token bucket pencere sınırlarında kısa patlamalara izin verir ve "limit aşıldı mı" sorusunu bulanıklaştırır.
+Katı pencere, worker'ın limiti hiçbir saniyede aşmadığını kanıtlamak için kullanılır (testler ve `make bench`).
+
+**Karar (kaos, varsayılanlar):** Her istekte bir dizi rastgele çekiliş yapılır:
+
+| Davranış | Varsayılan | Neyi test eder |
+|---|---|---|
+| Gecikme | 50 ms + 0–100 ms jitter | Gönderimin eşzamanlı olması gerekir (kanal başına 64 gönderici) |
+| 500/502/503, mesaj kabul edilmeden | %5 | Full-jitter backoff, en fazla 5 deneme |
+| Rastgele 429, `Retry-After` 1–3 sn | %3 | 429 deneme hakkı harcamaz; tek 429 kanalı durdurmaz |
+| Zaman aşımı: 10 sn sonra 504 | %1 | Worker'ın 5 sn istemci zaman aşımı ve yeniden deneme |
+| Kabul edip 5xx dönme | %2 | Idempotency: retry çift teslimat yapmamalı |
+
+İlk denemelerin ~%11'i hata alır. Her oran `PROVIDER_*` ile değiştirilebilir, hepsi 0 yapılırsa provider temiz çalışır.
+**Neden:** Oranlar, her retry dalının bir demoda gözle görülmesi için yeterince yüksek, kampanyanın yine de tamamlanması
+için yeterince düşük seçildi. Zaman aşımı süresi bilerek worker'ın zaman aşımından uzun: istemci tarafındaki zaman aşımı
+yolu da çalışsın diye.
+
+**Karar (idempotency):** Provider her key için kanal bazında bir kayıt tutar (bellekte). Aynı key ve aynı içerik tekrar
+gelirse ikinci teslimat yapılmaz: 200, aynı `provider_message_id` ve `Idempotent-Replay: true` döner. Aynı key farklı
+içerikle gelirse 422. Aynı key'li eşzamanlı istekler sıraya sokulur.
+**Neden:** "Kabul ettim ama hata döndüm" senaryosunda worker'ın retry'ının güvenli olduğu provider tarafında sayılarak
+doğrulanabilir (tekil teslimat ve replay sayaçları). Kayıt bellekte tutulur, provider yeniden başlarsa silinir; bir
+mock için bilinçli sadelik.
+
+**Karar (kalıcı hatalar):** Eksik/uzun key, bozuk JSON, eksik alan, `+90` ve 10 haneden oluşmayan telefon
+(`+905551234567` biçimi) ya da geçersiz e-posta 400 alır.
+**Neden:** Tekrar denemekle düzelmeyen hatalar; seed'deki bozuk adresler worker'ın bunları yeniden denemeyip `failed`
+yaptığını gösterir.
+
+**Karar (tekrar üretilebilirlik):** Rastgelelik `PROVIDER_SEED` ile tohumlanır (aynı tohum, aynı hata dizisi). Testlerde
+oranlar yalnız 0 ya da 1'dir ve sahte saat kullanılır. Her 429, 5xx ve replay nedeniyle birlikte loglanır.
+**Neden:** Demo tekrar edilebilir olmalı, testler rastgeleliğe ve gerçek zamana bağlı olmamalı.
 
 ## Gözlemlenebilirlik
 
@@ -172,11 +213,56 @@ worker'ın kendi `/healthz`'ı vardır, `/api/system` api, veritabanı ve worker
 
 ## Seed verisi
 
-**Karar:** Go ile deterministik (`SEED=42`) ve idempotent (tablo doluysa atlanır) ~5.000 kullanıcı. Alanlar: ad, soyad,
-e-posta, telefon, şehir, SMS/e-posta izni, locale, cinsiyet, doğum tarihi; ayrıca sepet olayları ve siparişler (son sepet,
-son sipariş, sipariş sayısı, toplam harcama kullanıcıda türev kolon olarak tutulur).
-**Neden:** Örnek brief'in kitlesi (İstanbul, son 30 günde sepete ekleyip almamış) tam 300 kişi olacak şekilde kurulur.
-Bilerek kenar durumlar var: izinli ama adresi boş, hiç izni olmayan, çok uzun isimli, bozuk telefon/e-posta.
+CASE: "Birkaç bin kullanıcılık bir seed. Hangi alanlara ihtiyaç olduğuna sen karar ver."
+
+**Karar (üretim):** Seed Go ile yazıldı ve `migrate` servisi migration'lardan sonra çalıştırır. Varsayılan 5.000
+kullanıcı (`SEED_USERS`, en az 200). Deterministiktir (`SEED=42`, aynı tohum aynı veri) ve idempotenttir (`users`
+doluysa atlanır). Tüm tarihler seed'in çalıştığı ana göre üretilir.
+**Neden:** Testler ve demo her temiz kurulumda aynı sayıları görür. Göreli tarihler "son 30 gün" gibi brief'leri her
+zaman anlamlı kılar. Bedeli: veritabanı eskidikçe pencereler kayar, `make clean` ile yeniden yüklenir.
+
+**Karar (alanlar):** Her alan bir gereksinimden geliyor:
+
+| Alan | Neden |
+|---|---|
+| `first_name`, `last_name` | `{{first_name}}` kişiselleştirmesi |
+| `email`, `phone` (boş olabilir) | İki kanal; izinden bağımsız, "izin var ama adres yok" durumu için |
+| `sms_consent`, `email_consent` | Kanal başına ayrı izin (CASE: izni olmayana o kanaldan gönderilmez) |
+| `city` | Örnek brief'teki "İstanbul'daki" ve `{{city}}` |
+| `cart_events`, `orders` tabloları | Alışveriş geçmişi: sepete ekleme ve sipariş olayları |
+| `last_cart_add_at`, `last_order_at`, `order_count`, `total_spent` | Olaylardan türetilen kolonlar; segment sorguları join'siz ve indeksli çalışır |
+| `locale`, `gender`, `birth_date` | Dile göre içerik bonusu; cinsiyet ve yaş koşulları |
+
+**Neden:** Örnek brief'i ("son 30 günde sepete ekleyip alışveriş yapmayan İstanbul'daki kullanıcılar") ve beyaz listedeki
+her segment alanını karşılayan en küçük alan kümesi. Ham olaylar tutulduğu için türev kolonlar her zaman yeniden
+hesaplanabilir.
+
+**Karar (dağılımlar):** Oranlar karıştırılmış bir listeden tam sayıyla dağıtılır, toplamlar rastgeleliğe bırakılmaz:
+- **Şehir:** 19 şehir, İstanbul %35, Ankara %12, İzmir %10, diğerleri %1–5.
+- **İzin:** %60 iki kanal, %12 yalnız SMS, %18 yalnız e-posta, %10 hiç izin yok.
+- **Locale:** tr-TR %40; 11 locale %4–8.
+- **Cinsiyet:** kadın %48, erkek %48, diğer %2, belirtilmemiş %2.
+- **Yaş:** 18–75; %16'sı 18–24, %28'i 25–34, %24'ü 35–44, %16'sı 45–54, %10'u 55–64, %6'sı 65–75; %3'ünün doğum tarihi boş.
+- **Alışveriş:** sipariş tutarı 50–3.000 TL. Diğer kullanıcıların %35'inin hiç aktivitesi yok, %25'inin yalnız siparişi,
+  %15'inin yalnız sepeti, %25'inin ikisi de var.
+
+**Neden:** Bir e-ticaret müşteri tabanına benzer oranlar, ama kesin toplamlarla: testler "tam şu kadar kişi" bekleyebilir.
+Profil alanları (locale, cinsiyet, doğum tarihi) ayrı bir rastgele akıştan gelir, böylece sonradan eklenmeleri mevcut
+verinin tek bir değerini değiştirmedi.
+
+**Karar (örnek brief kohortu ve tuzaklar):** Örnek brief'in kitlesi tam 300 kişidir (%6): İstanbul, son 1–25 gün içinde
+sepete ekleme, sonrasında sipariş yok. Yanına 150'şer kişilik üç tuzak grup kurulur, her biri tek bir koşulu kaçırır:
+İstanbul'da ama son sepeti 36+ gün önce; İstanbul'da, sepet yeni ama sonrasında sipariş vermiş; sepet yeni ve sipariş yok
+ama başka şehirde. Tarihler bilerek 26–35 gün aralığına konmaz. Rastgele bir İstanbul kullanıcısı kohorta düşerse ona
+sepetten sonra bir sipariş eklenir.
+**Neden:** Segment kuralının herhangi bir koşulu (şehir, 30 günlük pencere, satın almama) yanlış uygulanırsa sayı
+300'den sapar; kitle doğruluğu tek bir sayıyla doğrulanır. Boş bırakılan 26–35 gün aralığı, seed'in günün hangi
+saatinde çalıştığının sonucu değiştirmemesini sağlar.
+
+**Karar (kenar durumlar):** Bilerek eklendi: %3 telefonu boş, %3 e-postası boş (izinden bağımsız), %0,5 bozuk telefon ve
+%0,5 bozuk e-posta (her biri kişiye özgü), %0,6 30–45 karakterlik ad, %10 hiç izni olmayan.
+**Neden:** Her biri bir kod yolunu sınar: izin var ama adres yok (kuyruğa girmez); bozuk adres (provider kalıcı 400 döner,
+yeniden denenmez); uzun ad (`{{first_name}}` payını aşar, yedek sözcük yazılır); izinsiz kişi (hiçbir kanaldan gönderilmez).
 
 ## Bonuslar
 
@@ -191,10 +277,9 @@ iki kanalı aynı varyanttadır.
 **Neden:** Deterministik bölünme tekrar çalıştırmada aynı sonucu verir ve tekillik kısıtını bozmaz. Açılma/tıklama
 ölçülmediği için kazanan seçimi kapsam dışında bırakıldı.
 
-**Karar (dile göre içerik):** Locale'ler bir tablodadır (12 locale); tr-TR kaynak metindir, kitlede kişisi olan her
-locale'e çevrilir. Çeviriler aynı kontrollerden geçer (limitler, değişkenler, rakamlar kaynakla aynı) ve elle
-düzenlenmez; kaynak değişince çeviriler "güncel değil" olur ve onay reddedilir (409).
-**Neden:** Yeni locale eklemek kod değil veri değişikliğidir; kişi yalnız kendi dilinde, kaynakla tutarlı metin alır.
+**Karar (dile göre içerik):** Locale’ler bir tabloda tutulur (12 locale). Kaynak metin tr-TR’dir ve kitlede kişisi olan her locale’e çevrilir. Çeviriler kaynakla aynı kontrollerden geçer: limitler, değişkenler ve rakamlar kaynakla aynı olmalı. Kaynak değişince eski çeviriler “güncel değil” olarak işaretlenir ve yeni kaynaktan yeniden çevrilir. Güncellenen çeviri kontrolleri geçene kadar o içerik onaylanamaz; onay isteği 409 ile reddedilir.
+
+Neden: Yeni locale eklemek kod değil, veri değişikliğidir. Kaynak değişince çeviriler de onunla birlikte güncellenir. Böylece her kişi yalnız kendi dilinde, kaynağın son haliyle tutarlı metin alır.
 
 ## CI pipeline
 
