@@ -1,295 +1,101 @@
 # Smart Campaign Composer
 
-Insider One AI Developer case study. Pazarlamacının doğal dille yazdığı brief'i Claude ile
-hedef kitleye ve SMS/email mesajlarına çeviren, onaya sunan, kuyruk üzerinden mock provider'a
-gönderen ve durumu canlı gösteren sistem.
+[![CI](https://github.com/d-nazli/insider/actions/workflows/ci.yml/badge.svg)](https://github.com/d-nazli/insider/actions/workflows/ci.yml)
 
-> **Durum:** geliştirme sürüyor (Aşama 5 tamam: brief → kitle → mesajlar → onay → gönderim → dashboard/metrics; cilalama sırada). Plan: [PLAN.md](PLAN.md), kararlar: [DECISIONS.md](DECISIONS.md).
-> Bu README son aşamada tamamlanacak (mimari özet, yapılmayanlar).
+Pazarlamacının doğal dille yazdığı kampanya brief'ini Claude ile bir hedef kitle kuralına ve SMS/e-posta
+metinlerine çeviren sistem. Kural backend'de doğrulanıp parametreli SQL'e derlenir, metinler ekrana stream
+edilir, insan onayından sonra mesajlar kuyruk üzerinden mock provider'a gönderilir ve durum canlı izlenir.
+
+Kararlar ve nedenleri: [DECISIONS.md](DECISIONS.md)
+
+## Teknolojiler
+
+| Katman   | Seçim |
+|----------|-------|
+| Frontend | Vue 3 + TypeScript, Vite; nginx statik dosyaları sunar ve `/api`'yi backend'e yönlendirir |
+| Backend  | Go 1.25 (`api`, `worker`, `mockprovider`, `tool` binary'leri tek modülde) |
+| DB       | PostgreSQL 16 (goose migration'ları, deterministik seed) |
+| Kuyruk   | Postgres `deliveries` tablosu, `FOR UPDATE SKIP LOCKED` ile alınır |
+| LLM      | Claude (Anthropic Go SDK, structured outputs); anahtar yoksa yerleşik mock LLM |
 
 ## Kurulum
 
-Gereken: Docker Desktop (host'ta Go/Node gerekmez). `make` için Windows'ta `choco install make` (veya winget ile bir GNU Make paketi); `make` olmadan Makefile'daki `docker compose ...` komutları doğrudan çalıştırılabilir.
-
-```powershell
-docker compose up --build      # veya: make up
-```
-
-- Uygulama: http://localhost:8080 — **Kampanyalar (dashboard):** http://localhost:8080/#/dashboard
-- API: http://localhost:8081 — sağlık: **http://localhost:8081/healthz** (veritabanını da kontrol eder, bozuksa 503),
-  metrikler: **http://localhost:8081/metrics** (Prometheus formatı), ayrıca `/readyz`, `/api/info`
-- Mock provider: http://localhost:8090
-
-> ### ⚡ Hızlı demo için
-> Mock provider varsayılan olarak **kasıtlı olarak bozuktur** (%5 5xx, %3 rastgele 429, %1 zaman aşımı, %2 "kabul ettim ama
-> hata döndüm"). Başarısız denemeler yeniden denendiği için kampanyanın kuyruğu birkaç saniye uzar (2.500 mesaj ≈ 25–30 sn).
-> Kaosu kapatmak isterseniz `.env` dosyasına **`PROVIDER_429_RATE=0`** yazıp `docker compose up -d mock-provider` çalıştırın (tümünü kapatmak için
-> `PROVIDER_ERROR_RATE=0 PROVIDER_TIMEOUT_RATE=0 PROVIDER_FAIL_AFTER_ACCEPT_RATE=0` da ekleyin).
-
-`.env` zorunlu değil; ayarlar için `copy .env.example .env`. `ANTHROPIC_API_KEY` boşsa mock LLM,
-doluysa gerçek Claude kullanılır (`LLM_MODE=auto`).
-
-```powershell
-make test        # tüm testler, Docker içinde, API key/internet gerektirmez (her zaman mock LLM)
-make test-race   # backend testleri Go race detector ile (Docker, CGO); yavaş (~2 dk), `make test`'e dahil değil
-make dev         # geliştirme: compose watch + air + Vite HMR
-make clean       # her şeyi durdur ve veritabanı volume'unu sil (seed baştan yüklenir)
-```
-
-## LLM modu (mock / Claude)
-
-- `ANTHROPIC_API_KEY` boş → **mock LLM** (varsayılan; anahtar gerekmez). Anahtarı `.env`'ye yazıp
-  `docker compose up -d api` ile yeniden başlatırsanız kod değişikliği olmadan **gerçek Claude** kullanılır
-  (`CLAUDE_MODEL`, varsayılan `claude-sonnet-5-5`). Aktif mod açılış logunda ve arayüzün sağ üstündeki rozette görünür.
-- **Brief'i kim anlıyor?** Gerçek Claude modunda (`brief.ModelDriven`) brief'in tamamını Claude yorumlar ve segment
-  koşullarına çevirir; anlayamadığını uydurmaz, `needs_clarification` ile sorar ya da `unsupported` der. Kod brief'i
-  okumaz, Claude'un kuralını brief'le karşılaştırmaz; yalnız teknik doğrulama yapar: JSON şeması, alan/operatör beyaz
-  listesi, değer tipi ve aralığı, iş kuralları (koşul sayısı, `all_customers` tek başına, teklifin kendi içinde tutarlı
-  olması, kampanya adı) ve parametreli SQL. Teknik hata Claude'a onarım için geri gider (3 deneme). Geçerli kural SQL'e
-  derlenir, kitle tam sayılır ve özet + koşullar + kişi sayısı onaya sunulur; onaydan önce hiçbir gönderim kuyruğa
-  girmez (DECISIONS.md D113). Mock modunda brief'i kural okuyucusu anlar (`brief.Analyze`, `brief.Strict`): tanımadığı
-  ya da belirsiz bulduğu ifadeyi sorar (D87).
-- `make test` **her zaman mock** ile çalışır; `.env`'de anahtar olsa bile okunmaz, internet gerekmez.
-- Veritabanı testleri `TEST_DATABASE_URL` ister (compose verir). Host'ta düz `go test` bu yüzden hata verir; yalnız
-  veritabanı gerektirmeyen testler için `SKIP_DB_TESTS=1 go test ./...`.
-- `make test-live` gerçek Claude'a duman testi yapar (yalnız anahtar varsa, birkaç sent tutar; `make test`'e dahil değil).
-
-## Mesaj limitleri
-
-- SMS en fazla **160**, e-posta konusu en fazla **80** karakter ve konu **tek satır**. Aşan metin asla kesilmez:
-  model otomatik düzeltmeye zorlanır (3 deneme), olmazsa limite uyan hazır şablon gelir; elle düzenlemede de aynı kontrol
-  çalışır.
-- Değişkenler (`{{first_name}}`, `{{city}}`) limitlere **sabit pay** olarak sayılır (20 ve 15 karakter; `.env`'den
-  ayarlanır). Kişinin değeri boşsa veya payı aşıyorsa mesajda kısa bir yedek sözcük yazılır, böylece limit hiçbir
-  alıcı için aşılamaz.
-- Worker da aynı payları kullanır (`VARIABLE_BUDGET_*` api ve worker'a birlikte verilir) ve **her mesajı göndermeden
-  önce son kez ölçer**: kişiselleştirilmiş SMS 160'ı ya da konu 80'i aşarsa gönderilmez, teslimat nedeniyle `failed` olur
-  (dashboard: "Kişiselleştirme sonrası karakter sınırını aştığı için gönderilmedi").
-- Not: gerçek SMS ağlarında Türkçe karakterli (ş, ğ, ı …) bir mesaj 70 karakterle sınırlıdır; case 160 dediği için burada
-  karakter sayılır.
-
-## Onay ve gönderim
-
-1. Kitleyi çıkarın, mesajları üretin (gerekirse düzenleyip kaydedin), **Onayla ve gönder**'e basın. Onay iki adımlıdır ve
-   uyarıları (ör. düzenlemede silinen teklif) tekrar gösterir. Onaydan sonra kitle ve metin değiştirilemez.
-2. Onay, izin vermiş ve telefon/e-postası kayıtlı herkesi kanal başına bir kez kuyruğa alır (`deliveries`). Aynı onayı iki
-   kez (hatta aynı anda) göndermek çift kayıt üretmez. Aynı telefonu ya da e-postayı paylaşan iki müşteri kaydı da o
-   adrese **tek mesaj** alır (ekrandaki "ulaşılabilir" sayıları adres sayısıdır).
-3. `worker` kuyruğu kanal başına **97 çağrı/sn** (`WORKER_RATE_PER_SEC`) hızla boşaltır. Provider'ın 429/5xx/zaman aşımı
-   cevaplarında yeniden dener (429'da o mesaj `Retry-After` kadar bekler; 429'lar art arda gelirse kanal da bekletilir; 5xx'te üstel bekleme + jitter, en fazla 5
-   deneme). Aynı mesaj aynı `Idempotency-Key` ile gittiği için provider "kabul ettim ama hata döndüm" durumunda bile
-   tek teslimat yapar. Geçersiz telefon/e-posta (`invalid_recipient`) yeniden denenmez, `failed` olur.
-4. Sayfa her saniye ilerlemeyi günceller (gönderildi / başarısız / atlandı / bekliyor); onaydan sonra izni çeken kişi `atlandı`.
-
-Varsayılan provider kaosu %3 rastgele 429 enjekte eder. Tek bir 429 yalnız kendi mesajını bekletir; bir saniyede 10 ve daha
-fazla 429 gelirse (provider gerçekten sınırlıyor demektir) kanal `Retry-After` kadar durur. Ölçülen hız kanal başına
-~97 çağrı/sn; hiçbir 1 sn penceresinde 100 çağrı aşılmaz. Kaos kapalıyken kabul edilen hız ~96/sn; varsayılan
-kaosla ~85/sn, çünkü çağrıların ~%10'u hata alıp yeniden deneniyor. 100 çağrı/sn'de bile bu kaosla kabul edilen hızın
-tavanı ~89,6/sn'dir (D101).
-
-Gönderim ekranındaki hız tablosu kanal başına ortalamanın yanında **En yüksek (1 sn)** sütununu gösterir: worker'ın
-kaydettiği çağrı başlangıçlarında herhangi bir 1 saniyelik kayan pencerede başlatılan en çok çağrı; 100'ü geçerse kırmızı
-olur (D107). **429 (provider)** sütunu sağlayıcının test amaçlı enjekte ettiği 429'ları sayar; bizim hız sınırımız aşılmadı.
-
-Hızı ölçmek için **`make bench`** (~30 sn, `make test`'e dahil değil): worker ve mock provider gerçek saatle, iki kanal
-birlikte çalışır; kanal başına çağrı/sn, kabul/sn, en yoğun 1 sn penceresi ve gerçek 429 sayısı tablo olarak yazılır. Bir
-pencerede 100'den fazla çağrı ya da gerçek 429 olursa komut başarısız olur. Yalnızca geçici test veritabanları kullanır, çalışan
-sisteme kayıt bırakmaz. Başka hızları denemek için: `make bench BENCH_RATES=95,97,100` (100'de kural kırılır; 97'nin nedeni bu).
-
-## Kullanıcının locale'ine göre içerik (bonus)
-
-Insider One'ın Localization yapısı örnek alındı (D92–D97).
-
-- Locale'ler `locales` tablosundadır (`tr-TR`, `en-GB`, `en-US`, `en-AU`, `de-DE`, `fr-FR`, `es-ES`, `es-MX`, `it-IT`,
-  `nl-NL`, `pt-BR`, `ar-SA`). `users.locale` bu tabloya foreign key'dir. **Yeni locale eklemek bir satır eklemektir**;
-  kod değişmez.
-- `tr-TR` kaynaktır: önce o yazılır, sonra kitlede kişisi olan her locale'e çevrilir. Kişisi olmayan locale çevrilmez.
-- **Yalnız tr-TR elle düzenlenir**; çeviriler salt okunurdur (API de `422 translation_read_only` döner, D97). Türkçe
-  değişince çeviriler **güncel değil** olur; "Onayla" önce "N çeviri güncellenecek" diye sorar, "Çevir ve göster" ile
-  çevrilir, kişi bakıp tekrar onaylar. Her çeviride "Yeniden çevir" düğmesi vardır.
-- Güncel olmayan ya da eksik çeviri varken onay backend'de **409 `stale_translations`** ile reddedilir.
-- Her locale'de aynı kurallar: JSON şeması, SMS 160 / konu 80, `{{first_name}}` ve diğer değişkenler kaynakla aynı,
-  sayılar/tarihler aynı. Kişi yalnız kendi locale'inin metnini alır; metin yoksa başka locale'e düşülmez.
-- Mock LLM: Türkçe metni 9 dilli bir cümle bankasından kurar ve her çeviriyi o anki tr-TR metninden yapar (rakam, tarih,
-  kod ve `{{değişkenler}}` kaynaktan gelir). Elle değişen Türkçe her dile yansır; bankada olmayan kelime çeviriye girmez,
-  hiçbir locale'de Türkçe metin görünmez (D108).
-
-## A/B varyantları (bonus)
-
-Insider One'ın e-posta Experiment ekranı örnek alındı (D102–D104). Kapsam bilerek dar: **yalnız A ve B**, oran %50 / %50
-sabit, **kazanan seçimi yok**, açılma/tıklama ölçümü yok (bu proje yalnız üretir ve gönderir).
-
-- B yokken Mesajlar kartının başlığında yalnız **+ A/B testi** düğmesi vardır. B eklenince **Varyant A |
-  Varyant B ⋮** sekmeleri çıkar, B silinince kaybolur ve herkes A'yı alır. B'nin **⋮** menüsü: **Yeniden üret**, **Sil**.
-- **Yaklaşım:** her varyant sabit bir listeden bir yaklaşım alır (`aciliyet`, `duygusal`, `fayda`, `merak`, `kisisel`).
-  Claude brief'e göre seçer; B'ninki A'nınkinden farklı olmalı, liste dışı değer reddedilir. Teklif, rakamlar ve tarih iki
-  varyantta aynıdır. Brief'te son tarih ya da süre yoksa `aciliyet` seçilemez ve hiçbir metin "son gün", "acele et" gibi
-  süre baskısı ya da (brief stoktan söz etmiyorsa) stok iddiası yazamaz (D105, D106). Mock: özel gün → duygusal, tarih →
-  aciliyet, sepet → merak, diğerleri → fayda. Yaklaşım sekmede gösterilmez, yalnız veride durur (D109).
-- Her varyantın **kendi tr-TR kaynağı ve kendi çevirileri** vardır; elle yalnız tr-TR düzenlenir. A değişince yalnız A'nın
-  çevirileri güncel değil olur, B'ninkiler olduğu gibi kalır (ve tersi).
-- **B, A'nın aynısı olamaz** (harf büyüklüğü ve boşluk sayılmaz, üç alan birden aynıysa): kayıtta ve onayda
-  **422 `variant_duplicate`**. Model A'yı tekrar yazarsa bu bir doğrulama hatasıdır, model düzeltmeye geri gönderilir.
-  B üretilemezse hazır şablona düşülmez (şablon A'nın aynısı olabilirdi): hata gösterilir, hiçbir şey kaydedilmez.
-- Her varyant ve her locale aynı kontrollerden geçer (160/80, `{{first_name}}`, rakamlar). Herhangi bir varyantta güncel
-  olmayan çeviri varken onay **409 `stale_translations`**; yanıtın `details.variants` alanı hangi varyantın hangi locale'i
-  beklediğini söyler.
-- **Bölünme:** kişi kuyruğa alınırken `md5("<kampanya>:<kişi>")`'nin ilk baytı çiftse A, tekse B. Locale hesaba girmez;
-  kişi önce varyantını alır, sonra o varyantın **kendi locale'indeki** metnini. Bir kişinin iki kanalı aynı varyanttadır ve
-  `UNIQUE(campaign_id, user_id, channel)` yine geçerlidir: tek kişi, tek varyant, tek kez. Zamanlanmış kampanya, başladığı
-  anda aynı kuralla bölünür. Bölünme yaklaşık %50'dir; küçük kitlede sapma görülür, ekranda gerçek sayılar yazar.
-- **Onay** ekranında %50 / %50 çubuğu ve varyant başına kişi / SMS / e-posta; **Gönderim** ekranının en altında
-  varyant karşılaştırma tablosu: kişi, SMS, e-posta, başarısız ve toplam.
-- API: `POST /api/campaigns/{id}/messages/stream?variant=B`, `PUT /content` ve `POST /translations` gövdesinde
-  `"variant": "B"`, `DELETE /api/campaigns/{id}/variants/B`. `GET` yanıtında `variants`, `variant_b`, `variant_counts`;
-  gönderim ilerlemesinde `delivery.variants`.
-
-## Brief'te özel gün, cinsiyet, yaş, birleşik ve kademeli teklif
-
-Aşağıdaki kurallar mock modunda kural okuyucusunun kurallarıdır. Gerçek Claude modunda aynı kurallar Claude'a prompt'ta
-söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
-
-**Desteklenen kitle alanları** (`segment/fields.go`, tek liste; prompt ve JSON şeması buradan üretilir): şehir
-(`city`), yaş (`age`), cinsiyet (`gender`), tüm müşteriler (`all_customers`), son sepete eklemeden / son siparişten
-bu yana gün (`days_since_last_cart_add`, `days_since_last_order`, `days_since_last_order_or_never`), sipariş sayısı
-(`order_count`), toplam harcama (`total_spent`), son sepetten sonra satın aldı mı (`purchased_since_last_cart_add`).
-
-- **Özel gün kitleyi kısıtlamaz.** "Kadınlar Günü'ne özel %20 indirim" mesajın konusunu ve tonunu belirler; kitle
-  yazılmadıysa **herkes** seçilir ve kitle adımında "Kitle belirtilmediği için tüm müşteriler seçildi." yazar (soru
-  sorulmaz). Tanınan günler: Kadınlar Günü / 8 Mart, Anneler, Babalar, Sevgililer (14 Şubat), Öğretmenler, 23 Nisan,
-  Yılbaşı, Black Friday, Ramazan / Kurban Bayramı, bayram.
-- **Cinsiyet yalnız açıkça istenirse** filtrelenir: "kadın müşterilere özel", "kadınlara", "erkek müşterilerimize",
-  "cinsiyeti erkek olan". "Kadın ve erkek müşterilere" herkestir; "kadın koleksiyonu" gibi kitleyi anlatmayan bir kelime
-  hiçbir şeyi değiştirmez. Cinsiyetini belirtmemiş kişiler cinsiyet koşuluna girmez.
-- **Yaş** (`age`: tam sayı, 13–100, `eq/gte/lte/gt/lt`) doğum tarihinden, bugünün tarihine (UTC) göre tam yıl olarak
-  hesaplanır; SQL'de `birth_date` bu tarihten hesaplanan bir sınır tarihle (bind parametresi) karşılaştırılır. Doğum
-  tarihi boş olan kişi yaş koşuluna girmez. Sayıyla yazılan yaş doğrudan kurala döner: "18-25 yaş arası" → `age gte 18`
-  ve `age lte 25` (iki uç dahil), "65 yaş üstü" / "65 yaş ve üzeri" → `gte 65`, "65 yaşından büyük" → `gt 65`, "30 yaş
-  altı" → `lt 30`, "30 yaşındaki" → `eq 30`. Sayısız yaş grubu ("gençlere", "yaşlı", "orta yaşlı") tahmin edilmez: hangi
-  yaş aralığı olduğu sorulur. Kitle kartında aralık tek rozettir: "Yaş 18–25".
-- **Ürünler teklifin kapsamıdır, kitle değil.** "Kış ürünlerinde geçerli 200 TL indirim", "seçili ürünlerde %20" →
-  `offer.scope` ("kış ürünleri", en fazla 60 karakter). Kitleyi daraltmaz: başka koşul yoksa herkes seçilir ve soru
-  sorulmaz. Kapsam SMS'te ve e-postada geçmek zorundadır, çevirilerde korunur; kartta "200 TL indirim · Kış ürünleri".
-  Ürün verisi olmadığı için kişileri ürünle seçmek ("kış ürünü almış", "kategorisini görüntüleyen") desteklenmez (D117).
-- **Birleşik teklif:** farklı türden en fazla 3 teklif birlikte verilir ("%20 indirim + ücretsiz kargo", "%10 indirim, 50
-  TL hediye çeki ve ücretsiz kargo"); her parça SMS'te ve e-postada geçmek zorundadır. Aynı türden iki değer ("%20 ya da
-  %30") ya da seçenek olarak yazılmış teklifler ("%20 indirim ya da ücretsiz kargo") sorulur.
-- **Kademeli indirim:** "Her 1000 TL'lik alışverişe 100 TL indirim, toplamda en fazla 300 TL" → teklif `amount 100`,
-  `step_spend 1000`, `max_discount 300`; mesajda üç sayı da yazılır. "1000 TL'ye varan siparişte 300 TL indirim"
-  alt limittir (`min_spend 1000`), "300 TL'ye varan indirim" ise tavan. Yüzdeye tavan da olur: "%20 indirim, en fazla 300 TL".
-  Mesajda teklifte olmayan bir TL tutarı (ör. örnek hesap "3000 TL'lik alışverişte…") çelişki sayılır ve düzelttirilir.
-- **Metinler konuya ve tona göre değişir.** Kod brief'ten bir tema çıkarır (özel gün; konu: sepet / geri kazanma / hoş
-  geldin / teşekkür; ton: samimi, resmi, heyecanlı, kısa, zarif, acil) ve bunu Claude'a da mock'a da verir. Mock, ifade
-  bankalarından adaylar üretip brief'e göre farklı bir noktadan başlar ve backend kontrollerinden geçen ilk adayı seçer:
-  aynı brief hep aynı metni, farklı brief farklı metni alır; 160/80 sınırı ve teklifin her parçası korunur.
-
-## Kitle sorusu ve cevap
-
-- Model kitleyi brief'ten çıkaramazsa soru sorar (`needs_clarification`; listede "Soru bekliyor"). Cevap kitle kartındaki
-  kutudan ya da "Tüm müşterilere gönder" düğmesinden **aynı kampanyaya** gider (`POST /api/campaigns/{id}/clarify`,
-  `{"answer": "..."}`): kitle brief + tüm cevaplarla yeniden çözülür, kampanya `segment_ready` olur ya da model yeniden
-  sorar. Yeni kampanya açılmaz, brief yazıldığı gibi kalır; soru ve cevaplar kampanyada saklanır ve kitle kartında
-  "Soru: … / Cevap: …" olarak görünür. Yalnız soru bekleyen kampanyaya cevap verilebilir (aksi 409); en fazla 5 cevap.
-- "Soru bekliyor" ve "Desteklenmiyor" kartında **Brief'i düzenle** vardır. Düzenlenen brief de **aynı kampanyaya** gider
-  (`PUT /api/campaigns/{id}/brief`, `{"brief": "..."}`): kitle aynı ID üzerinde yeniden çözülür, eski brief'e ait metinler,
-  cevaplar ve varyant sayıları silinir. Sihirbazda onaylanmamış bir kampanyanın brief'i değişince de aynı uç kullanılır;
-  yeni kampanya yalnız "Yeni kampanya" ile açılır. Onaylanmış kampanyada 409.
-- Onaylanmamış her kampanya listeden **silinebilir** (`DELETE /api/campaigns/{id}`, onaydan sonra 409). Liste üstünde
-  **Tümü / Aktif / Taslak** filtresi vardır; "Desteklenmiyor" kayıtları varsayılan olarak gizlidir ve "Desteklenmeyenleri
-  göster (N)" ile görünür. Ayrıntı: DECISIONS.md D114, D115.
-
-## Zamanlanmış gönderim (bonus)
-
-- Onay ekranında **Hemen** ya da **İleri bir zamanda** seçilir (en az 1 dakika, en fazla 30 gün sonrası). Hemen gönderimde
-  hiçbir şey değişmez. Zamanlanan kampanyada onay yalnızca kararı kaydeder (`scheduled`): **kuyruk ve kitle oluşmaz.**
-- Saat gelince `worker` içindeki zamanlayıcı kayıtlı kuralı yeniden çalıştırır, **o andaki** kitleyi çıkarır, teslimatları
-  oluşturur ve kampanya normal şekilde (`approved → sending → completed`) ilerler; kimsenin müdahalesi gerekmez. Kampanya
-  `FOR UPDATE SKIP LOCKED` ile sahiplenilir: birden çok worker olsa da her kampanya bir kez başlar. Onay ekranı ve kampanya
-  kartı "kişi sayısı gönderim anında değişebilir" der; sayılar tahmindir.
-- **Gönderim zamanı teklifin son kullanma gününden sonra seçilemez** (arayüz ve sunucu; gün Türkiye saatiyle okunur).
-  Teklif, kampanya beklerken (ya da worker kapalıyken) sona ererse mesaj **gönderilmez**, kampanya `failed` olur ve nedeni görünür.
-- Başlamadan önce **İptal et** ile (`POST /api/campaigns/{id}/cancel`) iptal edilebilir; başladıysa iptal reddedilir.
-  İptal ile başlatma yarışırsa tam biri kazanır (testli). Worker kapalıyken zamanı gelen kampanya, worker açılınca hemen başlar.
-- Zamanlanmış bir kampanya düzenlenemez; yanlışsa iptal edip yenisini oluşturun (yeniden zamanlama yok).
-
-## İzleme: `/healthz`, `/api/system`, `/metrics`
+Gereken tek şey Docker (host'ta Go/Node gerekmez).
 
 ```bash
-curl localhost:8081/healthz        # {"status":"ok"}  (veritabanı bozuksa 503) — docker healthcheck'i bunu kullanır
-curl localhost:8081/api/system     # {"api":"ok","database":"ok","worker":"ok"}  — arayüzdeki "Sistem sağlıklı" rozeti
-curl localhost:8081/metrics        # Prometheus metin formatı
-curl -s localhost:8081/metrics | grep -E 'send_rate|queue_length'   # anlık hız ve kuyruk uzunluğu (kanal başına)
-curl localhost:9091/healthz        # worker (compose ağının içinden: docker compose exec worker wget -qO- localhost:9091/healthz)
+cp .env.example .env        # isteğe bağlı: her değerin varsayılanı var
+docker compose up --build
 ```
 
-`docker compose ps` her servis için (postgres, mock-provider, api, worker, web) healthcheck durumunu gösterir.
+| Servis | Adres |
+|--------|-------|
+| Arayüz | http://localhost:8080 |
+| API | http://localhost:8081 |
+| Health | http://localhost:8081/healthz (veritabanını da kontrol eder; ayrıca `/readyz`, `/api/system`) |
+| Metrics | http://localhost:8081/metrics (Prometheus metin formatı) |
+| Mock provider | http://localhost:8090 (`POST /v1/sms/send`, `POST /v1/email/send`, `GET /healthz`) |
 
-- **Kampanyalar** (`/#/dashboard`, eski adıyla dashboard): tüm kampanyalar, kanal bazlı ilerleme çubuğu, gönderildi / başarısız / tekrar / 429 sayıları;
-  her 2 sn'de kendini yeniler. Sade bir ilk sürümdür, arayüz sonra yeniden tasarlanacak.
-- **`GET :8081/metrics`** (Prometheus metin formatı). Hepsi veritabanından (`deliveries`, `llm_generations`, `campaigns`)
-  okunur; api ve worker ayrı süreçlerdir ve sayılar yeniden başlatmada kaybolmaz. Veritabanı okunamazsa scrape 503 döner
-  (sıfırlarla dolu sayfa dönmez).
-  - Gönderim (`channel`: `sms`/`email`): `smartcampaign_deliveries_total{status=sent|failed|skipped}`,
-    `smartcampaign_delivery_queue_length`, `smartcampaign_delivery_retries_total`, `smartcampaign_delivery_rate_limited_total`
-    (retry'ların kaçı 429), `smartcampaign_send_rate_per_second` (son 10 sn ortalaması),
-    `smartcampaign_provider_response_seconds_sum/_count` (ortalama = sum/count).
-  - LLM (`kind`: `segment`/`messages`): `smartcampaign_llm_generations_total`, `…_first_attempt_valid_total`,
-    `…_repair_attempts_total`, `…_fallbacks_total`, `…_refusals_total`, `smartcampaign_llm_attempt_seconds_sum/_count`,
-    `smartcampaign_llm_tokens_total{direction=input|output}`, `smartcampaign_segment_outcomes_total{status=ok|needs_clarification|unsupported}`.
-  - Mock LLM token harcamaz, token sayaçları yalnız gerçek Claude ile artar.
-- **`GET :8081/healthz`**: api ve veritabanı bağlantısı (200 `{"status":"ok"}` / 503). docker-compose healthcheck'i bunu kullanır.
-  Worker'ın `:9091/healthz`'ı da aynı veritabanı kontrolünü yapar.
-- **`GET :8081/api/system`**: api, veritabanı ve worker durumu (`ok` / `down`); api worker'ın `/healthz`'ına kendisi sorar.
+`ANTHROPIC_API_KEY` boşsa mock LLM, doluysa gerçek Claude kullanılır (`LLM_MODE=auto`). `migrate` servisi
+şemayı kurar ve ~5.000 sahte kullanıcıyı yükler; `make clean` veritabanını silip seed'i baştan yükletir.
 
-**Gönderim kapsamı dışında:** worker tek replica (hız sınırı süreç içi; iki worker kanal başına 180/sn'ye çıkar, D81); e-posta gövdesi düz metin; "delivered" bildirimi
-yok (`sent` = provider kabul etti). Metriklerde histogram/yüzdelik yok, yalnız toplam ve adet (ortalama hesaplanır).
+## Testler
 
-## Bilinen sınırlamalar
-- **Teklifin şartları kitle değildir.** "1000 TL üzeri alışverişe 100 TL indirim, son kullanım 31.12.2026" brief'inde
-  "1000 TL" ve tarih *teklifin* şartlarıdır (SMS ve e-postada yazılır); kimin mesaj alacağını belirlemez. Bu yüzden
-  kitleyi de yazın: "Tüm müşterilere …" ya da "İstanbul'daki … müşterilere …". Kitle yazılmazsa sistem sorar: "Bu kampanya
-  kime gönderilsin? Tüm müşterilere mi?" ve "Tüm müşterilere gönder" düğmesi sunar (iletişim izni olmayanlara yine de gitmez).
-  Müşterinin *toplam harcamasına* göre kitle için "toplam harcaması 5000 TL'den fazla olan müşteriler" yazın.
-- Özel gün sözlüğü sınırlıdır: listede olmayan bir gün ("Dünya Kedi Günü") mock'ta tema olarak tanınmaz ve kitle yazılmamışsa
-  "kime gönderilsin?" sorulur. Gerçek Claude metinde temayı brief'ten yine okur. Kodla denetlenmeyen tek şey üslup: Claude'un
-  özel günde okura kadın/anne gibi hitap etmemesi prompt kuralıdır, kontrol değildir.
-- Son kullanım tarihi bugünle karşılaştırılmaz (geçmiş tarihli bir kupon fark edilmez); yalnız `gün.ay.yıl`, `gün/ay/yıl`,
-  `yıl-ay-gün` ve "31 Aralık 2026" yazımları tanınır, yılsız tarih sorulur. Kodun tanımadığı bir kitle sıfatı ("VIP
-  müşteriler") "kime gönderilsin?" sorusu alır. Ayrıntı: DECISIONS.md D62–D65.
+```bash
+make test
+```
 
-- **Mock modunda yazım hatası "satın almama" koşulunu düşürebilir.** Mock'un kural okuyucusu kitle ifadelerini (ör.
-  "sipariş oluşturmamış") bilinen kalıplarla okur; sözlükte olmayan bir yazım ("oluşturmmaış") tanınmaz. Açık iş olarak
-  PLAN.md'de, gerekçesiyle DECISIONS.md D51'de.
-- Mock modunda desteklenmeyen kısıtlar (ürün kategorisi, doğum günü, üyelik tarihi, e-posta etkileşimi) ve takvime bağlı süreler ("bu ay", "geçen
-  hafta") sessizce atlanmaz; ekranda `unsupported` / `needs_clarification` olarak açıkça gösterilir (DECISIONS.md D44).
-  Sözlükte hiç olmayan bir kısıt ise mock'ta fark edilmeyebilir.
-- **Gerçek Claude modunda kitle yorumu yalnız Claude'a aittir** (D113). Kod Claude'un yanlış anlamasını, atladığı ya da
-  ters çevirdiği bir koşulu veya brief'te olmayan bir değeri anlamsal olarak yakalamaz; bu kontroller bilerek kaldırıldı
-  (regex/sözlük kontrolü dilin zenginliğinin gerisinde kalıyordu; yerine ikinci bir NLP katmanı ya da ikinci LLM çağrısı
-  eklenmedi). Güvence insan onayıdır: kitle kartındaki özet, koşul rozetleri ve kişi sayısı onaydan önce kontrol edilmeli.
+Backend (Go, Postgres'li entegrasyon testleri dahil) ve frontend (vue-tsc + vitest) testlerini Docker içinde
+çalıştırır. **Her zaman mock LLM kullanır: gerçek API key ve internet gerekmez**, `.env`'de key olsa bile test
+container'larına verilmez. Ek hedefler: `make test-race` (race detector), `make bench` (gönderim hızı ölçümü),
+`make test-live` (gerçek Claude ile duman testi, key gerekir).
 
-## Seed verisi hakkında notlar
+## Kullanıcı akışı
 
-- `docker compose up` sırasında `migrate` servisi şemayı kurar ve ~5.000 sahte kullanıcıyı yükler.
-  Seed **deterministik** (`SEED=42`) ve **idempotent**: `users` doluysa atlanır.
-- **Tarihler seed'in çalıştığı ana göre üretilir.** "Son 30 günde sepete ekleyen" kohortu (örnek
-  brief: İstanbul, sepete ekledi, satın almadı) seed anında tam **300 kullanıcıdır**. Veritabanı
-  eskidikçe sepet tarihleri 30 günlük pencerenin dışına kayar ve kohort sayısı **birkaç gün
-  sonra azalmaya başlar**. Güncel sayı için `make clean` ile seed'i yeniden yükleyin. Testler her
-  seferinde taze veritabanı kurduğu için bundan etkilenmez.
-- Seed kodunu veya `SEED`/`SEED_USERS` değerini değiştirirseniz de `make clean` gerekir (seed yalnız
-  boş veritabanına yazar).
-- Her kullanıcının ayrıca **locale**'i (12 locale; tr-TR %40, diğerleri %4–8), **cinsiyeti** ve **doğum tarihi** vardır
-  (bir kısmı boş bırakılır). Yaşlar 18–75 arası, bir e-ticaret müşteri kitlesi gibi dağılır: doğum tarihi olanların
-  %16'sı 18–24, %28'i 25–34, %24'ü 35–44, %16'sı 45–54, %10'u 55–64, %6'sı 65–75 (tam sayılarla; bant içinde gün
-  rastgele). Bu alanlar ayrı bir rastgele akıştan gelir; "kohort tam 300" garantisi değişmedi. Eski bir
-  veritabanında migration `tr/en/de`'yi `tr-TR/en-GB/de-DE`'ye taşır; 12 locale'lik dağılım için `make clean`.
-- Bilerek eklenen kenar durumlar: izinli ama telefonu/emaili boş kullanıcılar, hiç izni olmayanlar,
-  çok uzun isimler, bozuk telefon/email (mock provider kalıcı 400 döner).
+1. **Brief:** pazarlamacı isteği doğal dille yazar.
+2. **Segment:** Claude brief'ten JSON bir kitle kuralı (ve teklif) üretir; backend şemayı, alan/operatör
+   beyaz listesini ve değerleri doğrular, kuralı parametreli SQL'e derler ve kaç kişiye gideceğini gösterir.
+   Kitle belirsizse model soru sorar, kullanıcı aynı kampanyada cevaplar.
+3. **Stream içerik:** SMS ve e-posta metinleri SSE ile ekrana akar; son metin limit ve tutarlılık
+   kontrollerinden geçer.
+4. **Onay:** pazarlamacı önizler, gerekirse düzenler (aynı kontroller tekrar çalışır) ve onaylar.
+5. **Kuyruk:** onay, izinli ve iletişim bilgisi olan herkesi kanal başına bir kez `deliveries` tablosuna yazar;
+   `worker` kanal başına 97 msg/sn hızla mock provider'a gönderir, hataları yeniden dener.
+6. **Dashboard:** kampanya listesi ve gönderim ekranı gönderildi / başarısız / atlandı / bekliyor sayılarını
+   ve kanal hızlarını periyodik olarak yeniler.
 
-## Mock provider
+## Mimari
 
-`POST /v1/sms/send`, `POST /v1/email/send` (zorunlu `Idempotency-Key` header'ı) ve `GET /healthz`.
-Gecikme, 5xx, 429 (`Retry-After`), kanal başına 100/sn limit ve kabul-sonrası-hata davranışı
-`.env.example` içindeki `PROVIDER_*` değişkenleriyle ayarlanır. Her 429/5xx ve idempotent replay
-sebebiyle loglanır: `docker compose logs -f mock-provider`.
+```
+  Tarayıcı (Vue 3 SPA)
+        │  HTTP + SSE
+        ▼
+  ┌──────────────┐  /api   ┌──────────────┐  JSON şema   ┌─────────────────────┐
+  │ web (nginx)  │────────▶│  api (Go)    │─────────────▶│ Claude / mock LLM   │
+  │ :8080        │         │  :8081       │◀── stream ───└─────────────────────┘
+  └──────────────┘         └──────┬───────┘
+                                  │ kural → parametreli SQL, onay → deliveries
+                                  ▼
+  ┌──────────────┐         ┌──────────────┐  SKIP LOCKED  ┌──────────────┐  HTTP + Idempotency-Key  ┌────────────────────┐
+  │ migrate      │────────▶│ PostgreSQL   │◀─────────────│ worker (Go)  │────────────────────────▶│ mock-provider (Go) │
+  │ şema + seed  │         │ users,       │               │ pacer, retry,│◀─ 2xx / 429 / 5xx ──────│ :8090              │
+  └──────────────┘         │ campaigns,   │               │ zamanlayıcı  │                          └────────────────────┘
+                           │ deliveries   │               └──────────────┘
+                           └──────────────┘
+```
+
+- **web:** Vue SPA'yı sunar, `/api` isteklerini `api`'ye proxy'ler (CORS yok).
+- **api:** kampanya API'si, LLM çağrıları (doğrula → hata varsa geri bildirimle yeniden dene, en fazla 3),
+  segment derleme, SSE stream, onay, `/healthz` ve `/metrics`.
+- **worker:** kuyruktan teslimat alır, kanal başına sabit hızda gönderir, 429/5xx'i ayrı ele alır, zamanı
+  gelen kampanyaları başlatır.
+- **mock-provider:** gecikme, 5xx, 429 (`Retry-After`), zaman aşımı ve "kabul edip hata dönme" davranışı
+  olan sahte SMS/e-posta servisi; idempotency key ile tekrar teslimatı engeller.
+- **migrate:** tek seferlik; migration'ları uygular ve seed'i yükler. `api` ve `worker` onun bitmesini bekler.
+
+## Bonuslar
+
+- [x] Zamanlanmış gönderim (kitle gönderim anında yeniden çıkarılır, başlamadan iptal edilebilir)
+- [x] A/B varyantları (yalnız A/B, %50/%50 hash ile bölünme)
+- [x] Kullanıcının diline göre içerik (12 locale, kaynak tr-TR, çeviriler doğrulanır)
+- [x] CI pipeline ([.github/workflows/ci.yml](.github/workflows/ci.yml))
+
