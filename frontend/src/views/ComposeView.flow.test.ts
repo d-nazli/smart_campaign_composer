@@ -11,6 +11,7 @@ import type { Campaign, StoredContent } from '../types'
 const api = {
   createCampaign: vi.fn(),
   clarifyCampaign: vi.fn(),
+  updateBrief: vi.fn(),
   getCampaign: vi.fn(),
   saveContent: vi.fn(),
   translateCampaign: vi.fn(),
@@ -19,6 +20,7 @@ const api = {
 vi.mock('../api/campaigns', () => ({
   createCampaign: (...a: unknown[]) => api.createCampaign(...a),
   clarifyCampaign: (...a: unknown[]) => api.clarifyCampaign(...a),
+  updateBrief: (...a: unknown[]) => api.updateBrief(...a),
   getCampaign: (...a: unknown[]) => api.getCampaign(...a),
   saveContent: (...a: unknown[]) => api.saveContent(...a),
   translateCampaign: (...a: unknown[]) => api.translateCampaign(...a),
@@ -233,6 +235,7 @@ describe('the campaign wizard, from the brief to sending', () => {
     await flushPromises()
     expect(step()).toBe('Kitle')
     expect(q('question').text()).toBe(QUESTION)
+    expect(w.text()).not.toContain('Kitle çıkarılıyor')
 
     // A typed answer that is not enough: the same campaign asks again, with the history.
     api.clarifyCampaign.mockResolvedValue(askedAgain)
@@ -284,6 +287,76 @@ describe('the campaign wizard, from the brief to sending', () => {
     expect(q('answer-error').text()).toContain('yalnızca soru bekleyen')
     expect(api.getCampaign).toHaveBeenCalledWith(10)
     expect(w.get('#step-audience').text()).toContain('Son 30 günde sepete ekleyip almayanlar')
+  })
+
+  it('"Desteklenmiyor" → "Brief\'i düzenle" → the edited brief goes to the same campaign', async () => {
+    const unsupported: Campaign = {
+      id: 12,
+      brief: '35 yaş üstü müşterilere Kasım indirimi %15',
+      name: 'Kasım indirimi · %15',
+      status: 'draft',
+      source_locale: 'tr-TR',
+      locales: ['tr-TR'],
+      segment: { status: 'unsupported', conditions: [], explanation: 'Yaş verisi yok.' },
+      created_at: '',
+    }
+    const EDITED_BRIEF = "İstanbul'daki müşterilere Kasım indirimi %15"
+    const resolved: Campaign = { ...segmentReady, id: 12, brief: EDITED_BRIEF, segment: { ...segmentReady.segment!, explanation: "İstanbul'daki müşteriler" } }
+
+    w = mount(ComposeView, { props: { info }, attachTo: document.body })
+    await flushPromises()
+    api.createCampaign.mockResolvedValue(unsupported)
+    await w.get('#brief').setValue(unsupported.brief)
+    await primary().trigger('click')
+    await flushPromises()
+    expect(w.get('#step-audience').text()).toContain('Bu brief desteklenmiyor')
+    expect(w.text()).not.toContain('Kitle çıkarılıyor') // only the segment card, no empty placeholder card under it
+
+    await q('edit-brief').trigger('click')
+    await flushPromises()
+    expect(step()).toMatch(/^Brief/)
+    expect(document.activeElement?.id).toBe('brief')
+    expect(primary().text()).toBe('İleri') // unchanged brief: nothing to rebuild
+    await w.get('#brief').setValue(EDITED_BRIEF)
+    expect(primary().text()).toBe('Kitleyi çıkar')
+
+    api.updateBrief.mockResolvedValue(resolved)
+    await primary().trigger('click')
+    await flushPromises()
+    expect(api.updateBrief).toHaveBeenCalledWith(12, EDITED_BRIEF)
+    expect(api.createCampaign).toHaveBeenCalledTimes(1) // the bug: every try opened a new campaign
+    expect(window.location.search).toBe('?c=12')
+    expect(step()).toBe('Kitle')
+    expect(w.get('#step-audience').text()).toContain("İstanbul'daki müşteriler")
+  })
+
+  it('an edited brief refused with 409 (approved meanwhile) shows the campaign as it is', async () => {
+    const asking: Campaign = {
+      id: 13,
+      brief: '%10 indirim gönder',
+      status: 'draft',
+      source_locale: 'tr-TR',
+      locales: ['tr-TR'],
+      segment: { status: 'needs_clarification', conditions: [], explanation: '', question: 'Kime?' },
+      created_at: '',
+    }
+    w = mount(ComposeView, { props: { info }, attachTo: document.body })
+    await flushPromises()
+    api.createCampaign.mockResolvedValue(asking)
+    await w.get('#brief').setValue(asking.brief)
+    await primary().trigger('click')
+    await flushPromises()
+    await q('edit-brief').trigger('click')
+    await w.get('#brief').setValue("Ankara'daki müşterilere %10 indirim gönder")
+
+    const { ApiError } = await import('../api/http')
+    api.updateBrief.mockRejectedValue(new ApiError(409, 'invalid_state', 'yalnızca onaylanmamış kampanyanın brief\'i değiştirilebilir'))
+    api.getCampaign.mockResolvedValue({ ...sending, id: 13, brief: asking.brief })
+    await primary().trigger('click')
+    await flushPromises()
+    expect(api.createCampaign).toHaveBeenCalledTimes(1)
+    expect(api.getCampaign).toHaveBeenCalledWith(13)
+    expect(w.text()).toContain('yalnızca onaylanmamış kampanyanın brief')
   })
 })
 

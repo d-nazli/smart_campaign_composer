@@ -250,3 +250,120 @@ func TestDeleteOnlyBeforeApproval(t *testing.T) {
 		t.Fatalf("approved: want a StateError, got %v", err)
 	}
 }
+
+// "Desteklenmiyor" and "Soru bekliyor": the edited brief is resolved on the
+// same campaign, which moves to its new state; no campaign is added.
+func TestEditingTheBriefResolvesTheSameCampaign(t *testing.T) {
+	t.Parallel()
+	svc, pool := newService(t, mock.New(0))
+	ctx := context.Background()
+
+	unsupported, err := svc.Create(ctx, "35 yaş üstü müşterilere %15 indirim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unsupported.Segment.Status != segment.StatusUnsupported {
+		t.Fatalf("%+v", unsupported.Segment)
+	}
+	before := campaignCount(t, pool)
+	got, err := svc.UpdateBrief(ctx, unsupported.ID, "İstanbul'daki müşterilere %15 indirim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != unsupported.ID || got.Status != campaign.StatusSegmentReady || got.Segment.Status != segment.StatusOK || got.Brief != "İstanbul'daki müşterilere %15 indirim" {
+		t.Fatalf("same id, segment_ready, the new brief: id %d %s %+v %q", got.ID, got.Status, got.Segment, got.Brief)
+	}
+	if got.Segment.Audience == nil || got.Segment.Audience.Matched == 0 || got.Segment.Explanation == "" {
+		t.Fatalf("the audience is counted: %+v", got.Segment)
+	}
+	if n := campaignCount(t, pool); n != before {
+		t.Fatalf("campaigns %d → %d: an edit must not add one", before, n)
+	}
+
+	// A campaign waiting for an answer: the edited brief replaces the question and its history.
+	asking, err := svc.Create(ctx, "%10 indirim gönder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Clarify(ctx, asking.ID, "bilmiyorum"); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := svc.UpdateBrief(ctx, asking.ID, "Ankara'daki müşterilere %10 indirim gönder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.ID != asking.ID || edited.Status != campaign.StatusSegmentReady || edited.Segment.Question != "" || len(edited.Segment.Clarifications) != 0 {
+		t.Fatalf("the old question and answers belong to the old brief: %+v", edited.Segment)
+	}
+
+	// An edit can also lead to a question: the same campaign waits for it.
+	back, err := svc.UpdateBrief(ctx, asking.ID, "%20 indirim gönder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.ID != asking.ID || back.Status != campaign.StatusDraft || back.Segment.Status != segment.StatusNeedsClarification || back.Segment.Audience != nil {
+		t.Fatalf("waits again, no audience: %s %+v", back.Status, back.Segment)
+	}
+	if n := campaignCount(t, pool); n != before+1 {
+		t.Fatalf("only the one Create added a campaign: %d → %d", before, n)
+	}
+}
+
+// A campaign with texts: the edit drops them (they were written for the old
+// brief) and the campaign is segment_ready again.
+func TestEditingTheBriefDropsTheOldTexts(t *testing.T) {
+	t.Parallel()
+	svc, pool := newService(t, mock.New(0))
+	ctx := context.Background()
+	v, err := svc.Create(ctx, exampleBrief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.GenerateMessages(ctx, v.ID, campaign.Events{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.UpdateBrief(ctx, v.ID, "Ankara'daki müşterilere %20 indirim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != campaign.StatusSegmentReady || got.Content != nil || len(got.Translations) != 0 {
+		t.Fatalf("texts must be gone: %s content=%v translations=%d", got.Status, got.Content != nil, len(got.Translations))
+	}
+	var rows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM campaign_contents WHERE campaign_id=$1`, v.ID).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("contents rows %d %v", rows, err)
+	}
+}
+
+// Once approved the brief stays: 409. A bad brief is an input error; an
+// unknown campaign is not found.
+func TestEditingTheBriefOfAnApprovedCampaignIsAConflict(t *testing.T) {
+	t.Parallel()
+	svc, _ := newService(t, mock.New(0))
+	ctx := context.Background()
+	v, err := svc.Create(ctx, exampleBrief)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.GenerateMessages(ctx, v.ID, campaign.Events{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	var state *campaign.StateError
+	if _, err := svc.UpdateBrief(ctx, v.ID, "Ankara'daki müşterilere %20 indirim"); !errors.As(err, &state) {
+		t.Fatalf("approved: want a StateError, got %v", err)
+	}
+	got, _ := svc.Get(ctx, v.ID)
+	if got.Brief != exampleBrief {
+		t.Fatalf("the brief must not change: %q", got.Brief)
+	}
+	var input *campaign.InputError
+	if _, err := svc.UpdateBrief(ctx, v.ID, "abc"); !errors.As(err, &input) {
+		t.Fatalf("too short: %v", err)
+	}
+	if _, err := svc.UpdateBrief(ctx, 999999, "Ankara'daki müşterilere %20 indirim"); !errors.Is(err, campaign.ErrNotFound) {
+		t.Fatalf("unknown: %v", err)
+	}
+}

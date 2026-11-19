@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '../api/info'
-import { approveCampaign, cancelCampaign, clarifyCampaign, createCampaign, deleteVariant, getCampaign, saveContent, translateCampaign } from '../api/campaigns'
+import { approveCampaign, cancelCampaign, clarifyCampaign, createCampaign, deleteVariant, getCampaign, saveContent, translateCampaign, updateBrief } from '../api/campaigns'
 import { ApiError } from '../api/http'
 import { useGenerationStream } from '../composables/useGenerationStream'
 import { failedLocales, initialState, retryNotes } from '../composables/streamState'
@@ -641,29 +641,65 @@ const streamErrorText = computed(() => {
   return e.code === 'invalid_state' ? conflictMessage(e.message, campaign.value?.status) : e.message
 })
 
+// The brief builds the audience. With no campaign yet it creates one; a campaign that is not
+// approved takes the edited brief on the SAME id (PUT /brief: its old texts and answers go), so
+// trying again never leaves a "Desteklenmiyor" or half-done campaign behind in the list.
 async function submitBrief() {
   if (creating.value || brief.value.trim().length === 0) return
+  const existing = campaign.value && !frozen.value ? campaign.value : null
   creating.value = true
   createError.value = null
-  campaign.value = null
+  answerError.value = null
   approveError.value = null
+  if (!existing) campaign.value = null
   resetStream()
   streamVariant.value = 'A'
   activeVariant.value = 'A'
   draftsBy.value = { A: draftsFrom(null, [SOURCE_LOCALE]), B: {} }
   activeLocale.value = SOURCE_LOCALE
   try {
-    const c = await createCampaign(brief.value)
+    const c = existing ? await updateBrief(existing.id, brief.value) : await createCampaign(brief.value)
     adopt(c)
     setUrl(c.id)
     go('audience') // the result (audience, or the question about it) is shown right away
   } catch (e) {
-    createError.value = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
-    setUrl(null)
+    const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', 'Beklenmeyen bir hata oluştu.')
+    createError.value = err
+    if (existing) {
+      // Nothing changed on the server (or it was approved meanwhile: 409): show it as it is now.
+      let now: Campaign = existing
+      if (err.status === 409) {
+        try {
+          now = await getCampaign(existing.id)
+        } catch {
+          /* keep what we had */
+        }
+      }
+      adopt(now)
+    } else {
+      setUrl(null)
+    }
     go('brief')
   } finally {
     creating.value = false
   }
+}
+
+// "Brief'i düzenle" on a campaign the model could not serve or asks about: back to the brief,
+// with the cursor in it. The steps change with an out-in transition, so the brief box exists
+// only once the audience step has left: the focus waits for it (after-enter), and is tried at
+// once too for a change without an animation.
+const focusAfterStep = ref<string | null>(null)
+function focusPending() {
+  const el = focusAfterStep.value ? document.getElementById(focusAfterStep.value) : null
+  if (!el) return
+  el.focus()
+  focusAfterStep.value = null
+}
+function editBrief() {
+  focusAfterStep.value = 'brief'
+  go('brief')
+  void nextTick(focusPending)
 }
 
 // An answer to the audience question goes to the SAME campaign: the backend resolves the
@@ -803,7 +839,7 @@ onMounted(async () => {
     <p v-if="loadError" class="notice error" role="alert" data-testid="load-error">{{ loadError }}</p>
 
     <div class="stage">
-      <Transition :name="slide === 'forward' ? 'slide-left' : 'slide-right'" mode="out-in">
+      <Transition :name="slide === 'forward' ? 'slide-left' : 'slide-right'" mode="out-in" @after-enter="focusPending">
         <div v-if="ready" :key="view" class="panel">
           <!-- 1 · Brief: the prompt card -->
           <section v-if="view === 'brief'" class="prompt" aria-labelledby="brief-title">
@@ -848,11 +884,12 @@ onMounted(async () => {
               :busy="creating || frozen"
               @send-to-all="sendToAll"
               @answer="answerQuestion"
+              @edit-brief="editBrief"
             />
-            <p v-if="answerError" class="notice error" role="alert" data-testid="answer-error">{{ answerError }}</p>
             <Card v-else title="Kitle" role="status">
               <p class="muted">Kitle çıkarılıyor…</p>
             </Card>
+            <p v-if="answerError" class="notice error" role="alert" data-testid="answer-error">{{ answerError }}</p>
           </template>
 
           <!-- 3 · Mesajlar -->

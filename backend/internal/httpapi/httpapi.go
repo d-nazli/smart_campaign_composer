@@ -47,6 +47,7 @@ func New(svc *campaign.Service, info Info, ready func(context.Context) error, me
 	mux.HandleFunc("POST /api/campaigns/{id}/approve", a.approve)
 	mux.HandleFunc("POST /api/campaigns/{id}/cancel", a.cancel)
 	mux.HandleFunc("POST /api/campaigns/{id}/clarify", a.clarify)
+	mux.HandleFunc("PUT /api/campaigns/{id}/brief", a.putBrief)
 	mux.HandleFunc("DELETE /api/campaigns/{id}", a.deleteCampaign)
 	if metricsHandler != nil {
 		mux.Handle("GET /metrics", metricsHandler)
@@ -274,6 +275,27 @@ func (a *api) clarify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := a.svc.Clarify(r.Context(), id, body.Answer)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
+// putBrief replaces the brief of a campaign that was never approved and
+// resolves its audience again on the same campaign (409 once approved).
+func (a *api) putBrief(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Brief string `json:"brief"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	v, err := a.svc.UpdateBrief(r.Context(), id, body.Brief)
 	if err != nil {
 		a.fail(w, r, err)
 		return

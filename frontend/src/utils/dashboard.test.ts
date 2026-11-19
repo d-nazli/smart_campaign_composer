@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CampaignSummary, DeliveryProgress } from '../types'
-import { briefPreview, deliveryTotals, pageFromHash, statusLabel } from './dashboard'
+import { briefPreview, deliveryTotals, filterCampaigns, isUnsupported, pageFromHash, statusLabel } from './dashboard'
 
 const ch = (o = {}) => ({ total: 0, pending: 0, sent: 0, failed: 0, skipped: 0, retries: 0, rate_limited: 0, ...o })
 const row = (o: Partial<CampaignSummary> = {}): CampaignSummary => ({
@@ -68,3 +68,29 @@ describe('deliveryTotals', () => {
   })
 })
 
+describe('the list filter', () => {
+  const at = '2026-11-16T10:00:00Z'
+  const rows: CampaignSummary[] = [
+    { id: 1, brief: 'a', status: 'draft', segment_status: 'unsupported', created_at: at },
+    { id: 2, brief: 'b', status: 'draft', segment_status: 'needs_clarification', created_at: at },
+    { id: 3, brief: 'c', status: 'segment_ready', segment_status: 'ok', created_at: at },
+    { id: 4, brief: 'd', status: 'content_ready', segment_status: 'ok', created_at: at },
+    { id: 5, brief: 'e', status: 'scheduled', segment_status: 'ok', created_at: at },
+    { id: 6, brief: 'f', status: 'sending', segment_status: 'ok', created_at: at },
+    { id: 7, brief: 'g', status: 'completed', segment_status: 'ok', created_at: at },
+  ]
+  const ids = (l: CampaignSummary[]) => l.map((c) => c.id)
+  it('hides "Desteklenmiyor" by default, in every filter', () => {
+    expect(ids(filterCampaigns(rows, 'all'))).toEqual([2, 3, 4, 5, 6, 7])
+    expect(ids(filterCampaigns(rows, 'draft'))).toEqual([2, 3, 4]) // drafts stay: segment_ready, content_ready, a question
+    expect(ids(filterCampaigns(rows, 'active'))).toEqual([5, 6])
+  })
+  it('shows them when asked', () => {
+    expect(ids(filterCampaigns(rows, 'all', true))).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(ids(filterCampaigns(rows, 'draft', true))).toEqual([1, 2, 3, 4])
+    expect(ids(filterCampaigns(rows, 'active', true))).toEqual([5, 6])
+  })
+  it('"Desteklenmiyor" is an unapproved campaign the model could not serve', () => {
+    expect(rows.filter(isUnsupported).map((c) => c.id)).toEqual([1])
+  })
+})

@@ -871,3 +871,48 @@ func TestClarifyAndDeleteOverHTTP(t *testing.T) {
 		t.Fatal("the list must lose it")
 	}
 }
+
+// PUT /brief: the same campaign takes the edited brief (200, same id, no new
+// campaign); an approved one answers 409.
+func TestPutBriefOverHTTP(t *testing.T) {
+	srv := newServer(t, mock.New(0))
+	resp, body := do(t, "POST", srv.URL+"/api/campaigns", map[string]string{"brief": "35 yaş üstü müşterilere %15 indirim"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	var created struct{ ID int64 }
+	_ = json.Unmarshal(body, &created)
+	count := func() int {
+		_, b := do(t, "GET", srv.URL+"/api/campaigns", nil)
+		var l struct{ Campaigns []json.RawMessage }
+		_ = json.Unmarshal(b, &l)
+		return len(l.Campaigns)
+	}
+	before := count()
+	url := fmt.Sprintf("%s/api/campaigns/%d", srv.URL, created.ID)
+	resp, body = do(t, "PUT", url+"/brief", map[string]string{"brief": exampleBrief})
+	if resp.StatusCode != 200 {
+		t.Fatalf("put brief: %d %s", resp.StatusCode, body)
+	}
+	var v struct {
+		ID      int64
+		Status  string
+		Brief   string
+		Segment struct{ Status string }
+	}
+	_ = json.Unmarshal(body, &v)
+	if v.ID != created.ID || v.Status != "segment_ready" || v.Segment.Status != "ok" || v.Brief != exampleBrief || count() != before {
+		t.Fatalf("%s", body)
+	}
+
+	if resp, body := do(t, "POST", url+"/messages/stream", nil); resp.StatusCode != 200 {
+		t.Fatalf("stream: %d %s", resp.StatusCode, body)
+	}
+	if resp, body := do(t, "POST", url+"/approve", nil); resp.StatusCode != 200 {
+		t.Fatalf("approve: %d %s", resp.StatusCode, body)
+	}
+	resp, body = do(t, "PUT", url+"/brief", map[string]string{"brief": "Ankara'daki müşterilere %20 indirim"})
+	if resp.StatusCode != 409 || !strings.Contains(string(body), "invalid_state") {
+		t.Fatalf("approved: %d %s", resp.StatusCode, body)
+	}
+}

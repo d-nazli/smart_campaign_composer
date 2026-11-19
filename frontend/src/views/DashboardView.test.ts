@@ -116,6 +116,45 @@ describe('DashboardView', () => {
     expect(v.get('[data-testid="delete-error"]').text()).toContain('Kampanya silinemedi')
   })
 
+  it('filters the list: Tümü / Aktif / Taslak, with "Desteklenmiyor" hidden until asked for', async () => {
+    const at = '2026-11-16T10:00:00Z'
+    const unsupported: CampaignSummary = { id: 21, brief: 'Kasım indirimi', name: 'Kasım indirimi · %15', status: 'draft', segment_status: 'unsupported', created_at: at }
+    const ready: CampaignSummary = { id: 22, brief: 'Kasım indirimi', name: 'Kasım indirimi · %15', status: 'content_ready', segment_status: 'ok', matched: 10, created_at: at }
+    const done: CampaignSummary = { id: 23, brief: 'Kasım indirimi', name: 'Kasım indirimi · %15', status: 'completed', segment_status: 'ok', matched: 10, created_at: at }
+    list.mockResolvedValue([unsupported, ready, done, scheduled])
+    const v = await mountIt()
+    const rowIds = () => v.findAll('tbody tr a.name').map((a) => a.attributes('href'))
+
+    // Default: everything but the "Desteklenmiyor" try; the button says how many are hidden.
+    expect(rowIds()).toEqual(['/?c=22', '/?c=23', '/?c=7'])
+    expect(v.get('[data-testid="filter-all"]').text()).toBe('Tümü · 3')
+    expect(v.get('[data-testid="toggle-unsupported"]').text()).toBe('Desteklenmeyenleri göster (1)')
+
+    await v.get('[data-testid="filter-active"]').trigger('click')
+    expect(rowIds()).toEqual(['/?c=7']) // scheduled
+    await v.get('[data-testid="filter-draft"]').trigger('click')
+    expect(rowIds()).toEqual(['/?c=22']) // a draft with texts stays in the list
+
+    await v.get('[data-testid="toggle-unsupported"]').trigger('click')
+    expect(rowIds()).toEqual(['/?c=21', '/?c=22'])
+    expect(v.get('[data-testid="toggle-unsupported"]').text()).toBe('Desteklenmeyenleri gizle')
+    expect(v.findAll('[data-testid="delete"]')).toHaveLength(2) // the delete icon stays
+
+    await v.get('[data-testid="filter-active"]').trigger('click')
+    list.mockResolvedValue([unsupported])
+    await v.get('[data-testid="toggle-unsupported"]').trigger('click')
+    expect(v.find('table').exists()).toBe(true)
+  })
+
+  it('says so when a filter has nothing to show', async () => {
+    list.mockResolvedValue([{ id: 31, brief: 'x', status: 'draft', segment_status: 'unsupported', created_at: '2026-11-16T10:00:00Z' } as CampaignSummary])
+    const v = await mountIt()
+    expect(v.find('table').exists()).toBe(false)
+    expect(v.get('[data-testid="filter-empty"]').text()).toBe('Bu filtrede kampanya yok.')
+    await v.get('[data-testid="toggle-unsupported"]').trigger('click')
+    expect(v.findAll('tbody tr')).toHaveLength(1)
+  })
+
   it('shows an empty state with a way to start when there are no campaigns', async () => {
     list.mockResolvedValue([])
     const v = await mountIt()

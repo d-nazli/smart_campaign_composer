@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { AlertCircle, HelpCircle, Mail, MessageSquare } from 'lucide-vue-next'
+import { AlertCircle, HelpCircle, Mail, MessageSquare, PencilLine } from 'lucide-vue-next'
 import type { LocaleInfo, Segment } from '../types'
 import { funnel } from '../utils/funnel'
 import { describeOffer } from '../utils/formatOffer'
@@ -19,7 +19,7 @@ import StatTile from './ui/StatTile.vue'
 // An answer to the question goes back to the same campaign (the parent sends it); the
 // questions asked so far and their answers are listed with the audience and the question.
 const props = defineProps<{ segment: Segment; busy?: boolean; locales?: LocaleInfo[] }>()
-const emit = defineEmits<{ (e: 'send-to-all'): void; (e: 'answer', text: string): void }>()
+const emit = defineEmits<{ (e: 'send-to-all'): void; (e: 'answer', text: string): void; (e: 'edit-brief'): void }>()
 const answer = ref('')
 const ANSWER_MAX = 500
 const canAnswer = computed(() => !props.busy && answer.value.trim().length > 0)
@@ -160,12 +160,19 @@ const unreachableText = computed(() => (f.value && f.value.unreachable > 0 ? `${
       />
       <Button type="submit" :variant="segment.suggestion === 'all_customers' ? 'secondary' : 'primary'" :disabled="!canAnswer" data-testid="send-answer">Cevapla</Button>
     </form>
+    <p class="ask__alt">
+      Cevap yerine brief'i baştan yazabilirsiniz; aynı kampanya güncellenir.
+      <Button variant="ghost" size="sm" :icon="PencilLine" :disabled="busy" data-testid="edit-brief" @click="emit('edit-brief')">Brief'i düzenle</Button>
+    </p>
   </section>
 
   <Card v-else-if="segment.status === 'unsupported'" id="step-audience" title="Kitle">
     <div class="bad" role="alert">
       <p class="bad__title"><AlertCircle :size="18" aria-hidden="true" />Bu brief desteklenmiyor</p>
       <p class="bad__text">{{ segment.explanation }}</p>
+      <div class="bad__act">
+        <Button variant="secondary" :icon="PencilLine" :disabled="busy" data-testid="edit-brief" @click="emit('edit-brief')">Brief'i düzenle</Button>
+      </div>
     </div>
   </Card>
 </template>
@@ -371,6 +378,18 @@ dd {
 }
 .bad__text {
   margin: 0;
+}
+.bad__act {
+  margin-top: var(--s-3);
+}
+.ask__alt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 @media (max-width: 767px) {
   .reach__row {

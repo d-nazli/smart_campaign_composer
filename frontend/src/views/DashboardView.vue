@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Inbox, Plus } from 'lucide-vue-next'
+import { EyeOff, Eye, Inbox, Plus } from 'lucide-vue-next'
 import type { AppInfo } from '../api/info'
 import { cancelCampaign, deleteCampaign, listCampaigns } from '../api/campaigns'
 import type { CampaignSummary } from '../types'
 import { healthWord, type HealthItem } from '../utils/health'
-import { briefTitle } from '../utils/dashboard'
+import { briefTitle, filterCampaigns, isUnsupported, type ListFilter } from '../utils/dashboard'
 import { formatWhen } from '../utils/schedule'
 import CampaignTable from '../components/CampaignTable.vue'
 import Button from '../components/ui/Button.vue'
 import Modal from '../components/ui/Modal.vue'
+import SegmentedControl from '../components/ui/SegmentedControl.vue'
 
 // down: the services that do not answer (the shell asks /api/system); a red alert tops the list.
 defineProps<{ info: AppInfo | null; down?: HealthItem[] }>()
@@ -100,6 +101,21 @@ async function confirmDelete() {
 }
 const deleteText = computed(() => (toDelete.value ? `“${briefTitle(toDelete.value.name || toDelete.value.brief, 60)}” ve metinleri silinir. Bu geri alınamaz.` : ''))
 
+// The filter above the list. "Desteklenmiyor" tries are hidden by default (they pile up while a
+// brief is being worked out); the button says how many and shows them, each with its delete icon.
+const filter = ref<ListFilter>('all')
+const showUnsupported = ref(false)
+const unsupportedCount = computed(() => (campaigns.value ?? []).filter(isUnsupported).length)
+const shown = computed(() => filterCampaigns(campaigns.value ?? [], filter.value, showUnsupported.value))
+const filterOptions = computed(() => {
+  const n = (f: ListFilter) => filterCampaigns(campaigns.value ?? [], f, showUnsupported.value).length
+  return [
+    { value: 'all', label: `Tümü · ${n('all')}`, testid: 'filter-all' },
+    { value: 'active', label: `Aktif · ${n('active')}`, testid: 'filter-active' },
+    { value: 'draft', label: `Taslak · ${n('draft')}`, testid: 'filter-draft' },
+  ]
+})
+
 const newCampaign = () => (window.location.hash = '#/')
 </script>
 
@@ -124,7 +140,24 @@ const newCampaign = () => (window.location.hash = '#/')
       <Button variant="cta" :icon="Plus" @click="newCampaign">Yeni kampanya</Button>
     </div>
 
-    <CampaignTable v-if="campaigns && campaigns.length > 0" :campaigns="campaigns" :locales="info?.locales" @cancel="toCancel = $event" @remove="toDelete = $event" />
+    <template v-if="campaigns && campaigns.length > 0">
+      <div class="filters">
+        <SegmentedControl v-model="filter" :options="filterOptions" label="Kampanyaları süz" data-testid="list-filter" />
+        <Button
+          v-if="unsupportedCount > 0"
+          variant="ghost"
+          size="sm"
+          :icon="showUnsupported ? EyeOff : Eye"
+          :aria-pressed="showUnsupported"
+          data-testid="toggle-unsupported"
+          @click="showUnsupported = !showUnsupported"
+        >
+          {{ showUnsupported ? 'Desteklenmeyenleri gizle' : `Desteklenmeyenleri göster (${unsupportedCount})` }}
+        </Button>
+      </div>
+      <CampaignTable v-if="shown.length > 0" :campaigns="shown" :locales="info?.locales" @cancel="toCancel = $event" @remove="toDelete = $event" />
+      <p v-else class="muted" data-testid="filter-empty">Bu filtrede kampanya yok.</p>
+    </template>
 
     <Modal v-model="askCancel" title="Zamanlanmış gönderim iptal edilsin mi?" :description="cancelText">
       <template #footer>
@@ -146,6 +179,13 @@ const newCampaign = () => (window.location.hash = '#/')
 .dash {
   display: grid;
   gap: var(--s-5);
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
 }
 .empty {
   display: grid;

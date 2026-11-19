@@ -157,3 +157,21 @@ describe('SegmentCard: answering the question', () => {
     expect(w.find('[data-testid="clarifications"]').exists()).toBe(false)
   })
 })
+
+describe('SegmentCard: "Brief\'i düzenle"', () => {
+  it('is offered on a question and on "Desteklenmiyor", not on an audience', async () => {
+    const asking: Segment = { status: 'needs_clarification', conditions: [], explanation: '', question: 'Kime?' }
+    const a = mount(SegmentCard, { props: { segment: asking } })
+    await a.get('[data-testid="edit-brief"]').trigger('click')
+    expect(a.emitted('edit-brief')).toHaveLength(1)
+
+    const no: Segment = { status: 'unsupported', conditions: [], explanation: 'Yaş verisi yok.' }
+    const u = mount(SegmentCard, { props: { segment: no } })
+    expect(u.text()).toContain('Bu brief desteklenmiyor')
+    await u.get('[data-testid="edit-brief"]').trigger('click')
+    expect(u.emitted('edit-brief')).toHaveLength(1)
+
+    const ok: Segment = { status: 'ok', match: 'all', conditions: [{ field: 'city', op: 'eq', value: 'Ankara' }], explanation: 'x', audience }
+    expect(mount(SegmentCard, { props: { segment: ok } }).find('[data-testid="edit-brief"]').exists()).toBe(false)
+  })
+})

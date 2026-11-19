@@ -690,6 +690,13 @@ Durum: `Önerildi` (onay bekliyor) · `Kesin` (CASE.md'nin dayattığı) · her 
 - **Silme:** `DELETE /api/campaigns/{id}`, yalnız onaylanmamış kampanyada (`draft`, `segment_ready`, `content_ready`; `FOR UPDATE` ile kontrol), aksi 409. Metinler ve LLM kayıtları `ON DELETE CASCADE` ile gider; onaydan önce teslimat yoktur. Arşiv yerine silme seçildi: arşivlenmiş bir taslağın onaylanamaması için her akışa ek kontrol gerekirdi. Listede bu satırlarda çöp kutusu düğmesi ve onay penceresi var.
 - **Arayüz:** soru kartında cevap kutusu + "Cevapla"; "Tüm müşterilere gönder" aynı uca sabit cümleyi gönderir. Soru-cevap geçmişi soru kartında ve kitle kartında "Soru: … / Cevap: …" olarak görünür. 409'da kampanyanın güncel hâli yüklenir ve neden gösterilir.
 
+## D115 — Brief düzenleme aynı kampanyada; listede filtre, "Desteklenmiyor" varsayılan gizli · `Kesin (kullanıcı kararı)`
+- **Sorun:** her brief denemesi `POST /api/campaigns` ile yeni kampanya açıyordu; "Desteklenmiyor" ve yarım kalan denemeler listede birikiyordu (aynı "Kasım indirimi · %15" için bir Desteklenmiyor, bir Taslak, bir Tamamlandı).
+- **Karar:** `PUT /api/campaigns/{id}/brief {"brief"}` (`Service.UpdateBrief`). D114'teki cevap akışıyla aynı kilit (`lockForSegment`, `FOR NO KEY UPDATE`; nedeni D114) ve aynı saklama (`storeRule`). Yalnız onaylanmamış durumlarda (`draft`, `segment_ready`, `content_ready`), aksi 409. Kitle yeni brief'le aynı ID üzerinde yeniden çözülür; eski brief'e ait olanlar silinir: iki varyantın metinleri (`campaign_contents`), soru-cevap geçmişi, `variant_counts`. LLM ya da doğrulama hatasında hiçbir şey yazılmaz.
+- **Arayüz:** "Soru bekliyor" ve "Desteklenmiyor" kartında "Brief'i düzenle" (Brief adımına döner, imleç kutuda). Sihirbazda onaylanmamış bir kampanyanın brief'i değişince "Kitleyi çıkar" artık bu uca gider; yeni kampanya yalnız "Yeni kampanya" ile açılır. 409'da kampanyanın güncel hâli yüklenir.
+- **Liste:** üstte "Tümü / Aktif / Taslak" (sayılarla). Aktif = `approved`, `scheduled`, `sending`; Taslak = `draft`, `segment_ready`, `content_ready`. "Desteklenmiyor" (`draft` + `unsupported`) her filtrede varsayılan olarak gizli; "Desteklenmeyenleri göster (N)" düğmesi kaç tane gizlendiğini söyler ve gösterir. Silme ikonu onaylanmamış her satırda kalır. Taslaklar listede kalır.
+- **Canlı arayüz testinde bulunan iki hata (düzeltildi):** (1) D114'te eklenen cevap hata paragrafı `v-if/v-else` zincirini bozmuştu: kitle adımında gerçek kartın altında boş "Kitle çıkarılıyor…" kartı da görünüyordu (akış testine beklenti eklendi). (2) "Brief'i düzenle" sonrası odak, adım geçişi animasyonlu (`out-in`) olduğu için brief kutusuna gitmiyordu; odak artık geçiş bitince (`after-enter`) verilir.
+
 ---
 
 ## Açık / onay bekleyenler

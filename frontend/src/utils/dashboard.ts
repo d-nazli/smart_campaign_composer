@@ -216,3 +216,29 @@ export function channelDuration(ch: ChannelProgress): number | null {
   if (!ch.first_sent_at || !ch.last_sent_at || ch.sent === 0) return null
   return (Date.parse(ch.last_sent_at) - Date.parse(ch.first_sent_at)) / 1000
 }
+
+/** The list's filter: every campaign, the ones being sent or waiting to be, or the unapproved ones. */
+export type ListFilter = 'all' | 'active' | 'draft'
+
+const ACTIVE_STATUSES = new Set(['approved', 'scheduled', 'sending'])
+const DRAFT_STATUSES = new Set(['draft', 'segment_ready', 'content_ready'])
+
+/** A try the model could not serve ("Desteklenmiyor"): hidden from the list unless asked for. */
+export function isUnsupported(c: Pick<CampaignSummary, 'status' | 'segment_status'>): boolean {
+  return c.status === 'draft' && c.segment_status === 'unsupported'
+}
+
+/** The campaigns a filter shows; "Desteklenmiyor" ones only with showUnsupported. */
+export function filterCampaigns<T extends Pick<CampaignSummary, 'status' | 'segment_status'>>(list: T[], filter: ListFilter, showUnsupported = false): T[] {
+  return list.filter((c) => {
+    if (!showUnsupported && isUnsupported(c)) return false
+    switch (filter) {
+      case 'active':
+        return ACTIVE_STATUSES.has(c.status)
+      case 'draft':
+        return DRAFT_STATUSES.has(c.status)
+      default:
+        return true
+    }
+  })
+}

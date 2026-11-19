@@ -175,8 +175,13 @@ söylenir ama kararı Claude verir; kod yalnız uydurmayı yakalar (D82–D88).
   `{"answer": "..."}`): kitle brief + tüm cevaplarla yeniden çözülür, kampanya `segment_ready` olur ya da model yeniden
   sorar. Yeni kampanya açılmaz, brief yazıldığı gibi kalır; soru ve cevaplar kampanyada saklanır ve kitle kartında
   "Soru: … / Cevap: …" olarak görünür. Yalnız soru bekleyen kampanyaya cevap verilebilir (aksi 409); en fazla 5 cevap.
-- Baştan başlamak isteyen yeni brief yazar; eski kampanya listede kalır. Onaylanmamış her kampanya listeden **silinebilir**
-  (`DELETE /api/campaigns/{id}`, onaydan sonra 409). Ayrıntı: DECISIONS.md D114.
+- "Soru bekliyor" ve "Desteklenmiyor" kartında **Brief'i düzenle** vardır. Düzenlenen brief de **aynı kampanyaya** gider
+  (`PUT /api/campaigns/{id}/brief`, `{"brief": "..."}`): kitle aynı ID üzerinde yeniden çözülür, eski brief'e ait metinler,
+  cevaplar ve varyant sayıları silinir. Sihirbazda onaylanmamış bir kampanyanın brief'i değişince de aynı uç kullanılır;
+  yeni kampanya yalnız "Yeni kampanya" ile açılır. Onaylanmış kampanyada 409.
+- Onaylanmamış her kampanya listeden **silinebilir** (`DELETE /api/campaigns/{id}`, onaydan sonra 409). Liste üstünde
+  **Tümü / Aktif / Taslak** filtresi vardır; "Desteklenmiyor" kayıtları varsayılan olarak gizlidir ve "Desteklenmeyenleri
+  göster (N)" ile görünür. Ayrıntı: DECISIONS.md D114, D115.
 
 ## Zamanlanmış gönderim (bonus)
 
